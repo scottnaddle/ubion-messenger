@@ -64,6 +64,7 @@ export function SettingsModal({
           <Toggle k="notifications" label="데스크톱 알림" />
           <Toggle k="notificationPreview" label="알림에 메시지 내용 표시" disabled={!settings.notifications} />
           <Toggle k="notificationSound" label="알림 소리" disabled={!settings.notifications} />
+          <Toggle k="portalPostNotify" label="전사게시판 새 글 알림" desc="홈 탭: 새 전사 공지를 데스크톱 알림으로 표시" disabled={!settings.notifications} />
           <h4>시스템</h4>
           <Toggle k="launchAtLogin" label="로그인 시 자동 실행" desc="트레이에 숨긴 상태로 시작합니다" />
           <Toggle k="closeToTray" label="창을 닫으면 트레이로 최소화" />

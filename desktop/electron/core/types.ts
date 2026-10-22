@@ -1,3 +1,4 @@
+import type { PortalEvents } from "./portal";
 export type RoomKind = "buddy" | "room" | "pubsub" | "unknown";
 
 export type Room = {
@@ -96,7 +97,7 @@ export type MessengerEventMap = {
   receipts: { roomKey: string; updates: Array<{ messageId: number; needConfirmCount: number; confirmUsers: number[] }> };
   presence: { userId: number; presence: Presence };
   connection: { state: ConnState; error?: string };
-};
+} & PortalEvents;
 
 export type ReadReceipt = { roomKey: string; readerSeq: number; beginId?: number; endId?: number };
 

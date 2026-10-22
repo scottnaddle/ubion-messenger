@@ -8,6 +8,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { drawBadge } from "./lib/badge";
 import { Avatar, Icon } from "./components/ui";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { Home } from "./components/Home";
 
 export type Toast = { id: number; text: string; kind?: "error" | "info" };
 
@@ -20,10 +21,11 @@ export function App() {
   const [conn, setConn] = useState<ConnState>("offline");
   const [netOnline, setNetOnline] = useState(navigator.onLine);
   const [presence, setPresence] = useState<Record<number, Presence>>({});
-  const [view, setView] = useState<"chats" | "people">("chats");
+  const [view, setView] = useState<"home" | "chats" | "people">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [portalBadge, setPortalBadge] = useState({ approval: 0, noti: 0, mail: 0 });
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeKey;
 
@@ -80,6 +82,7 @@ export function App() {
         else if (type === "connection") setConn(payload.state);
         else if (type === "presence") setPresence((p) => ({ ...p, [payload.userId]: payload.presence }));
         else if (type === "ready") setUser(payload);
+        else if (type === "portalBadge") setPortalBadge(payload);
         else if (type === "loggedOut") {
           setUser(null);
           setRooms([]);
@@ -112,6 +115,14 @@ export function App() {
     if (user) api().call("org:presence").then(setPresence).catch(() => undefined);
   }, [user, conn]);
 
+  // Home tab visible + window focused → fast portal polling; otherwise light background set
+  useEffect(() => {
+    if (user) api().portal.setActive(view === "home" && focused).catch(() => undefined);
+  }, [user, view, focused]);
+  useEffect(() => {
+    if (user) api().portal.get().then((s: any) => s?.badge && setPortalBadge(s.badge)).catch(() => undefined);
+  }, [user]);
+
   useEffect(() => {
     api().call("rooms:setActive", activeKey).catch(() => undefined);
   }, [activeKey]);
@@ -143,6 +154,7 @@ export function App() {
 
   const activeRoom = useMemo(() => rooms.find((r) => r.key === activeKey) || null, [rooms, activeKey]);
   const totalUnread = rooms.reduce((n, r) => n + r.unread, 0);
+  const homeBadge = portalBadge.approval + portalBadge.noti;
 
   useEffect(() => {
     document.title = totalUnread ? `(${totalUnread}) UBION Messenger` : "UBION Messenger";
@@ -171,6 +183,10 @@ export function App() {
       <nav className="rail">
         <div className="rail-drag" />
         <div className="logo-mark" title="UBION Messenger">U</div>
+        <button className={`rail-btn ${view === "home" ? "on" : ""}`} title="홈" onClick={() => setView("home")}>
+          <Icon name="home" />
+          {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
+        </button>
         <button className={`rail-btn ${view === "chats" ? "on" : ""}`} title="대화 (⌘K)" onClick={() => setView("chats")}>
           <Icon name="chat" />
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
@@ -198,7 +214,9 @@ export function App() {
           </div>
         )}
         <div className="panes">
-          {view === "chats" ? (
+          {view === "home" ? (
+            <Home />
+          ) : view === "chats" ? (
             <Sidebar rooms={rooms} activeKey={activeKey} presence={presence} onOpen={setActiveKey} />
           ) : (
             <People
@@ -211,7 +229,7 @@ export function App() {
               }}
             />
           )}
-          {activeRoom ? (
+          {view === "home" ? null : activeRoom ? (
             <ChatView
               key={activeRoom.key}
               room={activeRoom}
@@ -242,6 +260,7 @@ export function App() {
             setUser(null);
             setRooms([]);
             setActiveKey(null);
+            setPortalBadge({ approval: 0, noti: 0, mail: 0 });
             setSettings(await api().call("settings:get"));
           }}
         />

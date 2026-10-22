@@ -16,6 +16,10 @@ export type Settings = {
   downloadDir: string;
   fontSize: number;
   autoUpdate: boolean;
+  /** OS notification for new 전사게시판 posts */
+  portalPostNotify: boolean;
+  /** how portal items open: external browser (default) */
+  portalOpenMode: "external" | "inapp";
 };
 
 export const DEFAULTS: Settings = {
@@ -32,6 +36,8 @@ export const DEFAULTS: Settings = {
   downloadDir: "",
   fontSize: 14,
   autoUpdate: true,
+  portalPostNotify: true,
+  portalOpenMode: "external",
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");

@@ -17,6 +17,7 @@ export function Avatar({ name, src, size = 36, presence }: { name: string; src?:
 
 export function Icon({ name, size = 20 }: { name: string; size?: number }) {
   const p: Record<string, React.ReactElement> = {
+    home: <path d="M3.5 11 12 4l8.5 7M6 9.5V20h4.5v-5h3v5H18V9.5" />,
     chat: <path d="M4 5h16v11H8l-4 4z" />,
     people: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5" /><circle cx="17" cy="9" r="2.5" /><path d="M17 14c2.4 0 4 1.5 4.6 4" /></>,
     gear: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" /></>,

@@ -22,6 +22,12 @@ const api = {
   onFocus: (cb: (f: boolean) => void) => sub("window:focus", cb),
   onBadge: (cb: (n: number) => void) => sub("badge:changed", cb),
   onUpdate: (cb: (s: any) => void) => sub("update:status", cb),
+  portal: {
+    get: (widgetId?: string) => call("portal:get", widgetId),
+    refresh: () => call("portal:refresh"),
+    open: (url: string, mode?: "external" | "inapp") => call<void>("portal:open", url, mode),
+    setActive: (active: boolean) => call<void>("portal:setActive", active),
+  },
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   platform: process.platform,
 };

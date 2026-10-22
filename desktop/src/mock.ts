@@ -34,7 +34,7 @@ export function installMockIfNeeded() {
     email: `user${id}@example.com`, thumbnail: "", departmentIds: [i % 2 ? 20 : 21],
   }));
   const handlers: Record<string, (...a: any[]) => any> = {
-    "settings:get": () => ({ serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", fontSize: 14, autoUpdate: true, hasSavedPassword: true }),
+    "settings:get": () => ({ serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "external", hasSavedPassword: true }),
     "auth:state": () => ({ user: new URLSearchParams(location.search).get("login") ? null : me, conn: "online" }),
     "rooms:list": () => rooms,
     "msg:history": (_k: string, before?: number) => (before ? [] : msgs),
@@ -42,6 +42,20 @@ export function installMockIfNeeded() {
     "org:users": () => users,
     "org:departments": () => [{ id: 19, name: "UBION", sortOrder: 0, depth: 0 }, { id: 20, name: "개발팀", sortOrder: 1, depth: 1, parentId: 19 }, { id: 21, name: "디자인팀", sortOrder: 2, depth: 1, parentId: 19 }],
     "app:info": () => ({ version: "1.0.0", platform: "darwin", encryption: true }),
+  };
+  const isoNow = new Date().toISOString();
+  const portalSnap = {
+    summary: { chips: [{ appName: "mail", gadgetName: "메일", count: 2 }, { appName: "approval", gadgetName: "결재", count: 1 }, { appName: "calendar", gadgetName: "일정", count: 1 }] },
+    badge: { approval: 1, noti: 3, mail: 2 },
+    widgets: {
+      posts: { id: "posts", updatedAt: Date.now(), data: { total: 2, items: [
+        { id: 2, boardId: 7, boardName: "공지사항", type: "CLASSIC", summary: "11월 전사 워크숍 안내", createdAt: isoNow, writerName: "관리자", commentsCount: 2, recommendCount: 0, hasAttach: true, url: "/app/board/7/post/2" },
+        { id: 1, boardId: 7, boardName: "공지사항", type: "CLASSIC", summary: "보안 점검 일정", createdAt: isoNow, writerName: "관리자", commentsCount: 0, recommendCount: 0, hasAttach: false, url: "/app/board/7/post/1" }] } },
+      approvalTodo: { id: "approvalTodo", data: { total: 1, items: [{ id: 11, formName: "지출결의서", title: "10월 법인카드 정산", url: "/app/approval/document/11" }] } },
+      approvalUpcoming: { id: "approvalUpcoming", data: { total: 0, items: [] } },
+      noti: { id: "noti", data: { total: 3, items: [{ id: 5, category: "approval", senderName: "홍길동", message: "결재 요청이 도착했습니다", createdAt: isoNow, url: "/link/noti/5" }] } },
+      mail: { id: "mail", data: { total: 2, unread: 2, items: [{ id: "101", folderName: "받은편지함", folderFullName: "Inbox", subject: "주간 회의록", from: "김철수", seen: false, url: "/app/mail?work=read&folder=Inbox&uid=101" }] } },
+    },
   };
   const bridge: Bridge = {
     async call(ch, ...args) {
@@ -57,6 +71,12 @@ export function installMockIfNeeded() {
     onFocus: () => () => undefined,
     onBadge: () => () => undefined,
     onUpdate: () => () => undefined,
+    portal: {
+      get: async () => portalSnap,
+      refresh: async () => portalSnap,
+      open: async () => undefined,
+      setActive: async () => undefined,
+    },
     pathForFile: () => "",
     platform: new URLSearchParams(location.search).get("platform") || "darwin",
   };

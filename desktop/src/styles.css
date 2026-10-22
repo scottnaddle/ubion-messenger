@@ -210,3 +210,24 @@ input, textarea, select { font: inherit; color: inherit; }
 .readers-row { display: flex; align-items: center; gap: 6px; font-size: .85em; padding: 3px 2px; }
 
 .banner.info { background: var(--accent-soft); color: var(--fg); display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap; }
+
+/* ---- 홈 (portal dashboard) ---- */
+.home { flex: 1; overflow: auto; padding-bottom: 16px; min-width: 0; }
+.home-head { gap: 8px; }
+.home-head h2 { flex: 1; }
+.home-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 6px; }
+.home-hint { padding: 0 16px 8px; margin: 0; }
+.home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; padding: 0 16px; }
+.home-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.home-card header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.home-card h3 { font-size: 1em; margin: 0; }
+.home-card h4 { margin: 8px 0 2px; font-weight: 600; }
+.home-card ul { list-style: none; margin: 0; padding: 0; }
+.home-card li button { display: flex; gap: 4px; align-items: baseline; width: 100%; text-align: left; padding: 5px 4px; border-radius: 6px; min-width: 0; white-space: nowrap; }
+.home-card li button:hover { background: var(--hover, rgba(127,127,127,.12)); }
+.home-card .ellipsis { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+.home-card .unseen { font-weight: 600; }
+.home-card .dot { color: var(--accent); font-size: .7em; }
+.home-card .link { color: var(--accent); font-size: .85em; }
+.home-err { color: var(--danger); }
+.home-empty { padding: 6px 4px; }

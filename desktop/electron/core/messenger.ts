@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { DaouClient, sortRooms } from "./daou-client";
+import { PortalService } from "./portal";
 import { XmppClient } from "./xmpp";
 import { xmppKeyFromLoginId } from "./xmpp-key";
 import { canonMessageId } from "./messages";
@@ -99,6 +100,8 @@ type Listener<K extends keyof MessengerEventMap> = (p: MessengerEventMap[K]) => 
  */
 export class MessengerCore {
   readonly client: DaouClient;
+  /** Read-only portal home (GET whitelist), shares the client's GOSSOcookie session. */
+  readonly portal: PortalService;
   private xmpp: XmppClient | null = null;
   private em = new EventEmitter();
   private rooms = new Map<string, Room>();
@@ -118,6 +121,7 @@ export class MessengerCore {
 
   constructor(serverUrl?: string) {
     this.client = new DaouClient(serverUrl);
+    this.portal = new PortalService((path) => this.client.request(path, { method: "GET" }), (e, p) => this.emit(e, p as any));
     this.em.setMaxListeners(50);
   }
 
@@ -141,6 +145,7 @@ export class MessengerCore {
       this.emit("ready", u);
       void this.refreshRooms().catch(() => undefined);
       this.startPolling();
+      this.portal.start();
       return u;
     } catch (e) {
       this.setConn("offline");
@@ -150,12 +155,14 @@ export class MessengerCore {
 
   /** Stop realtime without invalidating the server session (app quit). */
   shutdown() {
+    this.portal.stop();
     this.stopPolling();
     this.xmpp?.stop();
     this.xmpp = null;
   }
 
   async logout(reason?: string) {
+    this.portal.reset();
     this.stopPolling();
     this.xmpp?.stop();
     this.xmpp = null;

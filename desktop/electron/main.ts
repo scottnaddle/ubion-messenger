@@ -91,6 +91,10 @@ function wireCore() {
     fwd("presence"),
     fwd("connection"),
     fwd("loggedOut"),
+    fwd("portalSummary"),
+    fwd("portalWidget"),
+    fwd("portalBadge"),
+    core.on("portalNewPost", (p) => notifyNewPost(p)),
     core.on("rooms", () => updateBadge()),
     core.on("message", (m) => maybeNotify(m)),
   ];
@@ -134,6 +138,37 @@ function showWindow() {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+}
+
+// ---------- portal (홈) ----------
+function portalUrl(rel: string): string | null {
+  const base = new URL(core.client.baseUrl);
+  let u: URL;
+  try {
+    u = new URL(rel, base);
+  } catch {
+    return null;
+  }
+  return u.origin === base.origin && /^https?:$/.test(u.protocol) ? u.toString() : null;
+}
+
+/** Open a portal deep link only on explicit user action (opening may mark items as read). */
+function openPortal(rel: string, _mode?: "external" | "inapp") {
+  const url = portalUrl(rel);
+  if (!url) throw new Error("허용되지 않은 주소입니다");
+  // MVP: always external browser (session is not shared; user may need to sign in on the web).
+  return shell.openExternal(url);
+}
+
+function notifyNewPost(p: MessengerEventMap["portalNewPost"]) {
+  if (!settings.notifications || !settings.portalPostNotify || !Notification.isSupported()) return;
+  const n = new Notification({
+    title: `전사게시판${p.boardName ? ` · ${p.boardName}` : ""}: 새 글`,
+    body: settings.notificationPreview ? p.summary.slice(0, 140) : "새 글이 등록되었습니다",
+    silent: !settings.notificationSound,
+  });
+  n.on("click", () => void openPortal(p.url).catch(() => undefined));
+  n.show();
 }
 
 // ---------- notifications ----------
@@ -333,6 +368,10 @@ function registerIpc() {
     if (process.platform !== "win32" || !win) return;
     win.setOverlayIcon(dataUrl ? nativeImage.createFromDataURL(dataUrl) : null, dataUrl ? "읽지 않은 메시지" : "");
   });
+  handle("portal:get", (id?: string) => (id ? core.portal.getWidget(id as any) : core.portal.snapshot()));
+  handle("portal:refresh", () => core.portal.refreshNow());
+  handle("portal:open", (url: string, mode?: "external" | "inapp") => openPortal(String(url), mode));
+  handle("portal:setActive", (active: boolean) => core.portal.setHomeActive(!!active));
   handle("app:openExternal", (url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
   });

@@ -7,7 +7,8 @@ export type Settings = {
   serverUrl: string; username: string; rememberMe: boolean; autoLogin: boolean;
   theme: "system" | "light" | "dark"; notifications: boolean; notificationPreview: boolean;
   notificationSound: boolean; launchAtLogin: boolean; closeToTray: boolean; downloadDir: string;
-  fontSize: number; autoUpdate: boolean; hasSavedPassword?: boolean;
+  fontSize: number; autoUpdate: boolean; portalPostNotify: boolean; portalOpenMode: "external" | "inapp";
+  hasSavedPassword?: boolean;
 };
 
 export type Bridge = {
@@ -18,6 +19,12 @@ export type Bridge = {
   onFocus(cb: (f: boolean) => void): () => void;
   onBadge(cb: (n: number) => void): () => void;
   onUpdate(cb: (s: UpdateStatus) => void): () => void;
+  portal: {
+    get(widgetId?: string): Promise<any>;
+    refresh(): Promise<any>;
+    open(url: string, mode?: "external" | "inapp"): Promise<void>;
+    setActive(active: boolean): Promise<void>;
+  };
   pathForFile(f: File): string;
   platform: string;
 };
