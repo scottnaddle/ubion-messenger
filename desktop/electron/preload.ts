@@ -28,6 +28,11 @@ const api = {
     open: (url: string, mode?: "external" | "inapp") => call<void>("portal:open", url, mode),
     setActive: (active: boolean) => call<void>("portal:setActive", active),
     menu: (force?: boolean) => call<{ items: import("./core/portal").MenuEntry[]; source: "server" | "static" }>("portal:menu", force),
+    mailFolders: () => call<import("./core/portal").MailFolders>("portal:mailFolders"),
+    approvalList: (box: import("./core/portal").ApprovalBox, page: number, keyword = "") =>
+      call<import("./core/portal").ApprovalList>("portal:approvalList", box, page, keyword),
+    approvalCounts: () => call<{ todo: number; upcoming: number }>("portal:approvalCounts"),
+    approvalDoc: (id: number | string) => call<import("./core/portal").ApprovalDocumentDetail>("portal:approvalDoc", id),
   },
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   platform: process.platform,

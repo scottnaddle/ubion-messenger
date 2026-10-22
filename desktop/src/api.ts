@@ -1,6 +1,9 @@
 import type {
   ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState,
 } from "../electron/core/types";
+import type {
+  ApprovalBox, ApprovalDocumentDetail, ApprovalList, MailFolders, MenuEntry,
+} from "../electron/core/portal";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState };
 
 export type Settings = {
@@ -24,7 +27,11 @@ export type Bridge = {
     refresh(): Promise<any>;
     open(url: string, mode?: "external" | "inapp"): Promise<void>;
     setActive(active: boolean): Promise<void>;
-    menu(force?: boolean): Promise<{ items: import("../electron/core/portal").MenuEntry[]; source: "server" | "static" }>;
+    menu(force?: boolean): Promise<{ items: MenuEntry[]; source: "server" | "static" }>;
+    mailFolders(): Promise<MailFolders>;
+    approvalList(box: ApprovalBox, page: number, keyword?: string): Promise<ApprovalList>;
+    approvalCounts(): Promise<{ todo: number; upcoming: number }>;
+    approvalDoc(id: number | string): Promise<ApprovalDocumentDetail>;
   };
   pathForFile(f: File): string;
   platform: string;

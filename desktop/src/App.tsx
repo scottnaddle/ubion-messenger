@@ -10,6 +10,8 @@ import { Avatar, Icon } from "./components/ui";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./components/Home";
 import { Menu } from "./components/Menu";
+import { Mail } from "./components/Mail";
+import { Approval } from "./components/Approval";
 
 export type Toast = { id: number; text: string; kind?: "error" | "info" };
 
@@ -22,7 +24,7 @@ export function App() {
   const [conn, setConn] = useState<ConnState>("offline");
   const [netOnline, setNetOnline] = useState(navigator.onLine);
   const [presence, setPresence] = useState<Record<number, Presence>>({});
-  const [view, setView] = useState<"home" | "menu" | "chats" | "people">("chats");
+  const [view, setView] = useState<"home" | "menu" | "chats" | "people" | "mail" | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -188,6 +190,13 @@ export function App() {
           <Icon name="home" />
           {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
         </button>
+        <button className={`rail-btn ${view === "mail" ? "on" : ""}`} title="메일" onClick={() => setView("mail")}>
+          <Icon name="mail" />
+        </button>
+        <button className={`rail-btn ${view === "approval" ? "on" : ""}`} title="전자결재" onClick={() => setView("approval")}>
+          <Icon name="approval" />
+          {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
+        </button>
         <button className={`rail-btn ${view === "menu" ? "on" : ""}`} title="메뉴 (DaouOffice 전체 기능)" onClick={() => setView("menu")}>
           <Icon name="grid" />
         </button>
@@ -218,39 +227,47 @@ export function App() {
           </div>
         )}
         <div className="panes">
-          {view === "home" ? (
-            <Home />
-          ) : view === "menu" ? (
-            <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} />
-          ) : view === "chats" ? (
-            <Sidebar rooms={rooms} activeKey={activeKey} presence={presence} onOpen={setActiveKey} />
+          {view === "mail" ? (
+            <Mail />
+          ) : view === "approval" ? (
+            <Approval />
           ) : (
-            <People
-              presence={presence}
-              me={user}
-              toast={toast}
-              onOpenRoom={(k) => {
-                setActiveKey(k);
-                setView("chats");
-              }}
-            />
-          )}
-          {view === "home" || view === "menu" ? null : activeRoom ? (
-            <ChatView
-              key={activeRoom.key}
-              room={activeRoom}
-              me={user}
-              focused={focused}
-              presence={activeRoom.peerUserId ? presence[activeRoom.peerUserId] : undefined}
-              toast={toast}
-            />
-          ) : (
-            <div className="empty-chat">
-              <div className="logo-mark big">U</div>
-              <h2>UBION Messenger</h2>
-              <p>왼쪽에서 대화를 선택하거나 조직도에서 동료를 찾아 대화를 시작하세요.</p>
-              <p className="muted small">⌘/Ctrl+K 대화 검색 · ⌘/Ctrl+N 조직도 · Alt+↑↓ 대화 이동</p>
-            </div>
+            <>
+              {view === "home" ? (
+                <Home onLocal={setView} />
+              ) : view === "menu" ? (
+                <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} />
+              ) : view === "chats" ? (
+                <Sidebar rooms={rooms} activeKey={activeKey} presence={presence} onOpen={setActiveKey} />
+              ) : (
+                <People
+                  presence={presence}
+                  me={user}
+                  toast={toast}
+                  onOpenRoom={(k) => {
+                    setActiveKey(k);
+                    setView("chats");
+                  }}
+                />
+              )}
+              {view === "home" || view === "menu" ? null : activeRoom ? (
+                <ChatView
+                  key={activeRoom.key}
+                  room={activeRoom}
+                  me={user}
+                  focused={focused}
+                  presence={activeRoom.peerUserId ? presence[activeRoom.peerUserId] : undefined}
+                  toast={toast}
+                />
+              ) : (
+                <div className="empty-chat">
+                  <div className="logo-mark big">U</div>
+                  <h2>UBION Messenger</h2>
+                  <p>왼쪽에서 대화를 선택하거나 조직도에서 동료를 찾아 대화를 시작하세요.</p>
+                  <p className="muted small">⌘/Ctrl+K 대화 검색 · ⌘/Ctrl+N 조직도 · Alt+↑↓ 대화 이동</p>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

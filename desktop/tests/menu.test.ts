@@ -56,7 +56,7 @@ describe("PortalService.menu", () => {
     const r = await svc.menu(BASE);
     expect(r.source).toBe("server");
     expect(r.items.some((m) => m.name === "홈")).toBe(false);
-    expect(r.items.slice(-4).map((m) => m.name)).toEqual(["Today", "알림", "대화", "조직도"]);
+    expect(r.items.slice(-5).map((m) => m.name)).toEqual(["Today", "알림", "대화", "조직도", "flex (휴가·근무)"]);
     await svc.menu(BASE);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(isAllowedPortalPath("/api/userside/baseconfig")).toBe(true);

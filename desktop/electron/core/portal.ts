@@ -24,6 +24,53 @@ export type MailItem = {
   seen: boolean; priority?: string; url: string;
 };
 export type PortalList<T> = { items: T[]; total: number };
+export type MailFolder = {
+  id: string; name: string; fullName: string; encName: string; depth: number;
+  newCnt: number; unseenCnt: number; totalCnt: number;
+};
+export type MailFolders = {
+  quota: { usageUnit: string; limitUnit: string; percent: number };
+  defaultFolders: MailFolder[];
+  userFolders: MailFolder[];
+  userSharedFolders: MailFolder[];
+  userTags: string[];
+};
+export const APPROVAL_BOXES = ["todo", "upcoming", "draft", "approve"] as const;
+export type ApprovalBox = (typeof APPROVAL_BOXES)[number];
+export const APPROVAL_BOX_LABELS: Record<ApprovalBox, string> = {
+  todo: "결재 대기", upcoming: "결재 예정", draft: "기안 문서", approve: "결재한 문서",
+};
+export const APPROVAL_LIST_PATHS: Record<ApprovalBox, string> = {
+  todo: "/api/approval/todo/all",
+  upcoming: "/api/approval/upcoming",
+  draft: "/api/approval/doclist/draft/all",
+  approve: "/api/approval/doclist/approve/all",
+};
+export type ApprovalListItem = {
+  id: number; documentId?: number; formName: string; title: string;
+  docStatus?: string; docStatusName?: string; apprStatus?: string; apprStatusName?: string;
+  attachCount: number; commentCount: number; drafterName: string; drafterDeptName: string; drafterPositionName: string;
+  draftedAt?: string; emergency: boolean; currentActivityUsers: string[]; url: string;
+};
+export type ApprovalPage = { page: number; offset: number; total: number; totalPage: number; lastPage: boolean };
+export type ApprovalList = { items: ApprovalListItem[]; page: ApprovalPage };
+export type ApprovalAttachment = { id: string; name: string; extention: string; size: number; download?: string };
+export type ApprovalActivity = {
+  type: string; name: string; userName: string; userPosition: string; deptName: string;
+  status: string; statusName: string; comment: string; completedAt?: string;
+};
+export type ApprovalActivityGroup = { name: string; activities: ApprovalActivity[] };
+export type ApprovalComment = { id: string; author: string; content: string; createdAt?: string };
+export type ApprovalDocument = {
+  id: number; formName: string; title: string; docStatusName: string; bodyHtml: string;
+  attaches: ApprovalAttachment[]; drafterName: string; drafterDeptName: string; drafterPositionName: string; draftedAt?: string;
+};
+export type ApprovalDocumentDetail = {
+  document: ApprovalDocument;
+  apprFlow: { activityGroups: ApprovalActivityGroup[] };
+  actionCheck: Record<string, boolean>;
+  comments: ApprovalComment[];
+};
 /**
  * approval = todo count (/api/approval/todo/count docCount), noti = unread portal notis (/api/home/noti/count, same as web top bar),
  * mail = today's mail (/api/mail/message/count?today=on, same as web "오늘 온 메일"). Rail badge = approval + noti.
@@ -74,7 +121,31 @@ export const PORTAL_WHITELIST: RegExp[] = [
   /^\/api\/calendar\/event$/,
   /^\/api\/mail\/message\/gadget$/,
   /^\/api\/mail\/message\/count$/,
+  /^\/api\/mail\/folder\/all$/,
+  /^\/api\/approval\/(todo\/all|upcoming|doclist\/draft\/all|doclist\/approve\/all)$/,
+  /^\/api\/approval\/(upcoming|todoreception|todoviewer)\/count$/,
+  /^\/api\/approval\/document\/\d+$/,
+  /^\/api\/approval\/document\/\d+\/comment$/,
 ];
+
+export function isApprovalBox(v: unknown): v is ApprovalBox {
+  return typeof v === "string" && (APPROVAL_BOXES as readonly string[]).includes(v);
+}
+
+export function normalizeApprovalListArgs(box: unknown, page: unknown = 0, keyword: unknown = "") {
+  if (!isApprovalBox(box)) throw new Error("invalid approval box");
+  const p = Number(page);
+  if (!Number.isInteger(p) || p < 0 || p > 10000) throw new Error("invalid page");
+  const k = keyword == null ? "" : String(keyword);
+  if (k.length > 100) throw new Error("keyword too long");
+  return { box, page: p, keyword: k };
+}
+
+export function normalizeApprovalDocId(id: unknown): string {
+  const s = typeof id === "number" ? String(id) : typeof id === "string" ? id.trim() : "";
+  if (!/^\d+$/.test(s)) throw new Error("invalid document id");
+  return s;
+}
 
 export function isAllowedPortalPath(path: string): boolean {
   if (!path.startsWith("/") || path.startsWith("//") || /[\r\n]/.test(path)) return false;
@@ -203,6 +274,98 @@ export function parseMailCount(body: any): number {
   const d = body?.data;
   if (typeof d === "number" || typeof d === "string") return num(d);
   return num(d?.unreadCount ?? d?.count ?? d?.unseen);
+}
+
+export function parseMailFolders(body: any): MailFolders {
+  const data = body?.data ?? {};
+  const folder = (f: any): MailFolder => ({
+    id: str(f?.id), name: str(f?.name || f?.fullName || f?.encName),
+    fullName: str(f?.fullName || f?.name), encName: str(f?.encName || f?.fullName || f?.name),
+    depth: num(f?.depth), newCnt: num(f?.newCnt), unseenCnt: num(f?.unseenCnt), totalCnt: num(f?.totalCnt),
+  });
+  const q = data?.quotaInfo ?? {};
+  return {
+    quota: { usageUnit: str(q.usageUnit), limitUnit: str(q.limitUnit), percent: num(q.percent) },
+    defaultFolders: arr(data?.defaultFolders).map(folder),
+    userFolders: arr(data?.userFolders).map(folder),
+    userSharedFolders: arr(data?.userSharedFolderList ?? data?.userSharedFolders).map(folder),
+    userTags: arr(data?.userTags).map((t) => str(t?.name ?? t?.tagName ?? t)).filter(Boolean),
+  };
+}
+
+function currentUsers(v: unknown): string[] {
+  return arr(v).map((u) => str(u?.name ?? u?.userName ?? u?.deptName ?? u)).filter(Boolean);
+}
+
+export function parseApprovalList(body: any): ApprovalList {
+  const items = arr(body?.data).map((d) => {
+    const id = num(d?.id ?? d?.documentId);
+    return {
+      id, documentId: d?.documentId != null ? num(d.documentId) : undefined,
+      formName: str(d?.formName), title: str(d?.title).slice(0, 300),
+      docStatus: d?.docStatus ? str(d.docStatus) : undefined, docStatusName: d?.docStatusName ? str(d.docStatusName) : undefined,
+      apprStatus: d?.apprStatus ? str(d.apprStatus) : undefined, apprStatusName: d?.apprStatusName ? str(d.apprStatusName) : undefined,
+      attachCount: num(d?.attachCount), commentCount: num(d?.commentCount),
+      drafterName: str(d?.drafterName), drafterDeptName: str(d?.drafterDeptName),
+      drafterPositionName: str(d?.drafterPositionName), draftedAt: d?.draftedAt ? str(d.draftedAt) : undefined,
+      emergency: !!d?.isEmergency, currentActivityUsers: currentUsers(d?.currentActivityUsers),
+      url: `/app/approval/document/${id}`,
+    };
+  });
+  const p = body?.page ?? {};
+  const offset = num(p.offset, 20) || 20;
+  const total = num(p.total, items.length);
+  const totalPage = num(p.totalPage, total ? Math.ceil(total / offset) : 0);
+  const page = num(p.page);
+  return {
+    items,
+    page: { page, offset, total, totalPage, lastPage: p.lastPage != null ? !!p.lastPage : totalPage <= 0 || page + 1 >= totalPage },
+  };
+}
+
+export function parseApprovalComments(body: any): ApprovalComment[] {
+  return arr(body?.data ?? body).map((c, i) => {
+    const createdAt = c?.createdAt ?? c?.createdDate ?? c?.regDate ?? c?.date ?? c?.completedAt;
+    return {
+      id: str(c?.id ?? c?.commentId ?? i),
+      author: str(c?.userName ?? c?.name ?? c?.writerName ?? c?.user?.name ?? c?.writer?.name ?? c?.drafterName),
+      content: str(c?.content ?? c?.comment ?? c?.body ?? c?.message ?? c?.text),
+      createdAt: createdAt != null && createdAt !== "" ? str(createdAt) : undefined,
+    };
+  });
+}
+
+export function parseApprovalDoc(body: any, comments?: any): ApprovalDocumentDetail {
+  const data = body?.data ?? {};
+  const d = data?.document ?? {};
+  const document: ApprovalDocument = {
+    id: num(d?.id ?? d?.documentId),
+    formName: str(d?.formName), title: str(d?.title), docStatusName: str(d?.docStatusName),
+    bodyHtml: str(d?.docBodyContent),
+    attaches: arr(d?.attaches).map((a) => ({
+      id: str(a?.id), name: str(a?.name), extention: str(a?.extention ?? a?.extension),
+      size: num(a?.size), download: a?.download != null ? str(a.download) : undefined,
+    })),
+    drafterName: str(d?.drafterName), drafterDeptName: str(d?.drafterDeptName),
+    drafterPositionName: str(d?.drafterPosionName ?? d?.drafterPositionName),
+    draftedAt: d?.draftedAt ? str(d.draftedAt) : undefined,
+  };
+  const groups = arr(data?.apprFlow?.activityGroups ?? data?.activityGroups).map((g) => ({
+    name: str(g?.name),
+    activities: arr(g?.activities).map((a) => ({
+      type: str(a?.type), name: str(a?.name), userName: str(a?.userName), userPosition: str(a?.userPosition),
+      deptName: str(a?.deptName), status: str(a?.status), statusName: str(a?.statusName), comment: str(a?.comment),
+      completedAt: a?.completedAt ? str(a.completedAt) : undefined,
+    })),
+  }));
+  const actionCheck: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(data?.actionCheck ?? {})) actionCheck[k] = !!v;
+  return {
+    document,
+    apprFlow: { activityGroups: groups },
+    actionCheck,
+    comments: comments == null ? [] : parseApprovalComments(comments),
+  };
 }
 
 /** Posts newer than lastMaxId (null = first observation → baseline, no notifications). */
@@ -338,6 +501,7 @@ export const LOCAL_MENU: MenuEntry[] = [
   { id: "l-noti", name: "알림", appName: "noti", url: "", custom: false, target: "local", local: "home", section: "메신저" },
   { id: "l-chat", name: "대화", appName: "chat", url: "", custom: false, target: "local", local: "chats", section: "메신저" },
   { id: "l-org", name: "조직도", appName: "org", url: "", custom: false, target: "local", local: "people", section: "메신저" },
+  { id: "l-flex", name: "flex (휴가·근무)", appName: "flex", url: "https://flex.team/home", custom: true, target: "portal", section: "메신저" },
 ];
 
 /** At most this many individual new-post notifications per check; the rest are summarised. */
@@ -416,6 +580,34 @@ export class PortalService {
   async mails(n = 5) { return parseMails(await this.get(`/api/mail/message/gadget?count=${n}`)); }
   /** "오늘 온 메일" — web POSTs {today:on}; the GET query form returns the same number. Without it = mailbox total. */
   async mailTodayCount() { return parseMailCount(await this.get("/api/mail/message/count?today=on")); }
+
+  async mailFolders() { return parseMailFolders(await this.get("/api/mail/folder/all")); }
+
+  async approvalList(box: ApprovalBox, page = 0, keyword = "") {
+    const a = normalizeApprovalListArgs(box, page, keyword);
+    const q = new URLSearchParams({
+      page: String(a.page), offset: "20", direction: "desc", duration: "all",
+      searchtype: a.keyword ? "title" : "", keyword: a.keyword,
+    });
+    return parseApprovalList(await this.get(`${APPROVAL_LIST_PATHS[a.box]}?${q.toString()}`));
+  }
+
+  async approvalCounts(): Promise<{ todo: number; upcoming: number }> {
+    const [todo, upcoming] = await Promise.all([
+      this.get("/api/approval/todo/count"),
+      this.get("/api/approval/upcoming/count"),
+    ]);
+    return { todo: parseApprovalCount(todo), upcoming: parseApprovalCount(upcoming) };
+  }
+
+  async approvalDoc(id: number | string): Promise<ApprovalDocumentDetail> {
+    const did = normalizeApprovalDocId(id);
+    const [body, comments] = await Promise.all([
+      this.get(`/api/approval/document/${did}`),
+      this.get(`/api/approval/document/${did}/comment`).catch(() => null),
+    ]);
+    return parseApprovalDoc(body, comments);
+  }
 
   private menuCache: { items: MenuEntry[]; source: "server" | "static"; at: number } | null = null;
   /** Server menu (cached 10 min), falling back to STATIC_MENU. Home ("홈") is dropped — the messenger has its own. */

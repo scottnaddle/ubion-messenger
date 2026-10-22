@@ -32,8 +32,8 @@ const hm = (s: string) => {
 
 const open = (url: string) => void api().portal.open(url).catch(() => undefined);
 
-function Card({ title, count, webUrl, state, children }: {
-  title: string; count?: number; webUrl: string; state?: PortalWidgetState; children: React.ReactNode;
+function Card({ title, count, webUrl, state, children, isStatic }: {
+  title: string; count?: number; webUrl: string; state?: PortalWidgetState; children: React.ReactNode; isStatic?: boolean;
 }) {
   return (
     <section className="home-card">
@@ -42,7 +42,7 @@ function Card({ title, count, webUrl, state, children }: {
         <button className="link" onClick={() => open(webUrl)}>웹에서 보기 ▸</button>
       </header>
       {state?.error && <div className="muted small home-err">불러오지 못했습니다 · 웹에서 확인하세요</div>}
-      {!state?.data && !state?.error ? <div className="muted small">불러오는 중…</div> : children}
+      {!isStatic && !state?.data && !state?.error ? <div className="muted small">불러오는 중…</div> : children}
     </section>
   );
 }
@@ -51,7 +51,7 @@ function Empty({ show, text }: { show: boolean; text: string }) {
   return show ? <div className="muted small home-empty">{text}</div> : null;
 }
 
-export function Home() {
+export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }) {
   const [snap, setSnap] = useState<Snap | null>(null);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState<number | null>(null);
@@ -95,10 +95,19 @@ export function Home() {
       </div>
       <div className="home-chips">
         {chips.map((c) => (
-          <button key={c.appName} className={`chip ${c.count ? "on" : ""}`} onClick={() => open(chipUrl(c.appName))}>
+          <button key={c.appName} className={`chip ${c.count ? "on" : ""}`} onClick={() => {
+            if (onLocal && (c.appName === "mail" || c.appName === "approval" || c.appName === "approval2")) {
+              onLocal(c.appName === "mail" ? "mail" : "approval");
+              return;
+            }
+            open(chipUrl(c.appName));
+          }}>
             {c.gadgetName || c.appName} {c.count}
           </button>
         ))}
+        <button className="chip" title="flex 승인 대기 — 건수는 flex 공개 API가 없어 표시하지 않습니다" onClick={() => open("https://flex.team/home")}>
+          flex 승인 대기 -
+        </button>
       </div>
       <p className="muted tiny home-hint">항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.</p>
       <div className="home-grid">
@@ -109,6 +118,12 @@ export function Home() {
               <span className="muted small"> {p.commentsCount ? `💬${p.commentsCount} ` : ""}{p.hasAttach ? "📎 " : ""}{ago(p.createdAt)}</span>
             </button></li>))}</ul>
           <Empty show={!!posts && !posts.items.length} text="최근 글이 없습니다" />
+        </Card>
+        <Card title="flex 승인 대기" webUrl="https://flex.team/home" isStatic>
+          <ul><li><button onClick={() => open("https://flex.team/home")}>
+            <span className="tag">flex</span> <span className="ellipsis">휴가·근무 승인 요청 보기</span>
+            <span className="muted small"> · 건수 미지원</span>
+          </button></li></ul>
         </Card>
         <Card title="오늘 일정" count={cal?.total} webUrl={`/app/calendar/daily/${new Date().toLocaleDateString("sv-SE")}`} state={w.calendar}>
           <ul>{cal?.items.map((e) => (

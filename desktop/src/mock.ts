@@ -80,6 +80,38 @@ export function installMockIfNeeded() {
       },
       open: async () => undefined,
       setActive: async () => undefined,
+      mailFolders: async () => ({
+        quota: { usageUnit: "1.2 GB", limitUnit: "10 GB", percent: 12 },
+        defaultFolders: [
+          { id: "1", name: "받은편지함", fullName: "Inbox", encName: "Inbox", depth: 0, newCnt: 2, unseenCnt: 2, totalCnt: 120 },
+          { id: "2", name: "보낸편지함", fullName: "Sent", encName: "Sent", depth: 0, newCnt: 0, unseenCnt: 0, totalCnt: 88 },
+        ],
+        userFolders: [{ id: "3", name: "업무", fullName: "Inbox/업무", encName: "Inbox%2F%EC%97%85%EB%AC%B4", depth: 1, newCnt: 0, unseenCnt: 1, totalCnt: 7 }],
+        userSharedFolders: [], userTags: [],
+      }),
+      approvalList: async () => ({
+        items: [{
+          id: 11, documentId: 11, formName: "지출결의서", title: "10월 법인카드 정산", docStatusName: "진행중",
+          apprStatusName: "결재대기", attachCount: 1, commentCount: 1, drafterName: "홍길동", drafterDeptName: "개발팀",
+          drafterPositionName: "매니저", draftedAt: isoNow, emergency: false, currentActivityUsers: [], url: "/app/approval/document/11",
+        }],
+        page: { page: 0, offset: 20, total: 1, totalPage: 1, lastPage: true },
+      }),
+      approvalCounts: async () => ({ todo: 1, upcoming: 0 }),
+      approvalDoc: async () => ({
+        document: {
+          id: 11, formName: "지출결의서", title: "10월 법인카드 정산", docStatusName: "진행중",
+          bodyHtml: "<h3>정산 내역</h3><table><tr><th>항목</th><th>금액</th></tr><tr><td>교통비</td><td>32,000원</td></tr></table>",
+          attaches: [{ id: "9", name: "영수증.pdf", extention: "pdf", size: 204800 }],
+          drafterName: "홍길동", drafterDeptName: "개발팀", drafterPositionName: "매니저", draftedAt: isoNow,
+        },
+        apprFlow: { activityGroups: [{ name: "결재선", activities: [
+          { type: "approval", name: "승인", userName: "김하늘", userPosition: "책임", deptName: "개발팀", status: "APPROVED", statusName: "승인", comment: "확인했습니다", completedAt: isoNow },
+          { type: "approval", name: "승인", userName: "이서준", userPosition: "선임", deptName: "개발팀", status: "WAIT", statusName: "대기", comment: "" },
+        ] }] },
+        actionCheck: { isApprovalWaitingUser: true },
+        comments: [{ id: "1", author: "김하늘", content: "확인했습니다", createdAt: isoNow }],
+      }),
     },
     pathForFile: () => "",
     platform: new URLSearchParams(location.search).get("platform") || "darwin",

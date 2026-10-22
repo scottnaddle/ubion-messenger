@@ -33,3 +33,23 @@ export function toElectronCookie(c: Pick<Cookie, "key" | "value" | "domain" | "p
   else if (ss === "none") out.sameSite = "no_restriction";
   return out;
 }
+
+/** flex.team (HR) and its subdomains — allowed in the in-app portal window (same persist:portal session). */
+export const FLEX_HOME = "https://flex.team/home";
+export function isFlexUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && !u.username && !u.password && (u.hostname === "flex.team" || u.hostname.endsWith(".flex.team"));
+  } catch {
+    return false;
+  }
+}
+/** Hosts the flex login/SSO chain passes through (flex offers email + Google sign-in). */
+export function isFlexSsoUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && ["accounts.google.com", "accounts.youtube.com"].includes(u.hostname);
+  } catch {
+    return false;
+  }
+}

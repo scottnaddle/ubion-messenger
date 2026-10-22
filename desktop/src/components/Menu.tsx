@@ -25,7 +25,8 @@ export function menuBadge(m: MenuEntry, badge: PortalBadge, boardNew: number): n
   return 0;
 }
 
-type Props = { badge: PortalBadge; unreadChats: number; onLocal: (v: "home" | "chats" | "people") => void };
+type LocalView = "home" | "chats" | "people" | "mail" | "approval";
+type Props = { badge: PortalBadge; unreadChats: number; onLocal: (v: LocalView) => void };
 
 export function Menu({ badge, unreadChats, onLocal }: Props) {
   const [items, setItems] = useState<MenuEntry[] | null>(null);
@@ -46,6 +47,7 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
 
   const click = (m: MenuEntry) => {
     if (m.target === "local" && m.local) return onLocal(m.local);
+    if (m.appName === "mail" || m.appName === "approval") return onLocal(m.appName);
     void api().portal.open(m.url).catch(() => setErr(`${m.name}을(를) 열지 못했습니다`));
   };
 
@@ -73,7 +75,7 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
               const n = m.appName === "chat" ? unreadChats : menuBadge(m, badge, boardNew);
               return (
                 <button key={m.id} className="menu-item" onClick={() => click(m)}
-                  title={m.target === "external" ? `${m.name} — 외부 브라우저에서 열림` : m.target === "local" ? m.name : `${m.name} — 포털 창에서 열기`}>
+                  title={m.target === "external" ? `${m.name} — 외부 브라우저에서 열림` : m.target === "local" || m.appName === "mail" || m.appName === "approval" ? `${m.name} — 메신저에서 열기` : `${m.name} — 포털 창에서 열기`}>
                   <span className="menu-ic"><Icon name={menuIcon(m)} size={22} />{n > 0 && <span className="rail-badge">{n > 99 ? "99+" : n}</span>}</span>
                   <span className="menu-name">{m.name}</span>
                   {m.target === "external" && <span className="menu-ext"><Icon name="external" size={12} /></span>}

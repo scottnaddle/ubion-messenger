@@ -20,7 +20,8 @@ import { MessengerCore } from "./core/messenger";
 import { Updater } from "./updater";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
-import { isPortalUrl, toElectronCookie } from "./core/portal-cookies";
+import { isPortalUrl, isFlexUrl, isFlexSsoUrl, toElectronCookie } from "./core/portal-cookies";
+import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
 import {
   clearPassword,
   loadPassword,
@@ -165,6 +166,10 @@ function portalUrl(rel: string): string | null {
 
 /** Open a portal deep link only on explicit user action (opening may mark items as read). */
 function openPortal(rel: string, mode?: "external" | "inapp") {
+  if (isFlexUrl(rel)) {
+    const fu = new URL(rel).toString();
+    return (mode || settings.portalOpenMode) === "external" ? shell.openExternal(fu) : openPortalWindow(fu);
+  }
   const url = portalUrl(rel);
   if (!url) {
     // Admin-defined custom menu links on other hosts (e.g. hrd.ubion.co.kr): OS browser only, never the SSO window.
@@ -223,20 +228,21 @@ async function openPortalWindow(url: string) {
   });
   portalWin.setMenu(portalNavMenu());
   const base = core.client.baseUrl;
+  const inWin = (u: string) => isPortalUrl(u, base) || isFlexUrl(u) || isFlexSsoUrl(u);
   portalWin.webContents.setWindowOpenHandler(({ url: u }) => {
-    if (isPortalUrl(u, base)) {
+    if (inWin(u)) {
       void portalWin?.loadURL(u);
     } else if (/^https?:/.test(u)) void shell.openExternal(u);
     return { action: "deny" };
   });
   portalWin.webContents.on("will-navigate", (e, u) => {
-    if (!isPortalUrl(u, base)) {
+    if (!inWin(u)) {
       e.preventDefault();
       if (/^https?:/.test(u)) void shell.openExternal(u);
     }
   });
   portalWin.webContents.on("will-redirect", (e, u) => {
-    if (!isPortalUrl(u, base)) {
+    if (!inWin(u)) {
       e.preventDefault();
       if (/^https?:/.test(u)) void shell.openExternal(u);
     }
@@ -470,6 +476,13 @@ function registerIpc() {
   handle("portal:open", (url: string, mode?: "external" | "inapp") => openPortal(String(url), mode));
   handle("portal:menu", (force?: boolean) => core.portal.menu(core.client.baseUrl, !!force));
   handle("portal:setActive", (active: boolean) => core.portal.setHomeActive(!!active));
+  handle("portal:mailFolders", () => core.portal.mailFolders());
+  handle("portal:approvalList", (box: unknown, page: unknown, keyword: unknown) => {
+    const a = normalizeApprovalListArgs(box, page, keyword);
+    return core.portal.approvalList(a.box, a.page, a.keyword);
+  });
+  handle("portal:approvalCounts", () => core.portal.approvalCounts());
+  handle("portal:approvalDoc", (id: unknown) => core.portal.approvalDoc(normalizeApprovalDocId(id)));
   handle("app:openExternal", (url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
   });
