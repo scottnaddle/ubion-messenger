@@ -20,6 +20,8 @@ const DEFAULT_TODO_SETTINGS: TodoSettings = {
   quietDuringMeetings: true,
   zoomNotifyMinutes: [10, 1],
   llmFallback: false,
+  llmBaseUrl: "https://api.deepseek.com",
+  llmModel: "deepseek-chat",
   politeMode: false,
 };
 
@@ -248,6 +250,35 @@ export class TodoStore {
       this.db.ignoreStreak[rk] = (this.db.ignoreStreak[rk] || 0) + 1;
     }
     this.persist();
+  }
+
+  /** Silent edit/drop by AI assist (does not count as user ignore). */
+  patchSuggestion(id: string, draft: Partial<TodoSuggestion["draft"]> | null) {
+    const s = this.db.suggestions.find((x) => x.id === id);
+    if (!s) return;
+    if (draft === null) this.db.suggestions = this.db.suggestions.filter((x) => x.id !== id);
+    else s.draft = { ...s.draft, ...draft };
+    this.persist();
+  }
+
+  private keyFile() {
+    return path.join(app.getPath("userData"), "llm-key.bin");
+  }
+  /** API key: safeStorage only; never logged or returned to the renderer. */
+  setLlmKey(key: string | null) {
+    const f = this.keyFile();
+    if (!key) {
+      try { fs.unlinkSync(f); } catch {}
+      return;
+    }
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("암호화 저장소를 사용할 수 없어요");
+    fs.writeFileSync(f, safeStorage.encryptString(key.trim()), { mode: 0o600 });
+  }
+  getLlmKey(): string | undefined {
+    try { return safeStorage.decryptString(fs.readFileSync(this.keyFile())); } catch { return undefined; }
+  }
+  hasLlmKey() {
+    return fs.existsSync(this.keyFile());
   }
 
   ignoreStreak(roomKey: string) {

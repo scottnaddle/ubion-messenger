@@ -41,6 +41,8 @@ type TodoSettings = {
   quietDuringMeetings: boolean;
   zoomNotifyMinutes: number[];
   llmFallback: boolean;
+  llmBaseUrl: string;
+  llmModel: string;
   politeMode: boolean;
 };
 
@@ -428,20 +430,7 @@ export function Todos({
               }}
             />
           </label>
-          <label className="row">
-            <div>
-              <div>LLM 폴백 (실험)</div>
-              <div className="muted tiny">기본 꺼짐 — 켜도 제공자가 없으면 호출하지 않습니다</div>
-            </div>
-            <input
-              type="checkbox"
-              className="switch"
-              checked={settings.llmFallback}
-              onChange={async (e) => {
-                setSettings(await api().call("todo:settings:set", { llmFallback: e.target.checked }));
-              }}
-            />
-          </label>
+          <AiAssist settings={settings} setSettings={setSettings} toast={toast} />
           <div className="row">
             <h4>{settings.allRooms ? "수집할 대화방 (끄면 제외)" : "수집할 대화방"}</h4>
             <div>
@@ -506,4 +495,73 @@ export function useTodoEvents(toast: (m: string, action?: { label: string; onCli
       }
     });
   }, [toast]);
+}
+
+function AiAssist({ settings, setSettings, toast }: { settings: TodoSettings; setSettings: (s: TodoSettings) => void; toast: (m: string) => void }) {
+  const [hasKey, setHasKey] = useState(false);
+  const [key, setKey] = useState("");
+  const [test, setTest] = useState("");
+  useEffect(() => {
+    api().call<{ hasKey: boolean }>("todo:llm:status").then((s) => setHasKey(s.hasKey)).catch(() => undefined);
+  }, []);
+  const set = async (patch: Partial<TodoSettings>) => setSettings(await api().call("todo:settings:set", patch));
+  return (
+    <div className="ai-assist" data-testid="ai-assist">
+      <h4>AI 보조 추출 (DeepSeek)</h4>
+      <p className="muted tiny warn">
+        켜면 할일인지 <b>애매한 문장만</b> 외부 서버(DeepSeek)로 보내 확인해요. 이름·전화·이메일·링크·Zoom 암호는 가린 뒤 보내요.
+        날짜는 앱이 직접 계산해요. 기본 꺼짐.
+      </p>
+      <label className="row">
+        <div>AI 보조 사용</div>
+        <input type="checkbox" className="switch" data-testid="ai-on" checked={settings.llmFallback} onChange={(e) => void set({ llmFallback: e.target.checked })} />
+      </label>
+      <label className="row">
+        <div>API 키</div>
+        <div>
+          <input type="password" autoComplete="off" data-testid="ai-key" placeholder={hasKey ? "저장됨 (바꾸려면 입력)" : "sk-…"} value={key} onChange={(e) => setKey(e.target.value)} />
+          <button
+            className="link small"
+            disabled={!key}
+            onClick={async () => {
+              const r = await api().call<{ hasKey: boolean }>("todo:llm:setKey", key);
+              setKey("");
+              setHasKey(r.hasKey);
+              toast("API 키를 안전하게 저장했어요");
+            }}
+          >
+            저장
+          </button>
+          {hasKey && (
+            <button className="link small muted" onClick={async () => setHasKey((await api().call<{ hasKey: boolean }>("todo:llm:setKey", null)).hasKey)}>
+              삭제
+            </button>
+          )}
+        </div>
+      </label>
+      <label className="row">
+        <div>모델</div>
+        <input defaultValue={settings.llmModel} onBlur={(e) => void set({ llmModel: e.target.value.trim() || "deepseek-chat" })} />
+      </label>
+      <label className="row">
+        <div>서버 주소</div>
+        <input defaultValue={settings.llmBaseUrl} onBlur={(e) => void set({ llmBaseUrl: e.target.value.trim() || "https://api.deepseek.com" })} />
+      </label>
+      <div className="row">
+        <button
+          className="link small"
+          disabled={!hasKey}
+          data-testid="ai-test"
+          onClick={async () => {
+            setTest("확인 중…");
+            const r = await api().call<{ ok: boolean; message: string }>("todo:llm:test");
+            setTest((r.ok ? "✓ " : "✗ ") + r.message);
+          }}
+        >
+          연결 테스트
+        </button>
+        <span className="muted tiny">{test}</span>
+      </div>
+    </div>
+  );
 }

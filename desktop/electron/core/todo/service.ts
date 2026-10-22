@@ -11,6 +11,7 @@ import { planReminders, bossIconPath } from "./reminders";
 import { buildZoomJoin } from "./zoom";
 import { todosToIcs } from "./ics";
 import type { TodoItem, TodoSettings } from "./types";
+import { DeepSeekClient, LlmQueue, finalizeDue, inBand, type FetchLike } from "./llm";
 
 export class TodoService {
   store = new TodoStore();
@@ -20,6 +21,12 @@ export class TodoService {
   private onPipeline: ((ev: PipelineEvent) => void) | null = null;
   private getCalendarBusy: (() => boolean) | null = null;
   private resourcesDir: string;
+  private llmQueue = new LlmQueue((m) => this.llmClient().classify(m));
+
+  llmClient(fetchImpl: FetchLike = (u, i) => fetch(u, i as any) as any) {
+    const s = this.store.getSettings();
+    return new DeepSeekClient({ baseUrl: s.llmBaseUrl, model: s.llmModel, getKey: () => this.store.getLlmKey(), fetch: fetchImpl, timeoutMs: 8000 });
+  }
 
   constructor(resourcesDir: string) {
     this.resourcesDir = resourcesDir;
@@ -78,10 +85,31 @@ export class TodoService {
       prior: prior.slice(-6),
     });
     if (ev && !fromHistory) this.onPipeline?.(ev);
+    if (ev?.type === "suggest" && !fromHistory) this.maybeAssist(ev.suggestion.id, msg, prior);
     else if (ev && fromHistory && ev.type === "auto") {
       // silent history backfill for enabled rooms
     }
     return ev;
+  }
+
+  /** Ambiguous band only, opt-in, key present. Failures leave the rule suggestion untouched. */
+  private maybeAssist(sugId: string, msg: ChatMessage, prior: ChatMessage[]) {
+    const s = this.store.getSettings();
+    const sug = this.store.suggestions().find((x) => x.id === sugId);
+    if (!s.llmFallback || !sug || !inBand(sug.draft.confidence ?? 0) || !this.store.hasLlmKey()) return;
+    const names = [msg.sendUserName, ...prior.map((p) => p.sendUserName)].filter(Boolean) as string[];
+    const anchor = msg.createdAt || new Date().toISOString();
+    this.llmQueue.push({
+      id: sugId, text: msg.message || "", names, anchorIso: anchor,
+      done: (v) => {
+        if (!v) return;
+        if (!v.isTask && v.confidence >= 0.8) return this.store.patchSuggestion(sugId, null);
+        if (v.isTask) {
+          const due = sug.draft.due || finalizeDue(v.dueText, anchor);
+          this.store.patchSuggestion(sugId, { title: v.title || sug.draft.title, due });
+        }
+      },
+    });
   }
 
   tick() {
