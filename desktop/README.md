@@ -45,3 +45,12 @@ UBION_USER=<id> UBION_PW="$(security find-generic-password -a <id> -s daou-coco 
 - macOS: `npm run dist:mac` (on a Mac / GitHub Actions `macos-14`) → `release/UBION-Messenger-<v>-{arm64,x64}.dmg` (unsigned:
   first launch via right-click → Open, or `xattr -dr com.apple.quarantine "/Applications/UBION Messenger.app"`)
 - CI: `.github/workflows/build.yml` builds both on push/tag and uploads artifacts.
+
+## 자동 업데이트 / 릴리스 (v1.0.3+)
+
+- 배포 저장소(공개, 설치 파일만): https://github.com/scottnaddle/ubion-messenger-releases
+- Windows: electron-updater 로 시작 시·4시간마다 확인 → 백그라운드 다운로드 → '새 버전 설치 후 다시 시작' 또는 종료 시 설치.
+- macOS(미서명): latest-mac.yml 로 새 버전 감지 → 맞는 아키텍처 dmg 를 ~/Downloads 로 받아 열기 → 응용 프로그램으로 끌어 '대치'.
+- 설정: 현재 버전, '업데이트 확인', 자동 확인 토글.
+- 릴리스: 버전 올리기 → commit/push → Mac 에서 `desktop/scripts/release.sh` (CI 대기·산출물 다운로드·gh release create). 토큰 불필요(gh 로그인 사용).
+- 검증: `node desktop/scripts/verify-update.mjs 1.0.2`

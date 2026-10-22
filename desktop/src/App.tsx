@@ -7,6 +7,7 @@ import { People } from "./components/People";
 import { SettingsModal } from "./components/SettingsModal";
 import { drawBadge } from "./lib/badge";
 import { Avatar, Icon } from "./components/ui";
+import { UpdateBanner } from "./components/UpdateBanner";
 
 export type Toast = { id: number; text: string; kind?: "error" | "info" };
 
@@ -186,6 +187,7 @@ export function App() {
         </div>
       </nav>
       <div className="main">
+        <UpdateBanner />
         {offline && (
           <div className={`banner ${!netOnline ? "bad" : "warn"}`}>
             {!netOnline

@@ -21,6 +21,7 @@ const api = {
   onOpenSettings: (cb: () => void) => sub("nav:settings", cb),
   onFocus: (cb: (f: boolean) => void) => sub("window:focus", cb),
   onBadge: (cb: (n: number) => void) => sub("badge:changed", cb),
+  onUpdate: (cb: (s: any) => void) => sub("update:status", cb),
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   platform: process.platform,
 };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type SessionUser, type Settings } from "../api";
 import { Avatar, Icon } from "./ui";
+import { useUpdateStatus } from "./UpdateBanner";
 
 export function SettingsModal({
   settings, user, onChange, onClose, onLogout,
@@ -75,8 +76,35 @@ export function SettingsModal({
             </div>
             {settings.downloadDir && <button className="link small" onClick={() => set({ downloadDir: "" })}>기본값</button>}
           </div>
+          <h4>업데이트</h4>
+          <UpdateRow />
+          <Toggle k="autoUpdate" label="자동으로 업데이트 확인" desc="시작할 때와 4시간마다 확인합니다" />
           <p className="muted tiny about">UBION Messenger {info?.version} · {info?.platform}</p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function UpdateRow() {
+  const s = useUpdateStatus();
+  const label = !s ? "" :
+    s.state === "checking" ? "확인 중…" :
+    s.state === "none" ? "최신 버전입니다" :
+    s.state === "available" ? `새 버전 ${s.version} 있음` :
+    s.state === "downloading" ? `${s.version} 다운로드 중 ${s.percent ?? 0}%` :
+    s.state === "downloaded" ? `${s.version} 설치 준비됨` :
+    s.state === "error" ? `확인 실패: ${s.message}` : "";
+  return (
+    <div className="row">
+      <div>
+        <div>현재 버전 {s?.current}</div>
+        {label && <div className="muted tiny">{label}</div>}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {s?.state === "available" && <button className="primary small" onClick={() => api().call("update:download")}>다운로드</button>}
+        {s?.state === "downloaded" && <button className="primary small" onClick={() => api().call("update:install")}>{api().platform === "darwin" ? "설치 파일 열기" : "설치 후 다시 시작"}</button>}
+        <button className="link small" disabled={s?.state === "checking" || s?.state === "downloading"} onClick={() => api().call("update:check")}>업데이트 확인</button>
       </div>
     </div>
   );

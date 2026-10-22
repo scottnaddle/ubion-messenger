@@ -208,3 +208,5 @@ input, textarea, select { font: inherit; color: inherit; }
 .msg:not(.mine) .readers { left: 0; right: auto; }
 .readers-h { font-size: .75em; font-weight: 700; color: var(--muted); margin: 4px 2px; }
 .readers-row { display: flex; align-items: center; gap: 6px; font-size: .85em; padding: 3px 2px; }
+
+.banner.info { background: var(--accent-soft); color: var(--fg); display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap; }

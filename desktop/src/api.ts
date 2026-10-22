@@ -7,7 +7,7 @@ export type Settings = {
   serverUrl: string; username: string; rememberMe: boolean; autoLogin: boolean;
   theme: "system" | "light" | "dark"; notifications: boolean; notificationPreview: boolean;
   notificationSound: boolean; launchAtLogin: boolean; closeToTray: boolean; downloadDir: string;
-  fontSize: number; hasSavedPassword?: boolean;
+  fontSize: number; autoUpdate: boolean; hasSavedPassword?: boolean;
 };
 
 export type Bridge = {
@@ -17,6 +17,7 @@ export type Bridge = {
   onOpenSettings(cb: () => void): () => void;
   onFocus(cb: (f: boolean) => void): () => void;
   onBadge(cb: (n: number) => void): () => void;
+  onUpdate(cb: (s: UpdateStatus) => void): () => void;
   pathForFile(f: File): string;
   platform: string;
 };
@@ -38,3 +39,9 @@ export function media(p?: string | null): string {
   if (!path.startsWith("/")) path = "/" + path;
   return "ubion-media://h" + path;
 }
+
+export type UpdateStatus = {
+  state: "idle" | "checking" | "none" | "available" | "downloading" | "downloaded" | "error";
+  current: string; version?: string; percent?: number; file?: string; message?: string; pageUrl?: string;
+  checkedAt?: number; supported?: boolean; platform?: string;
+};

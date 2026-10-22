@@ -15,6 +15,7 @@ export type Settings = {
   closeToTray: boolean;
   downloadDir: string;
   fontSize: number;
+  autoUpdate: boolean;
 };
 
 export const DEFAULTS: Settings = {
@@ -30,6 +31,7 @@ export const DEFAULTS: Settings = {
   closeToTray: true,
   downloadDir: "",
   fontSize: 14,
+  autoUpdate: true,
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");

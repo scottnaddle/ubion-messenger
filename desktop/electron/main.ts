@@ -16,6 +16,7 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import { MessengerCore } from "./core/messenger";
+import { Updater } from "./updater";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
 import {
@@ -47,6 +48,7 @@ let settings: Settings = loadSettings();
 let core = new MessengerCore(settings.serverUrl);
 let unsubscribe: Array<() => void> = [];
 let startHidden = false;
+const updater = new Updater(() => win);
 
 const resPath = (f: string) =>
   app.isPackaged ? path.join(process.resourcesPath, "resources", f) : path.join(__dirname, "../../resources", f);
@@ -235,6 +237,7 @@ function registerIpc() {
     saveSettings(settings);
     if ("launchAtLogin" in patch) applyLoginItem();
     if ("theme" in patch) nativeTheme.themeSource = settings.theme;
+    if ("autoUpdate" in patch) updater.schedule(settings.autoUpdate);
     if (patch.rememberMe === false) {
       clearPassword();
       settings.autoLogin = false;
@@ -318,6 +321,11 @@ function registerIpc() {
     else shell.showItemInFolder(target);
     return target;
   });
+  handle("update:status", () => ({ ...updater.status, supported: updater.supported, platform: process.platform }));
+  handle("update:check", () => updater.check());
+  handle("update:download", () => updater.downloadMac());
+  handle("update:install", () => updater.install());
+  handle("update:openPage", () => updater.openReleasePage());
   handle("org:users", (force?: boolean) => core.users(force));
   handle("org:departments", () => core.departments());
   handle("org:presence", () => core.allPresence());
@@ -395,6 +403,7 @@ app.whenReady().then(async () => {
   startHidden = process.argv.includes("--hidden") || !!app.getLoginItemSettings().wasOpenedAsHidden;
   createWindow();
 
+  updater.schedule(settings.autoUpdate);
   powerMonitor.on("resume", () => (core.reconnect(), void core.sync("resume")));
   powerMonitor.on("unlock-screen", () => core.reconnect());
   let away = false;

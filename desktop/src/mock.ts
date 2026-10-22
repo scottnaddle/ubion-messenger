@@ -34,7 +34,7 @@ export function installMockIfNeeded() {
     email: `user${id}@example.com`, thumbnail: "", departmentIds: [i % 2 ? 20 : 21],
   }));
   const handlers: Record<string, (...a: any[]) => any> = {
-    "settings:get": () => ({ serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", fontSize: 14, hasSavedPassword: true }),
+    "settings:get": () => ({ serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", fontSize: 14, autoUpdate: true, hasSavedPassword: true }),
     "auth:state": () => ({ user: new URLSearchParams(location.search).get("login") ? null : me, conn: "online" }),
     "rooms:list": () => rooms,
     "msg:history": (_k: string, before?: number) => (before ? [] : msgs),
@@ -56,6 +56,7 @@ export function installMockIfNeeded() {
     onOpenSettings: () => () => undefined,
     onFocus: () => () => undefined,
     onBadge: () => () => undefined,
+    onUpdate: () => () => undefined,
     pathForFile: () => "",
     platform: new URLSearchParams(location.search).get("platform") || "darwin",
   };

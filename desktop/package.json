@@ -1,7 +1,7 @@
 {
   "name": "ubion-messenger",
   "productName": "UBION Messenger",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "UBION Messenger \u2014 DaouOffice desktop client",
   "main": "out/main/index.js",
   "author": "UBION",
@@ -17,12 +17,14 @@
     "pack": "electron-builder --dir",
     "dist": "electron-vite build && electron-builder",
     "dist:win": "electron-vite build && electron-builder --win nsis --x64 --publish never",
-    "dist:mac": "electron-vite build && electron-builder --mac dmg --arm64 --x64 --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac dmg zip --arm64 --x64 --publish never",
     "core:live": "tsx scripts/live-smoke.ts",
     "shot": "electron-vite build && node scripts/shot.cjs",
-    "smoke:bundle": "esbuild scripts/live-smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-smoke/live-smoke.cjs"
+    "smoke:bundle": "esbuild scripts/live-smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-smoke/live-smoke.cjs",
+    "release": "bash scripts/release.sh"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tough-cookie": "^5.0.0"
@@ -36,12 +38,12 @@
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^2.3.0",
+    "esbuild": "^0.21.5",
+    "playwright-core": "^1.48.0",
     "tsx": "^4.19.2",
     "typescript": "~5.7.2",
     "vite": "^5.4.11",
-    "vitest": "^2.1.8",
-    "playwright-core": "^1.48.0",
-    "esbuild": "^0.21.5"
+    "vitest": "^2.1.8"
   },
   "build": {
     "appId": "global.ubion.messenger",
@@ -65,12 +67,19 @@
             "arm64",
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "identity": null,
       "hardenedRuntime": false,
       "icon": "resources/icon.png",
-      "artifactName": "UBION-Messenger-${version}-${arch}.${ext}",
+      "artifactName": "UBION-Messenger-${version}-${arch}-mac.${ext}",
       "extendInfo": {
         "NSUserNotificationAlertStyle": "alert"
       }
@@ -94,7 +103,14 @@
       "createDesktopShortcut": true,
       "shortcutName": "UBION Messenger"
     },
-    "publish": null,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "scottnaddle",
+        "repo": "ubion-messenger-releases",
+        "releaseType": "release"
+      }
+    ],
     "artifactName": "UBION-Messenger-${version}-${os}-${arch}.${ext}",
     "extraResources": [
       {
