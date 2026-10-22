@@ -265,6 +265,41 @@ async function blurShot(page, file) {
     results.fail.push("todos-rail-missing");
   }
 
+  // Wizard (Cmd+K)
+  try {
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+    await sleep(1500);
+    const wiz = page.locator(".wizard input");
+    if (await wiz.count()) {
+      results.ok.push("wizard-open");
+      await blurShot(page, "09-wizard.png");
+      await wiz.fill("회의실");
+      await sleep(600);
+      await blurShot(page, "10-wizard-회의실.png");
+      await wiz.fill("차량");
+      await sleep(600);
+      await blurShot(page, "11-wizard-차량.png");
+      await wiz.fill("워크스");
+      await sleep(600);
+      await blurShot(page, "12-wizard-works.png");
+      // Open Works hub only (GET page) — do not submit anything
+      const worksHit = page.locator('.wizard-item:has-text("Works")').first();
+      if (await worksHit.count()) {
+        await worksHit.click();
+        await sleep(2500);
+        results.ok.push("wizard-open-works");
+        await blurShot(page, "13-works-portal.png");
+      } else {
+        await page.keyboard.press("Escape");
+      }
+    } else {
+      results.fail.push("wizard-ui-missing");
+      await blurShot(page, "09-wizard-missing.png");
+    }
+  } catch (e) {
+    results.fail.push("wizard:" + e.message);
+  }
+
   await blurShot(page, "08-end.png");
   fs.writeFileSync(path.join(OUT, "results.json"), JSON.stringify(results, null, 2));
   L("RESULTS " + JSON.stringify(results.ok) + " FAIL " + JSON.stringify(results.fail));
