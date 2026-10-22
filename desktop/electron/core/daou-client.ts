@@ -1,4 +1,5 @@
 import { CookieJar } from "tough-cookie";
+import { normalizeAttach } from "./attach";
 import type { AttachModel, ChatMessage, Department, RoomMember, LoginOptions, Person, Room, RoomKind, SessionUser } from "./types";
 import { canonMessageId, ensureTimestamp } from "./messages";
 
@@ -413,20 +414,7 @@ export class DaouClient {
 
 export function normalizeRestMessage(m: Record<string, any>, roomKey?: string): ChatMessage {
   const a = m.chatMessageAttachFileModel;
-  const attach: AttachModel | undefined =
-    a && a.cryptId
-      ? {
-          cryptId: String(a.cryptId),
-          name: String(a.name || m.message || "file"),
-          extention: a.extention,
-          size: a.size != null ? Number(a.size) : undefined,
-          imageFile: !!a.imageFile,
-          thumbSmall: a.thumbSmall,
-          thumbMid: a.thumbMid,
-          thumbLarge: a.thumbLarge,
-          thumbOriginal: a.thumbOriginal,
-        }
-      : undefined;
+  const attach: AttachModel | undefined = normalizeAttach(a, m.message ? String(m.message) : undefined);
   return ensureTimestamp({
     messageId: canonMessageId(m.messageId),
     roomKey,

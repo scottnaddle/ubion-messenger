@@ -2,6 +2,8 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } f
 import { api, media, type ChatMessage, type Presence, type Room, type SessionUser } from "../api";
 import { applyReadReceipt, dedupeByMessageId, mergeReceipts, upsertMessage } from "../../electron/core/messages";
 import { isSendEnter } from "../lib/composer";
+import { FileCard, MediaViewer } from "./FileCard";
+import { LinkPreview } from "./LinkPreview";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
 import type { Toast } from "../App";
@@ -232,7 +234,7 @@ export function ChatView({
         <div className="composer readonly muted">이 채널은 읽기 전용입니다</div>
       )}
       {dragOver && <div className="drop-hint">여기에 놓아 파일 보내기</div>}
-      {viewer?.attach && <ImageViewer m={viewer} onClose={() => setViewer(null)} toast={toast} />}
+      {viewer?.attach && <MediaViewer m={viewer} onClose={() => setViewer(null)} toast={toast} />}
     </section>
   );
 }
@@ -259,16 +261,8 @@ function MessageRow({
   onImage: () => void; onRetry: () => void; toast: (t: string) => void;
 }) {
   const deleted = m.messageType === "DELETEDMESSAGE";
-  const a = m.attach;
-  const isImage = !!a && (a.imageFile || /^(png|jpe?g|gif|webp|bmp|heic)$/i.test(a.extention || ""));
-  const download = async (open: boolean) => {
-    if (!a || m.messageId == null) return;
-    try {
-      await api().call("files:download", a.cryptId, m.messageId, a.name, open);
-    } catch (e) {
-      toast(`다운로드 실패: ${(e as Error).message}`);
-    }
-  };
+  // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.
+  const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
@@ -277,22 +271,13 @@ function MessageRow({
         <div className="msg-line">
           {deleted ? (
             <div className="bubble deleted">삭제된 메시지입니다</div>
-          ) : a && isImage ? (
-            <button className="img-bubble" onClick={onImage} title={a.name}>
-              <img src={media(a.thumbMid || a.thumbLarge || a.thumbSmall)} alt={a.name} loading="lazy" />
-            </button>
           ) : a ? (
-            <div className="bubble file">
-              <span className="file-ic"><Icon name="file" size={26} /></span>
-              <div className="file-info">
-                <div className="file-name">{a.name}</div>
-                <div className="muted tiny">{fileSize(a.size)}</div>
-              </div>
-              <button className="icon-btn" title="열기" onClick={() => download(true)}><Icon name="image" size={18} /></button>
-              <button className="icon-btn" title="다른 이름으로 저장" onClick={() => download(false)}><Icon name="download" size={18} /></button>
-            </div>
+            <FileCard m={a === m.attach ? m : { ...m, attach: a }} mine={mine} onOpenMedia={onImage} toast={toast} />
           ) : (
-            <div className="bubble"><Linkified text={m.message} /></div>
+            <div className="bubble-col">
+              <div className="bubble"><Linkified text={m.message} /></div>
+              {!m.pending && <LinkPreview text={m.message} />}
+            </div>
           )}
           <div className="msg-meta">
             {m.failed ? (
@@ -374,35 +359,6 @@ function Composer({
   );
 }
 
-function ImageViewer({ m, onClose, toast }: { m: ChatMessage; onClose: () => void; toast: (t: string) => void }) {
-  const a = m.attach!;
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onClose]);
-  const src = m.messageId != null ? media(`/api/chat/files/${encodeURIComponent(a.cryptId)}?messageId=${m.messageId}`) : "";
-  return (
-    <div className="viewer" onClick={onClose}>
-      <div className="viewer-bar" onClick={(e) => e.stopPropagation()}>
-        <span className="file-name">{a.name}</span>
-        <span className="muted tiny">{fileSize(a.size)}</span>
-        <div className="grow" />
-        <button className="icon-btn" title="저장" onClick={() => api().call("files:download", a.cryptId, m.messageId, a.name, false).catch((e) => toast(e.message))}>
-          <Icon name="download" />
-        </button>
-        <button className="icon-btn" title="닫기 (Esc)" onClick={onClose}><Icon name="close" /></button>
-      </div>
-      <img
-        className="viewer-img"
-        src={media(a.thumbOriginal || a.thumbLarge) || src}
-        onError={(e) => { if (src && (e.target as HTMLImageElement).src !== src) (e.target as HTMLImageElement).src = src; }}
-        onClick={(e) => e.stopPropagation()}
-        alt={a.name}
-      />
-    </div>
-  );
-}
 
 function SearchPanel({ room, onClose }: { room: Room; onClose: () => void }) {
   const [q, setQ] = useState("");

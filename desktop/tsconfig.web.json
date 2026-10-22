@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": ["vite/client"]
   },
-  "include": ["src/**/*", "electron/core/types.ts", "electron/core/messages.ts", "electron/core/portal.ts"]
+  "include": ["src/**/*", "electron/core/types.ts", "electron/core/messages.ts", "electron/core/portal.ts", "electron/core/attach.ts"]
 }

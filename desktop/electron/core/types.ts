@@ -29,6 +29,14 @@ export type AttachModel = {
   thumbMid?: string;
   thumbLarge?: string;
   thumbOriginal?: string;
+  videoFile?: boolean;
+  videoThumb?: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  /** ISO time after which the server no longer serves the file. */
+  expiresAt?: string;
+  expired?: boolean;
 };
 
 export type ChatMessage = {
@@ -102,3 +110,13 @@ export type MessengerEventMap = {
 export type ReadReceipt = { roomKey: string; readerSeq: number; beginId?: number; endId?: number };
 
 export type RoomMember = { userId: number; name: string; image: string; position: string };
+
+/** OpenGraph link preview card data (fetched in main, rendered in chat). */
+export type LinkPreview = {
+  url: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  image?: string;
+  internal?: boolean;
+};

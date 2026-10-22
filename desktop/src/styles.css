@@ -325,3 +325,42 @@ input, textarea, select { font: inherit; color: inherit; }
 .approval-comment:first-of-type { border-top: 0; }
 .approval-comment-head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
 .approval-comment-body { margin-top: 3px; white-space: pre-wrap; word-break: break-word; }
+
+/* ---------- 1.0.10: DaouOffice-style file cards, media thumbnails, link previews ---------- */
+.bubble-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 100%; }
+.msg.mine .bubble-col { align-items: flex-end; }
+.file-card { width: 280px; border-radius: 4px 14px 14px 14px; background: #4b8bf5; color: #fff; padding: 12px 14px 8px; user-select: text; }
+.msg.mine .file-card { border-radius: 14px 4px 14px 14px; background: #3a6fd8; }
+.file-card .fc-top { display: flex; gap: 10px; align-items: flex-start; }
+.fc-dl { flex: none; width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.85); color: #fff; background: transparent; display: grid; place-items: center; cursor: pointer; }
+.fc-dl:hover:not(:disabled) { background: rgba(255,255,255,.15); }
+.fc-body { flex: 1; min-width: 0; }
+.fc-title { display: flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
+.fc-fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-badge { flex: none; font-size: 9px; font-weight: 700; padding: 2px 4px; border-radius: 3px; color: #fff; border: 1px solid rgba(255,255,255,.5); }
+.fc-meta { display: flex; justify-content: space-between; gap: 8px; opacity: .9; margin-top: 4px; }
+.file-card .fc-actions { border-top: 1px solid rgba(255,255,255,.35); margin-top: 10px; padding-top: 6px; display: flex; justify-content: center; gap: 10px; }
+.file-card .fc-actions .link { color: #fff; }
+.fc-sep { opacity: .5; }
+.file-card.expired { background: var(--bg3); color: var(--muted); cursor: not-allowed; }
+.file-card.expired .fc-dl { border-color: var(--line); color: var(--muted); cursor: not-allowed; }
+.fc-expired { margin-top: 4px; }
+.media-card { display: flex; flex-direction: column; gap: 3px; max-width: 240px; }
+.media-card .fc-meta { color: var(--muted); }
+.media-card .fc-actions { display: flex; gap: 8px; }
+.media-card .fc-actions .link { color: var(--accent); }
+.fc-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-card .img-bubble { position: relative; padding: 0; cursor: zoom-in; max-width: 240px; }
+.media-card .img-bubble img.thumb { display: block; max-width: 240px; max-height: 240px; width: auto; height: auto; min-width: 60px; min-height: 40px; object-fit: contain; }
+.thumb-fallback { width: 160px; height: 110px; display: grid; place-items: center; color: var(--muted); }
+.video-bubble { cursor: pointer !important; }
+.video-frame { min-width: 160px; min-height: 110px; background: #111; display: grid; place-items: center; }
+.play-ic { position: absolute; inset: 0; margin: auto; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; font-size: 18px; padding-left: 3px; }
+.dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.65); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 4px; }
+.link-card { display: flex; gap: 10px; align-items: stretch; text-align: left; width: 300px; max-width: 100%; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--bg2); color: var(--fg); padding: 8px 10px; cursor: pointer; }
+.link-card:hover { background: var(--bg3); }
+.lc-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.lc-site { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lc-title { font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.lc-desc { color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.lc-img { flex: none; width: 64px; height: 64px; object-fit: cover; border-radius: 6px; align-self: center; }

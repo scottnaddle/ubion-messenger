@@ -25,7 +25,11 @@ export function installMockIfNeeded() {
       attach: { cryptId: "x", name: "메인화면_시안.png", size: 482133, imageFile: true, thumbMid: svg("#4f7cff", "메인화면 시안 v3"), thumbOriginal: svg("#4f7cff", "메인화면 시안 v3") } },
     { messageId: 104, sendUserSeq: 2, sendUserName: "김하늘", message: "다크 모드 색상도 같이 반영했어요.\n피드백 주시면 바로 수정하겠습니다.", createdAt: iso(29), userImage: "" },
     { messageId: 105, sendUserSeq: 1, sendUserName: "홍길동", message: "", messageType: "SENDFILE", createdAt: iso(12), userImage: "", needConfirmCount: 0,
-      attach: { cryptId: "y", name: "요구사항정의서_v2.docx", size: 1832000 } },
+      attach: { cryptId: "y", name: "요구사항정의서_v2.docx", size: 1832000, expiresAt: "2027-10-23T14:59:59.000Z" } },
+    { messageId: 1051, sendUserSeq: 2, sendUserName: "김하늘", message: "", messageType: "SENDFILE", createdAt: iso(11.8), userImage: "",
+      attach: { cryptId: "v", name: "시연영상.mp4", size: 84 * 1024 * 1024, videoThumb: svg("#d6336c", "시연영상"), duration: 95, expiresAt: "2027-10-23T14:59:59.000Z" } },
+    { messageId: 1052, sendUserSeq: 2, sendUserName: "김하늘", message: "", messageType: "SENDFILE", createdAt: iso(11.6), userImage: "",
+      attach: { cryptId: "z", name: "지난분기_실적.xlsx", size: 80 * 1024 * 1024, expiresAt: "2025-01-01T00:00:00.000Z" } },
     { messageId: 106, sendUserSeq: 1, sendUserName: "홍길동", message: "요구사항 문서 최신본입니다. 오후 회의 때 같이 봐요. https://example.com/wiki", createdAt: iso(11), userImage: "", needConfirmCount: 1 },
     { messageId: 107, sendUserSeq: 2, sendUserName: "김하늘", message: "네, 오후 3시에 회의실에서 봬요!", createdAt: iso(2), userImage: "" },
   ];
@@ -59,6 +63,8 @@ export function installMockIfNeeded() {
   };
   const bridge: Bridge = {
     async call(ch, ...args) {
+      if (ch === "link:preview") return { url: args[0], title: "팀 위키 — 요구사항 정리", description: "1.0.10 파일 카드/링크 미리보기 요구사항과 일정", siteName: "example.com", image: "https://example.com/og.png" };
+      if (ch === "link:image") return svg("#1f9d55", "OG");
       return handlers[ch]?.(...args);
     },
     onEvent: () => () => undefined,

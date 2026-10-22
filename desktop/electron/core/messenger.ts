@@ -1,3 +1,4 @@
+import { normalizeAttach } from "./attach";
 import { EventEmitter } from "node:events";
 import { DaouClient, sortRooms } from "./daou-client";
 import { PortalService } from "./portal";
@@ -63,20 +64,8 @@ export function routeXmppBody(obj: Record<string, any>, me: number) {
     message: String(obj.message ?? ""),
     createdAt: obj.createdAt || obj.sendDate || obj.sendAt || new Date().toISOString(),
     userImage: String(fr.userImg || ""),
-    messageType: obj.messageType ? String(obj.messageType) : a?.cryptId ? "SENDFILE" : "TEXT",
-    attach: a?.cryptId
-      ? {
-          cryptId: String(a.cryptId),
-          name: String(a.name || obj.message || "file"),
-          extention: a.extention,
-          size: a.size != null ? Number(a.size) : undefined,
-          imageFile: !!a.imageFile,
-          thumbSmall: a.thumbSmall,
-          thumbMid: a.thumbMid,
-          thumbLarge: a.thumbLarge,
-          thumbOriginal: a.thumbOriginal,
-        }
-      : undefined,
+    messageType: obj.messageType ? String(obj.messageType) : normalizeAttach(a) ? "SENDFILE" : "TEXT",
+    attach: normalizeAttach(a, obj.message ? String(obj.message) : undefined),
   };
   const receipt =
     type === "confirm" && fromSeq != null && seq != null

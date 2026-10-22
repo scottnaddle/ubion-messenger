@@ -17,6 +17,8 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import { MessengerCore } from "./core/messenger";
+import { fetchLinkPreview, fetchPreviewImage, PreviewCache } from "./core/link-preview";
+import { MediaCache } from "./core/media-cache";
 import { Updater } from "./updater";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
@@ -512,6 +514,7 @@ function registerIpc() {
   );
   handle("auth:logout", async () => {
     await core.logout("user");
+    mediaCache.clear();
     await clearPortalSession();
     flexAutoLoginTried = false;
     flexPendingCache = { count: null, at: 0 };
@@ -569,6 +572,29 @@ function registerIpc() {
     else shell.showItemInFolder(target);
     return target;
   });
+  handle("files:save", async (cryptId: string, messageId: number, name: string, mode: "downloads" | "saveAs" | "open") => {
+    const { data } = await core.client.fetchBinary(core.client.fileUrlPath(cryptId, messageId));
+    const dir = settings.downloadDir || app.getPath("downloads");
+    let target = uniquePath(path.join(dir, path.basename(name) || "file"));
+    if (mode === "saveAs") {
+      const r = await dialog.showSaveDialog(win!, { defaultPath: path.join(dir, path.basename(name)) });
+      if (r.canceled || !r.filePath) return null;
+      target = r.filePath;
+    }
+    fs.writeFileSync(target, data);
+    if (mode === "open") await shell.openPath(target);
+    else shell.showItemInFolder(target);
+    return target;
+  });
+  handle("link:preview", (url: string) =>
+    linkCache.get(url, () => fetchLinkPreview(url, { companyBase: core.client.baseUrl }))
+  );
+  handle("link:image", (url: string) =>
+    ogImageCache.get(url, async () => {
+      const d = await fetchPreviewImage(url, { companyBase: core.client.baseUrl });
+      return d ? { url, image: d } : null;
+    }).then((r) => r?.image ?? null)
+  );
   handle("update:status", () => ({ ...updater.status, supported: updater.supported, platform: process.platform }));
   handle("update:check", () => updater.check());
   handle("update:download", () => updater.downloadMac());
@@ -618,6 +644,9 @@ function guessMime(p: string) {
 }
 
 // ---------- media protocol: authenticated thumbnails/avatars/images ----------
+const linkCache = new PreviewCache();
+const ogImageCache = new PreviewCache(100);
+const mediaCache = new MediaCache(64 * 1024 * 1024, 4 * 1024 * 1024);
 function registerMediaProtocol() {
   protocol.handle("ubion-media", async (req) => {
     try {
@@ -625,8 +654,10 @@ function registerMediaProtocol() {
       let p = decodeURIComponent(u.pathname.replace(/^\/+/, "/")) + u.search;
       if (p.startsWith("/api/chat/files/") && !/[?&]userSeq=/.test(p) && core.user)
         p += (p.includes("?") ? "&" : "?") + `userSeq=${core.user.id}`;
-      const { data, contentType } = await core.client.fetchBinary(p);
-      return new Response(data, { headers: { "content-type": contentType, "cache-control": "max-age=86400" } });
+      const hit = mediaCache.get(p);
+      const { data, contentType } = hit || (await core.client.fetchBinary(p));
+      if (!hit) mediaCache.set(p, { data, contentType });
+      return new Response(new Uint8Array(data), { headers: { "content-type": contentType, "cache-control": "max-age=86400" } });
     } catch {
       return new Response("", { status: 404 });
     }
