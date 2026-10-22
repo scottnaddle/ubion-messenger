@@ -50,3 +50,13 @@ export const baseconfig = { code: "200", message: "OK", data: { contextRoot: "/"
   mm(56, 18, "새 링크", "Admin 링크", "http://wdr.ubion.co.kr/coco/link/admin_link.html", { systemMenu: false, depth: 1, location: "iframe", accessDeviceOption: "DIVIDE", mobileAccessSetting: "white" }),
   mm(58, 19, "새 링크", "사이버연수원", "http://hrd.ubion.co.kr/", { systemMenu: false, depth: 1, location: "iframe", accessDeviceOption: "DIVIDE", mobileAccessSetting: "white" }),
 ] } };
+/** GET /api/calendar/user/312/calendar (live shape). */
+export const calendars = { code: "200", message: "OK", data: [ { id: 312, name: "내 일정", type: "normal" }, { id: 11, name: "휴일일정", type: "holiday" }, { id: 10, name: "전사일정", type: "company" } ] };
+/** GET /api/calendar/event (live shape; holiday recurrences come back even outside timeMin/timeMax). */
+export const events = { code: "200", message: "OK", data: [
+  { id: "39985", calendarId: 312, calendarName: "내 일정", type: "normal", summary: "사업계획 심의", location: "대회의실", timeType: "timed", startTime: "2026-10-22T10:00:00.000+09:00", endTime: "2026-10-22T16:00:00.000+09:00" },
+  { id: "40003", calendarId: 312, calendarName: "내 일정", type: "normal", summary: "내방", timeType: "timed", startTime: "2026-10-22T09:30:00.000+09:00", endTime: "2026-10-22T10:30:00.000+09:00" },
+  { id: "50001", calendarId: 10, calendarName: "전사일정", type: "company", summary: "창립 워크숍", timeType: "allday", startTime: "2026-10-21T00:00:00.000+09:00", endTime: "2026-10-23T00:00:00.000+09:00" },
+  { id: "50002", calendarId: 312, calendarName: "내 일정", type: "normal", summary: "어제 끝난 일정", timeType: "timed", startTime: "2026-10-21T22:00:00.000+09:00", endTime: "2026-10-22T00:00:00.000+09:00" },
+  { id: "24_1798124400000", calendarId: 11, calendarName: "휴일일정", type: "holiday", summary: "크리스마스", timeType: "allday", startTime: "2026-12-25T00:00:00.000+09:00", endTime: "2026-12-25T00:00:00.000+09:00" },
+] };

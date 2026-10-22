@@ -22,6 +22,10 @@ export type Settings = {
   portalOpenMode: "external" | "inapp";
   /** true once the user explicitly picked portalOpenMode in settings (≤1.0.5 persisted "external" without a UI). */
   portalOpenModeChosen?: boolean;
+  /** Hidden (no UI): allow plaintext XMPP TCP 5222 if BOSH/HTTPS cannot connect. Off by default. */
+  xmppTcpFallback: boolean;
+  /** Highest 전사게시판 post id seen (number only) — lets posts made while the app was closed notify on next start. */
+  portalLastPostId?: number;
 };
 
 export const DEFAULTS: Settings = {
@@ -40,6 +44,7 @@ export const DEFAULTS: Settings = {
   autoUpdate: true,
   portalPostNotify: true,
   portalOpenMode: "inapp",
+  xmppTcpFallback: false,
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");

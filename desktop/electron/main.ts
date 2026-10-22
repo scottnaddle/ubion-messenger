@@ -82,6 +82,13 @@ function handle(channel: string, fn: (...args: any[]) => any) {
 
 function wireCore() {
   unsubscribe.forEach((u) => u());
+  core.allowTcpFallback = !!settings.xmppTcpFallback;
+  core.portal.persistedMaxPostId = typeof settings.portalLastPostId === "number" ? settings.portalLastPostId : null;
+  core.portal.onPostBaseline = (id) => {
+    if (settings.portalLastPostId === id) return;
+    settings = { ...settings, portalLastPostId: id };
+    saveSettings(settings);
+  };
   core.client.onSessionChanged = () => void syncPortalCookies().catch((e) => console.warn("portal cookie sync failed:", (e as Error).name));
   const fwd = <K extends keyof MessengerEventMap>(k: K) =>
     core.on(k, (p) => send("core:event", { type: k, payload: p }));
@@ -98,6 +105,7 @@ function wireCore() {
     fwd("portalWidget"),
     fwd("portalBadge"),
     core.on("portalNewPost", (p) => notifyNewPost(p)),
+    core.on("portalNewPostSummary", (p) => notifyNewPostSummary(p)),
     core.on("rooms", () => updateBadge()),
     core.on("message", (m) => maybeNotify(m)),
   ];
@@ -245,6 +253,17 @@ function notifyNewPost(p: MessengerEventMap["portalNewPost"]) {
     silent: !settings.notificationSound,
   });
   n.on("click", () => void openPortal(p.url).catch(() => undefined));
+  n.show();
+}
+
+function notifyNewPostSummary(p: MessengerEventMap["portalNewPostSummary"]) {
+  if (!settings.notifications || !settings.portalPostNotify || !Notification.isSupported()) return;
+  const n = new Notification({
+    title: "전사게시판",
+    body: `${p.count}${p.atLeast ? "개 이상의" : "개"} 새 글이 있습니다`,
+    silent: !settings.notificationSound,
+  });
+  n.on("click", () => void openPortal("/app/board").catch(() => undefined));
   n.show();
 }
 

@@ -300,45 +300,50 @@ export class XmppClient extends EventEmitter {
   }
 
   private handleOnline(s: string) {
-    const head = s.slice(0, s.indexOf(">") + 1);
-    if (s.startsWith("<iq")) {
-      const type = attr(head, "type");
-      const id = attr(head, "id") || "";
-      const from = attr(head, "from") || this.opts.domain;
-      if (type === "get") {
-        if (s.includes("urn:xmpp:ping")) this.write(`<iq type='result' id='${id}' to='${from}'/>`);
-        else if (s.includes("jabber:iq:version"))
-          this.write(
-            `<iq type='result' id='${id}' to='${from}'><query xmlns='jabber:iq:version'><name>UBION Messenger</name><version>1.0</version></query></iq>`
-          );
-        else
-          this.write(
-            `<iq type='error' id='${id}' to='${from}'><error type='cancel'><feature-not-implemented xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>`
-          );
-      }
-      return;
+    handleOnlineStanza(s, { write: (x) => this.write(x), domain: this.opts.domain, emit: (e, p) => this.emit(e, p) });
+  }
+}
+
+/** Online-phase stanza handling shared by the TCP and BOSH transports (iq ping/version, presence, JSON message bodies). */
+export function handleOnlineStanza(s: string, ctx: { write: (x: string) => void; domain: string; emit: (event: "presence" | "body", payload: any) => void }) {
+  const head = s.slice(0, s.indexOf(">") + 1);
+  if (s.startsWith("<iq")) {
+    const type = attr(head, "type");
+    const id = attr(head, "id") || "";
+    const from = attr(head, "from") || ctx.domain;
+    if (type === "get") {
+      if (s.includes("urn:xmpp:ping")) ctx.write(`<iq type='result' id='${id}' to='${from}'/>`);
+      else if (s.includes("jabber:iq:version"))
+        ctx.write(
+          `<iq type='result' id='${id}' to='${from}'><query xmlns='jabber:iq:version'><name>UBION Messenger</name><version>1.0</version></query></iq>`
+        );
+      else
+        ctx.write(
+          `<iq type='error' id='${id}' to='${from}'><error type='cancel'><feature-not-implemented xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>`
+        );
     }
-    if (s.startsWith("<presence")) {
-      const from = attr(head, "from") || "";
-      const [bare, resource = ""] = from.split("/");
-      const local = bare.split("@")[0];
-      const status = /<status>([\s\S]*?)<\/status>/.exec(s)?.[1];
-      const show = /<show>([\s\S]*?)<\/show>/.exec(s)?.[1];
-      this.emit("presence", { local, resource, type: attr(head, "type"), status: status && xmlUnescape(status), show });
-      return;
+    return;
+  }
+  if (s.startsWith("<presence")) {
+    const from = attr(head, "from") || "";
+    const [bare, resource = ""] = from.split("/");
+    const local = bare.split("@")[0];
+    const status = /<status>([\s\S]*?)<\/status>/.exec(s)?.[1];
+    const show = /<show>([\s\S]*?)<\/show>/.exec(s)?.[1];
+    ctx.emit("presence", { local, resource, type: attr(head, "type"), status: status && xmlUnescape(status), show });
+    return;
+  }
+  if (s.startsWith("<message")) {
+    const bm = /<body[^>]*>([\s\S]*?)<\/body>/.exec(s);
+    if (!bm) return;
+    const inner = bm[1].replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, "$1");
+    const text = inner === bm[1] ? xmlUnescape(inner) : inner;
+    let obj: Record<string, any>;
+    try {
+      obj = JSON.parse(text);
+    } catch {
+      obj = { type: "raw", message: text };
     }
-    if (s.startsWith("<message")) {
-      const bm = /<body[^>]*>([\s\S]*?)<\/body>/.exec(s);
-      if (!bm) return;
-      const inner = bm[1].replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, "$1");
-      const text = inner === bm[1] ? xmlUnescape(inner) : inner;
-      let obj: Record<string, any>;
-      try {
-        obj = JSON.parse(text);
-      } catch {
-        obj = { type: "raw", message: text };
-      }
-      this.emit("body", obj);
-    }
+    ctx.emit("body", obj);
   }
 }

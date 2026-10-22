@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
 import type {
-  ApprovalDoc, BoardPost, MailItem, PortalBadge, PortalNoti, PortalSummary, PortalWidgetId, PortalWidgetState,
+  ApprovalDoc, BoardPost, CalendarEvent, MailItem, PortalBadge, PortalNoti, PortalSummary, PortalWidgetId, PortalWidgetState,
 } from "../../electron/core/portal";
 
 type Snap = { summary: PortalSummary | null; badge: PortalBadge; widgets: Partial<Record<PortalWidgetId, PortalWidgetState>> };
@@ -24,6 +24,11 @@ function ago(s?: string) {
   if (m < 60 * 24) return `${Math.round(m / 60)}시간 전`;
   return new Date(t).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
 }
+
+const hm = (s: string) => {
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
+};
 
 const open = (url: string) => void api().portal.open(url).catch(() => undefined);
 
@@ -77,6 +82,7 @@ export function Home() {
   const todo = w.approvalTodo?.data as { items: ApprovalDoc[]; total: number } | undefined;
   const upcoming = w.approvalUpcoming?.data as { items: ApprovalDoc[]; total: number } | undefined;
   const noti = w.noti?.data as { items: PortalNoti[]; total: number } | undefined;
+  const cal = w.calendar?.data as { items: CalendarEvent[]; total: number } | undefined;
   const mail = w.mail?.data as ({ items: MailItem[]; total: number; today?: number }) | undefined;
   const chips = snap?.summary?.chips || [];
 
@@ -103,6 +109,14 @@ export function Home() {
               <span className="muted small"> {p.commentsCount ? `💬${p.commentsCount} ` : ""}{p.hasAttach ? "📎 " : ""}{ago(p.createdAt)}</span>
             </button></li>))}</ul>
           <Empty show={!!posts && !posts.items.length} text="최근 글이 없습니다" />
+        </Card>
+        <Card title="오늘 일정" count={cal?.total} webUrl={`/app/calendar/daily/${new Date().toLocaleDateString("sv-SE")}`} state={w.calendar}>
+          <ul>{cal?.items.map((e) => (
+            <li key={`${e.calendarId}/${e.id}`}><button onClick={() => open(e.url)}>
+              <span className="tag">{e.allDay ? "종일" : `${hm(e.start)}–${hm(e.end)}`}</span> <span className="ellipsis">{e.summary}</span>
+              {e.location && <span className="muted small"> · {e.location}</span>}
+            </button></li>))}</ul>
+          <Empty show={!!cal && !cal.items.length} text="오늘 일정이 없습니다" />
         </Card>
         <Card title="결재 대기" count={todo?.total ?? snap?.badge.approval} webUrl="/app/approval" state={w.approvalTodo}>
           <ul>{todo?.items.map((d) => (

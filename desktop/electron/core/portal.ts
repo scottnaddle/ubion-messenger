@@ -30,7 +30,11 @@ export type PortalList<T> = { items: T[]; total: number };
  */
 export type PortalBadge = { approval: number; noti: number; mail: number };
 
-export type PortalWidgetId = "posts" | "approvalTodo" | "approvalUpcoming" | "noti" | "mail";
+export type CalendarEvent = {
+  id: string; calendarId: number; calendarName: string; summary: string; location: string;
+  allDay: boolean; start: string; end: string; type: string; url: string;
+};
+export type PortalWidgetId = "posts" | "approvalTodo" | "approvalUpcoming" | "noti" | "mail" | "calendar";
 export type PortalWidgetData = {
   posts: PortalList<BoardPost>;
   approvalTodo: PortalList<ApprovalDoc>;
@@ -38,6 +42,7 @@ export type PortalWidgetData = {
   noti: PortalList<PortalNoti>;
   /** today = "오늘 온 메일" count (web: /api/mail/message/count?today=on). NOT unread, NOT mailbox total. */
   mail: PortalList<MailItem> & { today?: number };
+  calendar: PortalList<CalendarEvent>;
 };
 export type PortalWidgetState<K extends PortalWidgetId = PortalWidgetId> = {
   id: K; data?: PortalWidgetData[K]; error?: string; updatedAt?: number;
@@ -48,6 +53,8 @@ export type PortalEvents = {
   portalWidget: PortalWidgetState;
   portalNewPost: { boardId: number; postId: number; boardName: string; summary: string; url: string };
   portalBadge: PortalBadge;
+  /** More new posts than individual notifications (MAX_POST_NOTIFY); `atLeast` = the catch-up window was full. */
+  portalNewPostSummary: { count: number; atLeast: boolean };
 };
 
 type Fetcher = (path: string, init?: { method?: string }) => Promise<{ status: number; text: string }>;
@@ -63,6 +70,8 @@ export const PORTAL_WHITELIST: RegExp[] = [
   /^\/api\/my\/noti\/unread$/,
   /^\/api\/home\/noti\/count$/,
   /^\/api\/userside\/baseconfig$/,
+  /^\/api\/calendar\/user\/\d+\/calendar$/,
+  /^\/api\/calendar\/event$/,
   /^\/api\/mail\/message\/gadget$/,
   /^\/api\/mail\/message\/count$/,
 ];
@@ -205,6 +214,65 @@ export function detectNewPosts(posts: BoardPost[], lastMaxId: number | null): { 
   return { fresh: posts.filter((p) => p.id > lastMaxId).sort((a, b) => a.id - b.id), maxId };
 }
 
+// ---------------- calendar ('오늘 일정' card) ----------------
+/**
+ * The web calendar app (not the broken gadget endpoint /api/calendar/user/me/event/daily, which 500s) loads:
+ *   GET /api/calendar/user/{userId}/calendar                     → my visible calendars (ids)
+ *   GET /api/calendar/event?timeMin&timeMax&includingAttendees=true&calendarIds[]=…  → events
+ * Note: for recurring holiday entries the server returns occurrences outside the range → filter client-side.
+ */
+const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+/** Local-time ISO with offset, e.g. 2026-10-22T00:00:00.000+09:00 (what the web sends). */
+export function isoLocal(d: Date): string {
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? "+" : "-";
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}${sign}${pad(Math.floor(Math.abs(off) / 60))}:${pad(Math.abs(off) % 60)}`;
+}
+export function dayBounds(now: Date): { start: Date; end: Date } {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  return { start, end };
+}
+export function calendarIdsOf(body: any): number[] {
+  return arr(body?.data).map((c) => num(c?.id)).filter((n) => n > 0);
+}
+export function eventsPath(ids: number[], now: Date): string {
+  const { start, end } = dayBounds(now);
+  const q = new URLSearchParams({ timeMin: isoLocal(start), timeMax: isoLocal(end), includingAttendees: "true" });
+  for (const id of ids) q.append("calendarIds[]", String(id));
+  return `/api/calendar/event?${q.toString()}`;
+}
+export function eventUrl(calendarId: number, id: string) {
+  return `/app/calendar/${calendarId}/event/${encodeURIComponent(id)}`;
+}
+/** Parse /api/calendar/event and keep only events overlapping `now`'s local day; all-day first, then by start. */
+export function parseTodayEvents(body: any, now: Date): PortalList<CalendarEvent> {
+  const { start, end } = dayBounds(now);
+  const items = arr(body?.data)
+    .map((e) => {
+      const allDay = str(e?.timeType) === "allday";
+      const s0 = new Date(str(e?.startTime)), e0 = new Date(str(e?.endTime || e?.startTime));
+      return { e, allDay, s0, e0 };
+    })
+    .filter(({ s0, e0, allDay }) => {
+      if (Number.isNaN(s0.getTime())) return false;
+      const endT = Number.isNaN(e0.getTime()) ? s0 : e0;
+      // all-day end is inclusive date (start==end for one day)
+      const endCmp = allDay ? new Date(endT.getFullYear(), endT.getMonth(), endT.getDate(), 23, 59, 59, 999) : endT;
+      return s0 <= end && (allDay ? endCmp >= start : endCmp > start || s0 >= start);
+    })
+    .sort((a, b) => (a.allDay === b.allDay ? a.s0.getTime() - b.s0.getTime() : a.allDay ? -1 : 1))
+    .map(({ e, allDay }) => {
+      const calendarId = num(e.calendarId);
+      const id = str(e.id);
+      return {
+        id, calendarId, calendarName: str(e.calendarName), summary: str(e.summary).slice(0, 200), location: str(e.location).slice(0, 120),
+        allDay, start: str(e.startTime), end: str(e.endTime || e.startTime), type: str(e.type), url: eventUrl(calendarId, id),
+      };
+    });
+  return { items, total: items.length };
+}
+
 // ---------------- menu ('메뉴' tab) ----------------
 /**
  * One entry of the DaouOffice app menu. Source: GET /api/userside/baseconfig → data.menuConfigModel
@@ -272,6 +340,18 @@ export const LOCAL_MENU: MenuEntry[] = [
   { id: "l-org", name: "조직도", appName: "org", url: "", custom: false, target: "local", local: "people", section: "메신저" },
 ];
 
+/** At most this many individual new-post notifications per check; the rest are summarised. */
+export const MAX_POST_NOTIFY = 5;
+/** How many posts to look at on the first check after start when a persisted baseline exists. */
+export const CATCHUP_POSTS = 20;
+
+/** Split fresh posts into individual notifications (newest MAX_POST_NOTIFY, oldest first) + a summary when more. */
+export function planPostNotifications(fresh: BoardPost[], windowFull: boolean): { notify: BoardPost[]; summary: { count: number; atLeast: boolean } | null } {
+  if (fresh.length <= MAX_POST_NOTIFY && !windowFull) return { notify: fresh, summary: null };
+  const notify = fresh.slice(-MAX_POST_NOTIFY);
+  return { notify, summary: fresh.length > MAX_POST_NOTIFY || windowFull ? { count: fresh.length, atLeast: windowFull } : null };
+}
+
 // ---------------- service ----------------
 export const POLL_FOREGROUND_MS = 60_000;
 export const POLL_BACKGROUND_MS = 4 * 60_000;
@@ -287,6 +367,12 @@ export class PortalService {
   private summary: PortalSummary | null = null;
   private badge: PortalBadge = { approval: 0, noti: 0, mail: 0 };
   private lastMaxPostId: number | null = null;
+  /** Last-seen max post id persisted across runs (number only). null = first-ever run → silent baseline. */
+  persistedMaxPostId: number | null = null;
+  /** Current portal user id (for /api/calendar/user/{id}/calendar). */
+  getUserId: () => number | null = () => null;
+  /** Called whenever the max seen post id grows, so the host can persist it. */
+  onPostBaseline: (id: number) => void = () => undefined;
   private inflight = new Map<string, Promise<any>>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private failures = 0;
@@ -347,6 +433,14 @@ export class PortalService {
     return this.menuCache;
   }
 
+  async todayEvents(now = new Date()): Promise<PortalList<CalendarEvent>> {
+    const uid = this.getUserId();
+    if (!uid) throw new Error("no user");
+    const ids = calendarIdsOf(await this.get(`/api/calendar/user/${uid}/calendar`));
+    if (!ids.length) return { items: [], total: 0 };
+    return parseTodayEvents(await this.get(eventsPath(ids, now)), now);
+  }
+
   snapshot() {
     return { summary: this.summary, badge: this.badge, widgets: Object.fromEntries(this.widgets) as Partial<Record<PortalWidgetId, PortalWidgetState>> };
   }
@@ -369,10 +463,19 @@ export class PortalService {
     }
   }
 
-  private checkPosts(list: PortalList<BoardPost>) {
-    const { fresh, maxId } = detectNewPosts(list.items, this.lastMaxPostId);
+  private checkPosts(list: PortalList<BoardPost>, catchUp: boolean) {
+    const base = this.lastMaxPostId ?? this.persistedMaxPostId;
+    const { fresh, maxId } = detectNewPosts(list.items, base);
     this.lastMaxPostId = maxId;
-    for (const p of fresh) this.emit("portalNewPost", { boardId: p.boardId, postId: p.id, boardName: p.boardName, summary: p.summary, url: p.url });
+    // catch-up window "full" = every fetched post is new → there may be even more
+    const windowFull = catchUp && list.items.length >= CATCHUP_POSTS && fresh.length >= list.items.length;
+    const { notify, summary } = planPostNotifications(fresh, windowFull);
+    for (const p of notify) this.emit("portalNewPost", { boardId: p.boardId, postId: p.id, boardName: p.boardName, summary: p.summary, url: p.url });
+    if (summary) this.emit("portalNewPostSummary", summary);
+    if (maxId != null && maxId !== this.persistedMaxPostId) {
+      this.persistedMaxPostId = maxId;
+      this.onPostBaseline(maxId);
+    }
   }
 
   /** Light set: summary + badge counts + company posts (new-post detection). */
@@ -383,11 +486,14 @@ export class PortalService {
       this.approvalCount(),
       this.unreadNotiCount(),
       mailToday,
-      this.companyPosts(5).then((l) => {
-        this.widgets.set("posts", { id: "posts", data: l, updatedAt: Date.now() });
+      (async () => {
+        const catchUp = this.lastMaxPostId == null && this.persistedMaxPostId != null;
+        const l = await this.companyPosts(catchUp ? CATCHUP_POSTS : 5);
+        const shown = { ...l, items: l.items.slice(0, 5) };
+        this.widgets.set("posts", { id: "posts", data: shown, updatedAt: Date.now() });
         this.emit("portalWidget", this.widgets.get("posts")!);
-        this.checkPosts(l);
-      }),
+        this.checkPosts(l, catchUp);
+      })(),
     ]);
     const [, a, n, m] = results;
     const mailChip = this.summary?.chips.find((c) => c.appName === "mail");
@@ -410,6 +516,7 @@ export class PortalService {
       this.widget("approvalUpcoming", () => this.approvals("upcoming", 5)),
       this.widget("noti", () => this.notis(10)),
       this.widget("mail", async () => ({ ...(await this.mails(5)), today: this.badge.mail })),
+      this.widget("calendar", () => this.todayEvents()),
     ]);
     return okLight && oks.every(Boolean);
   }

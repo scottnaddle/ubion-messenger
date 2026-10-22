@@ -99,6 +99,7 @@ describe("PortalService", () => {
     "/api/approval/upcoming": F.approvalUpcoming, "/api/approval/todo/count": F.approvalCount, "/api/my/noti": F.noti,
     "/api/my/noti/unread": F.noti, "/api/mail/message/gadget": F.mail, "/api/mail/message/count": F.mailCountTotal,
     "/api/mail/message/count?today=on": F.mailCountToday, "/api/home/noti/count": F.homeNotiCount,
+    "/api/calendar/user/1/calendar": F.calendars, "/api/calendar/event": F.events,
   };
   const mk = () => {
     const calls: Array<{ path: string; method?: string }> = [];
@@ -109,6 +110,7 @@ describe("PortalService", () => {
     });
     const events: Array<[string, any]> = [];
     const svc = new PortalService(fetcher, (e, p) => events.push([e, p]));
+    svc.getUserId = () => 1;
     return { svc, calls, events, fetcher };
   };
 
@@ -118,7 +120,7 @@ describe("PortalService", () => {
     expect(calls.every((c) => c.method === "GET")).toBe(true);
     const types = events.map((e) => e[0]);
     expect(types).toContain("portalSummary");
-    expect(types.filter((t) => t === "portalWidget").length).toBe(5);
+    expect(types.filter((t) => t === "portalWidget").length).toBe(6);
     expect(types).not.toContain("portalNewPost");
     expect(svc.snapshot().badge).toEqual({ approval: 3, noti: 862, mail: 37 });
     expect(calls.map((c) => c.path)).toContain("/api/mail/message/count?today=on");

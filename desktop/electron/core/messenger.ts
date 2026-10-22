@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { DaouClient, sortRooms } from "./daou-client";
 import { PortalService } from "./portal";
 import { XmppClient } from "./xmpp";
+import { BoshClient } from "./bosh";
 import { xmppKeyFromLoginId } from "./xmpp-key";
 import { canonMessageId } from "./messages";
 import type {
@@ -102,7 +103,14 @@ export class MessengerCore {
   readonly client: DaouClient;
   /** Read-only portal home (GET whitelist), shares the client's GOSSOcookie session. */
   readonly portal: PortalService;
-  private xmpp: XmppClient | null = null;
+  private xmpp: XmppClient | BoshClient | null = null;
+  /** Realtime transport in use ("bosh" = XMPP over HTTPS, default; "tcp" = plaintext 5222 fallback). */
+  transport: "bosh" | "tcp" | null = null;
+  /** Hidden setting: allow plaintext TCP 5222 if BOSH cannot connect (off by default). */
+  allowTcpFallback = false;
+  /** BOSH failures (before ever online) that trigger the TCP fallback when allowed. */
+  tcpFallbackAfter = 3;
+  log: (msg: string) => void = (m) => console.log(`[core] ${m}`);
   private em = new EventEmitter();
   private rooms = new Map<string, Room>();
   private presence = new Map<number, Map<string, Presence>>();
@@ -123,6 +131,7 @@ export class MessengerCore {
     this.client = new DaouClient(serverUrl);
     this.portal = new PortalService((path) => this.client.request(path, { method: "GET" }), (e, p) => this.emit(e, p as any));
     this.em.setMaxListeners(50);
+    this.portal.getUserId = () => this.client.user?.id ?? null;
   }
 
   on<K extends keyof MessengerEventMap>(e: K, l: Listener<K>) {
@@ -157,15 +166,19 @@ export class MessengerCore {
   shutdown() {
     this.portal.stop();
     this.stopPolling();
+    this.xmppGen++;
     this.xmpp?.stop();
     this.xmpp = null;
+    this.transport = null;
   }
 
   async logout(reason?: string) {
     this.portal.reset();
     this.stopPolling();
+    this.xmppGen++;
     this.xmpp?.stop();
     this.xmpp = null;
+    this.transport = null;
     await this.client.logout();
     this.rooms.clear();
     this.presence.clear();
@@ -181,19 +194,57 @@ export class MessengerCore {
     this.emit("connection", { state, error });
   }
 
-  private startXmpp(host: string) {
-    this.xmpp?.stop();
+  /** XMPP credentials for BOSH as the web gets them (GET /api/bosh/user → jid + subInfo); derived key as fallback. */
+  private async boshCreds(): Promise<{ username: string; password: string; domain: string }> {
     const u = this.client.user!;
-    const x = new XmppClient({
+    try {
+      const res = await this.client.request("/api/bosh/user", { method: "GET" });
+      const d = JSON.parse(res.text)?.data;
+      if (res.status === 200 && d?.jid && d?.subInfo) {
+        const [local, domain] = String(d.jid).split("@");
+        return { username: local, password: String(d.subInfo), domain: domain || this.client.xmppDomain };
+      }
+    } catch {
+      /* fall through */
+    }
+    return { username: String(u.repId), password: xmppKeyFromLoginId(this.client.loginIdForXmpp()), domain: this.client.xmppDomain };
+  }
+
+  private startXmpp(host: string, forceTcp = false) {
+    this.xmppGen++;
+    this.xmpp?.stop();
+    this.xmpp = null;
+    this.transport = null;
+    if (forceTcp) return this.attachXmpp(new XmppClient({
       host,
       port: 5222,
       domain: this.client.xmppDomain,
-      username: String(u.repId),
+      username: String(this.client.user!.repId),
       password: xmppKeyFromLoginId(this.client.loginIdForXmpp()),
       resource: this.client.resource,
+    }), "tcp");
+    const gen = ++this.xmppGen;
+    void this.boshCreds().then((c) => {
+      if (gen !== this.xmppGen || !this.client.user) return;
+      const url = `${this.client.baseUrl}/http-bind/`;
+      const x = new BoshClient({ url, domain: c.domain, username: c.username, password: c.password, resource: this.client.resource });
+      x.on("state", (st: string) => {
+        if (st === "offline" && !x.everOnline && this.allowTcpFallback && x.failuresBeforeOnline >= this.tcpFallbackAfter && this.xmpp === x) {
+          this.log(`realtime: BOSH failed ${x.failuresBeforeOnline}x, falling back to TCP 5222 (plaintext, enabled in settings)`);
+          this.startXmpp(host, true);
+        }
+      });
+      this.attachXmpp(x, "bosh");
     });
+  }
+  private xmppGen = 0;
+
+  private attachXmpp(x: XmppClient | BoshClient, transport: "bosh" | "tcp") {
+    this.transport = transport;
+    this.log(transport === "bosh" ? `realtime transport: BOSH (XMPP over HTTPS ${this.client.baseUrl}/http-bind/)` : `realtime transport: TCP 5222 (plaintext fallback)`);
     let wasOnline = false;
     x.on("state", (s: string, err?: string) => {
+      if (s !== "connecting") this.log(`realtime ${transport}: ${s}${err ? ` (${err})` : ""}`);
       if (s === "online") {
         this.setConn("online");
         // catch up on anything missed while disconnected
@@ -212,7 +263,10 @@ export class MessengerCore {
       this.presence.set(id, per);
       this.emit("presence", { userId: id, presence: this.presenceOf(id) });
     });
-    x.on("body", (obj: Record<string, any>) => this.onBody(obj));
+    x.on("body", (obj: Record<string, any>) => {
+      if (process.env.UBION_DEBUG_REALTIME) this.log(`realtime ${transport}: stanza type=${String(obj?.type)} subtype=${String(obj?.subtype ?? "")}`);
+      this.onBody(obj);
+    });
     this.xmpp = x;
     x.start();
   }
