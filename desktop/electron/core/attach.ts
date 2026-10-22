@@ -8,6 +8,13 @@ import type { AttachModel } from "./types";
  */
 const EXPIRY_KEYS = ["expiredAt", "expireAt", "expireDate", "expiredDate", "expiryDate", "expirationDate", "validDate", "validUntil", "endDate", "deleteDate", "fileExpireDate"];
 const VIDEO_THUMB_KEYS = ["videoThumb", "videoThumbnail", "thumbVideo", "posterUrl", "thumbnail"];
+/**
+ * Live (2026-10-23): the server model has NO expiry field (keys: cryptId,name,path,extention,size,preview,mobilePreview,
+ * download,imageFile,thumb*). The official client shows "유효기간 : ~ upload+1y" (sent 2026.10.23 → 2027.10.23), so the
+ * label is derived from createdAt + this retention unless the server ever sends an explicit date. `download:false` or
+ * messageType DELETEDFILE = no longer downloadable.
+ */
+export const CHAT_FILE_RETENTION_DAYS = 365;
 const DURATION_KEYS = ["duration", "playTime", "runningTime", "videoDuration"];
 
 export const IMAGE_EXT = /^(png|jpe?g|gif|webp|bmp|heic|heif|svg)$/i;
@@ -44,7 +51,7 @@ export function parseExpiry(v: unknown): string | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
-export function normalizeAttach(a: Record<string, any> | null | undefined, fallbackName?: string): AttachModel | undefined {
+export function normalizeAttach(a: Record<string, any> | null | undefined, fallbackName?: string, createdAt?: string): AttachModel | undefined {
   if (!a || typeof a !== "object") return undefined;
   const cryptId = str(a.cryptId ?? a.cryptAttachText ?? a.fileId ?? a.attachId);
   if (!cryptId) return undefined;
@@ -52,11 +59,15 @@ export function normalizeAttach(a: Record<string, any> | null | undefined, fallb
   const extention = str(a.extention ?? a.extension) ?? (extOf(name) || undefined);
   let expiresAt: string | undefined;
   for (const k of EXPIRY_KEYS) if (a[k] != null && (expiresAt = parseExpiry(a[k]))) break;
+  if (!expiresAt && createdAt) {
+    const t = Date.parse(createdAt);
+    if (Number.isFinite(t)) expiresAt = parseExpiry(new Date(t + CHAT_FILE_RETENTION_DAYS * 86400_000 + 9 * 3600_000).toISOString().slice(0, 10));
+  }
   let duration: number | undefined;
   for (const k of DURATION_KEYS) if (a[k] != null && Number.isFinite(Number(a[k]))) { duration = Number(a[k]); break; }
   let videoThumb: string | undefined;
   for (const k of VIDEO_THUMB_KEYS) if ((videoThumb = str(a[k]))) break;
-  const expiredFlag = a.expired === true || a.isExpired === true || a.expire === true || a.status === "EXPIRED";
+  const expiredFlag = a.expired === true || a.isExpired === true || a.expire === true || a.status === "EXPIRED" || a.download === false || a.download === "false";
   return {
     cryptId,
     name,

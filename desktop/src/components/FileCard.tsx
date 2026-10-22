@@ -13,7 +13,7 @@ export function FileCard({
   m, mine, onOpenMedia, toast,
 }: { m: ChatMessage; mine: boolean; onOpenMedia: () => void; toast: (t: string) => void }) {
   const a = m.attach!;
-  const missing = !a.cryptId;
+  const missing = !a.cryptId && !a.expired;
   const expired = missing || isExpired(a);
   const kind = attachKind(a);
   const exp = expiryLabel(a);

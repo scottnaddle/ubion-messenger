@@ -477,7 +477,7 @@ export class DaouClient {
 
 export function normalizeRestMessage(m: Record<string, any>, roomKey?: string): ChatMessage {
   const a = m.chatMessageAttachFileModel;
-  const attach: AttachModel | undefined = normalizeAttach(a, m.message ? String(m.message) : undefined);
+  const attach: AttachModel | undefined = normalizeAttach(a, m.message ? String(m.message) : undefined, m.createdAt ? String(m.createdAt) : undefined);
   return ensureTimestamp({
     messageId: canonMessageId(m.messageId),
     roomKey,

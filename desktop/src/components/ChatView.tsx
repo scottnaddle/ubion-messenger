@@ -309,7 +309,8 @@ function MessageRow({
 }) {
   const deleted = m.messageType === "DELETEDMESSAGE";
   // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.
-  const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message } : undefined);
+  const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message }
+    : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || "삭제된 파일", expired: true } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
