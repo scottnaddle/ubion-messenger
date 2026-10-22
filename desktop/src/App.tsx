@@ -9,6 +9,7 @@ import { drawBadge } from "./lib/badge";
 import { Avatar, Icon } from "./components/ui";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./components/Home";
+import { Menu } from "./components/Menu";
 
 export type Toast = { id: number; text: string; kind?: "error" | "info" };
 
@@ -21,7 +22,7 @@ export function App() {
   const [conn, setConn] = useState<ConnState>("offline");
   const [netOnline, setNetOnline] = useState(navigator.onLine);
   const [presence, setPresence] = useState<Record<number, Presence>>({});
-  const [view, setView] = useState<"home" | "chats" | "people">("chats");
+  const [view, setView] = useState<"home" | "menu" | "chats" | "people">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -187,6 +188,9 @@ export function App() {
           <Icon name="home" />
           {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
         </button>
+        <button className={`rail-btn ${view === "menu" ? "on" : ""}`} title="메뉴 (DaouOffice 전체 기능)" onClick={() => setView("menu")}>
+          <Icon name="grid" />
+        </button>
         <button className={`rail-btn ${view === "chats" ? "on" : ""}`} title="대화 (⌘K)" onClick={() => setView("chats")}>
           <Icon name="chat" />
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
@@ -216,6 +220,8 @@ export function App() {
         <div className="panes">
           {view === "home" ? (
             <Home />
+          ) : view === "menu" ? (
+            <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} />
           ) : view === "chats" ? (
             <Sidebar rooms={rooms} activeKey={activeKey} presence={presence} onOpen={setActiveKey} />
           ) : (
@@ -229,7 +235,7 @@ export function App() {
               }}
             />
           )}
-          {view === "home" ? null : activeRoom ? (
+          {view === "home" || view === "menu" ? null : activeRoom ? (
             <ChatView
               key={activeRoom.key}
               room={activeRoom}

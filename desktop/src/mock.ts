@@ -74,6 +74,10 @@ export function installMockIfNeeded() {
     portal: {
       get: async () => portalSnap,
       refresh: async () => portalSnap,
+      menu: async () => {
+        const { STATIC_MENU, LOCAL_MENU } = await import("../electron/core/portal");
+        return { items: [...STATIC_MENU, { id: "m70", name: "법인공용차량", appName: "custom", url: "/app/asset/30/list/reservation", section: "예약현황", custom: true, target: "portal" as const }, { id: "m58", name: "사이버연수원", appName: "link", url: "http://hrd.ubion.co.kr/", section: "링크", custom: true, target: "external" as const }, ...LOCAL_MENU], source: "static" as const };
+      },
       open: async () => undefined,
       setActive: async () => undefined,
     },

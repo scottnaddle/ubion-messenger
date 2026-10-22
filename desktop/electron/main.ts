@@ -158,7 +158,11 @@ function portalUrl(rel: string): string | null {
 /** Open a portal deep link only on explicit user action (opening may mark items as read). */
 function openPortal(rel: string, mode?: "external" | "inapp") {
   const url = portalUrl(rel);
-  if (!url) throw new Error("허용되지 않은 주소입니다");
+  if (!url) {
+    // Admin-defined custom menu links on other hosts (e.g. hrd.ubion.co.kr): OS browser only, never the SSO window.
+    if (/^https?:\/\//i.test(rel) && !isPortalUrl(rel, core.client.baseUrl)) return shell.openExternal(new URL(rel).toString());
+    throw new Error("허용되지 않은 주소입니다");
+  }
   if ((mode || settings.portalOpenMode) === "external") return shell.openExternal(url);
   return openPortalWindow(url);
 }
@@ -445,6 +449,7 @@ function registerIpc() {
   handle("portal:get", (id?: string) => (id ? core.portal.getWidget(id as any) : core.portal.snapshot()));
   handle("portal:refresh", () => core.portal.refreshNow());
   handle("portal:open", (url: string, mode?: "external" | "inapp") => openPortal(String(url), mode));
+  handle("portal:menu", (force?: boolean) => core.portal.menu(core.client.baseUrl, !!force));
   handle("portal:setActive", (active: boolean) => core.portal.setHomeActive(!!active));
   handle("app:openExternal", (url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);

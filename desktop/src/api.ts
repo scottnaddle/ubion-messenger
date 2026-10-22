@@ -24,6 +24,7 @@ export type Bridge = {
     refresh(): Promise<any>;
     open(url: string, mode?: "external" | "inapp"): Promise<void>;
     setActive(active: boolean): Promise<void>;
+    menu(force?: boolean): Promise<{ items: import("../electron/core/portal").MenuEntry[]; source: "server" | "static" }>;
   };
   pathForFile(f: File): string;
   platform: string;

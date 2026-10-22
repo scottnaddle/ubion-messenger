@@ -27,6 +27,7 @@ const api = {
     refresh: () => call("portal:refresh"),
     open: (url: string, mode?: "external" | "inapp") => call<void>("portal:open", url, mode),
     setActive: (active: boolean) => call<void>("portal:setActive", active),
+    menu: (force?: boolean) => call<{ items: import("./core/portal").MenuEntry[]; source: "server" | "static" }>("portal:menu", force),
   },
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   platform: process.platform,

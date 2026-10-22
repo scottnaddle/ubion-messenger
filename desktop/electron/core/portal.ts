@@ -62,6 +62,7 @@ export const PORTAL_WHITELIST: RegExp[] = [
   /^\/api\/my\/noti$/,
   /^\/api\/my\/noti\/unread$/,
   /^\/api\/home\/noti\/count$/,
+  /^\/api\/userside\/baseconfig$/,
   /^\/api\/mail\/message\/gadget$/,
   /^\/api\/mail\/message\/count$/,
 ];
@@ -204,6 +205,73 @@ export function detectNewPosts(posts: BoardPost[], lastMaxId: number | null): { 
   return { fresh: posts.filter((p) => p.id > lastMaxId).sort((a, b) => a.id - b.id), maxId };
 }
 
+// ---------------- menu ('메뉴' tab) ----------------
+/**
+ * One entry of the DaouOffice app menu. Source: GET /api/userside/baseconfig → data.menuConfigModel
+ * (the same list the web GNB and the mobile app menu are built from, incl. admin-defined custom links).
+ * - target "portal": `url` is a portal path ("/app/mail") → in-app SSO window.
+ * - target "external": absolute URL on another host → OS browser.
+ * - target "local": handled by the messenger itself (`local` = view name).
+ */
+export type MenuEntry = {
+  id: string; name: string; appName: string; url: string; section?: string; custom: boolean;
+  target: "portal" | "external" | "local"; local?: "home" | "chats" | "people";
+};
+
+const LOCAL_APPS: Record<string, MenuEntry["local"]> = { home: "home" };
+
+/** Turn a menuConfigModel url into {target,url}. Same-host absolute URLs become portal paths. */
+export function menuTarget(raw: string, appName: string, baseUrl: string): Pick<MenuEntry, "target" | "url"> | null {
+  const u0 = str(raw).trim();
+  const base = new URL(baseUrl);
+  if (!u0) return appName && /^[a-z]+$/.test(appName) ? { target: "portal", url: `/app/${appName}` } : null;
+  if (/^https?:\/\//i.test(u0)) {
+    let u: URL;
+    try { u = new URL(u0); } catch { return null; }
+    if (u.username || u.password) return null;
+    if (u.hostname === base.hostname) return { target: "portal", url: u.pathname + u.search + u.hash };
+    return { target: "external", url: u.toString() };
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(u0) || u0.startsWith("//")) return null; // javascript:, file:, protocol-relative …
+  const path = "/" + u0.replace(/^\/+/, "");
+  return path.includes("..") ? null : { target: "portal", url: path };
+}
+
+export function parseMenu(body: any, baseUrl: string): MenuEntry[] {
+  const list = arr(body?.data?.menuConfigModel)
+    .filter((m) => m && str(m.status || "online") === "online" && str(m.accessDeviceOption || "ALL").toUpperCase() !== "MOBILE")
+    .sort((a, b) => num(a.seq) - num(b.seq));
+  const out: MenuEntry[] = [];
+  let section: string | undefined;
+  for (const m of list) {
+    const name = str(m.koName || m.name).trim();
+    if (!name) continue;
+    if (m.subMenuType) { section = name; continue; } // category header ("예약현황", "링크")
+    if (num(m.depth) === 0) section = undefined;
+    const appName = m.systemMenu ? str(m.appName) : "";
+    const local = LOCAL_APPS[appName];
+    const t = local ? { target: "local" as const, url: "" } : menuTarget(m.url, appName, baseUrl);
+    if (!t) continue;
+    out.push({ id: `m${num(m.id) || out.length}`, name, appName: appName || (t.target === "external" ? "link" : "custom"), url: t.url, section, custom: !m.systemMenu, target: t.target, local });
+  }
+  return out;
+}
+
+/** Fallback when baseconfig can't be read (offline server, API change). */
+export const STATIC_MENU: MenuEntry[] = [
+  ["mail", "메일"], ["calendar", "캘린더"], ["works", "Works"], ["board", "게시판"], ["approval", "전자결재"], ["report", "보고"],
+  ["ehr", "근태"], ["survey", "설문"], ["community", "커뮤니티"], ["contact", "주소록"], ["webfolder", "클라우드"], ["todo", "ToDO"],
+  ["asset", "회의실/스튜디오"],
+].map(([appName, name]) => ({ id: `s-${appName}`, name, appName, url: `/app/${appName}`, custom: false, target: "portal" as const }));
+
+/** Messenger-native entries the mobile menu has (Today/대화/조직도/알림), appended after the server list. */
+export const LOCAL_MENU: MenuEntry[] = [
+  { id: "l-today", name: "Today", appName: "home", url: "", custom: false, target: "local", local: "home", section: "메신저" },
+  { id: "l-noti", name: "알림", appName: "noti", url: "", custom: false, target: "local", local: "home", section: "메신저" },
+  { id: "l-chat", name: "대화", appName: "chat", url: "", custom: false, target: "local", local: "chats", section: "메신저" },
+  { id: "l-org", name: "조직도", appName: "org", url: "", custom: false, target: "local", local: "people", section: "메신저" },
+];
+
 // ---------------- service ----------------
 export const POLL_FOREGROUND_MS = 60_000;
 export const POLL_BACKGROUND_MS = 4 * 60_000;
@@ -262,6 +330,22 @@ export class PortalService {
   async mails(n = 5) { return parseMails(await this.get(`/api/mail/message/gadget?count=${n}`)); }
   /** "오늘 온 메일" — web POSTs {today:on}; the GET query form returns the same number. Without it = mailbox total. */
   async mailTodayCount() { return parseMailCount(await this.get("/api/mail/message/count?today=on")); }
+
+  private menuCache: { items: MenuEntry[]; source: "server" | "static"; at: number } | null = null;
+  /** Server menu (cached 10 min), falling back to STATIC_MENU. Home ("홈") is dropped — the messenger has its own. */
+  async menu(baseUrl: string, force = false): Promise<{ items: MenuEntry[]; source: "server" | "static" }> {
+    if (!force && this.menuCache && Date.now() - this.menuCache.at < 10 * 60_000) return this.menuCache;
+    let items: MenuEntry[] = [];
+    let source: "server" | "static" = "server";
+    try {
+      items = parseMenu(await this.get("/api/userside/baseconfig"), baseUrl).filter((m) => m.local !== "home");
+    } catch (e) {
+      this.log(`portal menu failed: ${maskSecrets((e as Error).message)}`);
+    }
+    if (!items.length) { items = STATIC_MENU; source = "static"; }
+    this.menuCache = { items: [...items, ...LOCAL_MENU], source, at: Date.now() };
+    return this.menuCache;
+  }
 
   snapshot() {
     return { summary: this.summary, badge: this.badge, widgets: Object.fromEntries(this.widgets) as Partial<Record<PortalWidgetId, PortalWidgetState>> };
@@ -351,6 +435,7 @@ export class PortalService {
     this.summary = null;
     this.badge = { approval: 0, noti: 0, mail: 0 };
     this.lastMaxPostId = null;
+    this.menuCache = null;
   }
   /** Called on Home visibility/focus changes and manual refresh: refresh now, then reschedule. */
   setHomeActive(active: boolean) {

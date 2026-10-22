@@ -34,3 +34,19 @@ export const homeNotiCount = { code: "200", message: "OK", data: 862 };
 export const notiUnreadLive = { code: "200", message: "OK", page: { page: 0, offset: 1, total: 0, totalPage: 0, lastPage: false }, hasNext: true,
   data: [{ id: 17571129, category: "approval", sender: "진", message: "[댓글 등록] 댓글이 등록되었습니다.", createdAt: "2026-10-21T13:14:39.348+09:00", linkUrl: "/link/noti/17571129" }] };
 export const approvalCountLive = { code: "200", message: "OK", data: { documentId: 0, docCount: 0, readable: true } };
+/** GET /api/userside/baseconfig → data.menuConfigModel (live 2026-10-22, webAccessTarget nodes trimmed). */
+const mm = (id: number, seq: number, appName: string, name: string, url: string, o: Record<string, unknown> = {}) =>
+  ({ id, seq, appName, name, koName: name, url, location: "self", mobileLocation: "new", status: "online", systemMenu: true, depth: 0, subMenuType: false, accessDeviceOption: "ALL", webAccessSetting: "black", mobileAccessSetting: "black", webAccessTarget: null, ...o });
+export const baseconfig = { code: "200", message: "OK", data: { contextRoot: "/", menuConfigModel: [
+  mm(14, 1, "home", "홈", "app/home"), mm(15, 2, "mail", "메일", "app/mail"), mm(18, 3, "calendar", "캘린더", "app/calendar"),
+  mm(25, 4, "works", "Works", "app/works"), mm(19, 5, "board", "게시판", "app/board"), mm(27, 6, "approval", "전자결재", "app/approval"),
+  mm(23, 7, "report", "보고", "app/report"), mm(29, 8, "ehr", "근태", "app/ehr"), mm(22, 9, "survey", "설문", "app/survey"),
+  mm(20, 10, "community", "커뮤니티", "app/community"), mm(16, 11, "contact", "주소록", "app/contact"), mm(17, 12, "webfolder", "클라우드", "app/webfolder"),
+  mm(26, 13, "todo", "ToDO", "app/todo"),
+  mm(60, 14, "새 카테고리", "예약현황", "", { systemMenu: false, subMenuType: true }),
+  mm(21, 15, "asset", "회의실/스튜디오", "app/asset", { depth: 1 }),
+  mm(70, 16, "새 링크", "법인공용차량", "https://coco.ubion.co.kr/app/asset/30/list/reservation", { systemMenu: false, depth: 1, mobileLocation: "self" }),
+  mm(57, 17, "새 카테고리", "링크", "", { systemMenu: false, subMenuType: true }),
+  mm(56, 18, "새 링크", "Admin 링크", "http://wdr.ubion.co.kr/coco/link/admin_link.html", { systemMenu: false, depth: 1, location: "iframe", accessDeviceOption: "DIVIDE", mobileAccessSetting: "white" }),
+  mm(58, 19, "새 링크", "사이버연수원", "http://hrd.ubion.co.kr/", { systemMenu: false, depth: 1, location: "iframe", accessDeviceOption: "DIVIDE", mobileAccessSetting: "white" }),
+] } };
