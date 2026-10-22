@@ -30,7 +30,7 @@ export function Sidebar({
           title="새로고침"
           onClick={async () => {
             setRefreshing(true);
-            await api().call("rooms:refresh").catch(() => undefined);
+            await api().call("rooms:sync").catch(() => undefined);
             setRefreshing(false);
           }}
         >

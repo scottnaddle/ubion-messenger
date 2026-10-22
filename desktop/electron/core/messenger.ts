@@ -24,6 +24,13 @@ export function parsePresence(type?: string, status?: string, show?: string): Pr
   return "online";
 }
 
+/** Non-chat JSON body types pushed over XMPP. Anything else carrying a room is a chat message
+ *  (server sends type "chat" for 1:1 — the official client never filters on type). */
+const NON_CHAT = new Set(["confirm", "presence", "noti", "headline", "timeline", "terminate"]);
+export function isChatType(type: string) {
+  return !NON_CHAT.has(type);
+}
+
 /** Map an XMPP JSON body (official desktop format) to a room-scoped message. Pure; unit-tested. */
 export function routeXmppBody(obj: Record<string, any>, me: number) {
   const fr = (obj.from && typeof obj.from === "object" ? obj.from : {}) as Record<string, any>;
@@ -66,7 +73,7 @@ export function routeXmppBody(obj: Record<string, any>, me: number) {
         }
       : undefined,
   };
-  return { type, subtype, kind, seq, msg, usePush: obj.usePush !== false, isMine: fromSeq === me };
+  return { type, subtype, kind, seq, msg, usePush: obj.usePush !== false, isMine: fromSeq === me, isChat: isChatType(type) };
 }
 
 type Listener<K extends keyof MessengerEventMap> = (p: MessengerEventMap[K]) => void;
@@ -86,6 +93,13 @@ export class MessengerCore {
   private usersCache: Person[] | null = null;
   private deptCache: Department[] | null = null;
   conn: ConnState = "offline";
+  /** highest messageId already delivered to listeners, per room */
+  private lastIds = new Map<string, number>();
+  private emitted = new Set<number>();
+  private pollTimer: NodeJS.Timeout | null = null;
+  private syncing: Promise<void> | null = null;
+  private roomSyncTimers = new Map<string, NodeJS.Timeout>();
+  pollMs = 20_000;
   activeRoomKey: string | null = null;
   focused = true;
 
@@ -113,6 +127,7 @@ export class MessengerCore {
       this.startXmpp(new URL(opts.serverUrl).hostname);
       this.emit("ready", u);
       void this.refreshRooms().catch(() => undefined);
+      this.startPolling();
       return u;
     } catch (e) {
       this.setConn("offline");
@@ -122,16 +137,20 @@ export class MessengerCore {
 
   /** Stop realtime without invalidating the server session (app quit). */
   shutdown() {
+    this.stopPolling();
     this.xmpp?.stop();
     this.xmpp = null;
   }
 
   async logout(reason?: string) {
+    this.stopPolling();
     this.xmpp?.stop();
     this.xmpp = null;
     await this.client.logout();
     this.rooms.clear();
     this.presence.clear();
+    this.lastIds.clear();
+    this.emitted.clear();
     this.usersCache = this.deptCache = null;
     this.setConn("offline");
     this.emit("loggedOut", { reason });
@@ -158,7 +177,7 @@ export class MessengerCore {
       if (s === "online") {
         this.setConn("online");
         // catch up on anything missed while disconnected
-        if (wasOnline) void this.refreshRooms().catch(() => undefined);
+        if (wasOnline) void this.sync("reconnect");
         wasOnline = true;
       } else if (s === "connecting") this.setConn(wasOnline ? "reconnecting" : "connecting");
       else this.setConn(this.xmpp ? "reconnecting" : "offline", err);
@@ -210,9 +229,17 @@ export class MessengerCore {
       this.emit("confirm", { roomKey: r.seq != null ? `${r.kind}:${r.seq}` : undefined, messageId: r.msg.messageId });
       return;
     }
-    if (r.type !== "message" || r.seq == null || r.kind === "unknown") return;
+    if (!r.isChat || r.seq == null || Number.isNaN(r.seq) || r.kind === "unknown") {
+      // unknown/notification-only stanza: reconcile via REST
+      if (r.type !== "noti" && r.type !== "presence") this.scheduleSync();
+      return;
+    }
     const key = `${r.kind}:${r.seq}`;
     const msg = { ...r.msg, roomKey: key };
+    // REST is the source of truth: always reconcile the room shortly after any realtime hint
+    this.scheduleRoomSync(key);
+    if (msg.messageId != null && this.emitted.has(msg.messageId)) return;
+    this.markEmitted(key, msg.messageId);
     const room = this.rooms.get(key);
     const viewing = this.activeRoomKey === key && this.focused;
     if (room) {
@@ -232,6 +259,98 @@ export class MessengerCore {
       isMine: r.isMine,
       usePush: r.usePush && (room ? room.usePush : true),
     });
+  }
+
+  private markEmitted(key: string, id?: number) {
+    if (id == null) return;
+    this.emitted.add(id);
+    if (this.emitted.size > 5000) this.emitted = new Set([...this.emitted].slice(-2500));
+    if (id > (this.lastIds.get(key) || 0)) this.lastIds.set(key, id);
+  }
+
+  /** Called by the UI when a room's history was loaded, so polling only emits newer messages. */
+  noteSeen(key: string, messages: ChatMessage[]) {
+    for (const m of messages) this.markEmitted(key, m.messageId);
+  }
+
+  startPolling() {
+    this.stopPolling();
+    this.pollTimer = setInterval(() => void this.sync("poll"), this.pollMs);
+  }
+
+  stopPolling() {
+    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.pollTimer = null;
+    for (const t of this.roomSyncTimers.values()) clearTimeout(t);
+    this.roomSyncTimers.clear();
+  }
+
+  private scheduleSync() {
+    this.scheduleRoomSync("*");
+  }
+
+  private scheduleRoomSync(key: string, delay = 1200) {
+    if (this.roomSyncTimers.has(key)) return;
+    this.roomSyncTimers.set(
+      key,
+      setTimeout(() => {
+        this.roomSyncTimers.delete(key);
+        void (key === "*" ? this.sync("hint") : this.syncRoom(key).then(() => this.refreshRooms()).catch(() => undefined));
+      }, delay)
+    );
+  }
+
+  /**
+   * Robust fallback independent of XMPP routing: refresh the room list over REST,
+   * then fetch new messages (messageId > last delivered) for the open room and any room whose
+   * latest messageId advanced, emitting them as normal "message" events (deduped).
+   */
+  sync(_reason = "poll"): Promise<void> {
+    if (!this.client.user) return Promise.resolve();
+    if (this.syncing) return this.syncing;
+    this.syncing = (async () => {
+      const before = new Map([...this.rooms.values()].map((r) => [r.key, r.messageId || 0]));
+      const hadRooms = before.size > 0;
+      await this.refreshRooms();
+      const changed = this.getRooms().filter((r) => hadRooms && (r.messageId || 0) > (before.get(r.key) || 0));
+      const targets = new Set(changed.slice(0, 8).map((r) => r.key));
+      if (this.activeRoomKey) targets.add(this.activeRoomKey);
+      for (const key of targets) await this.syncRoom(key, before.get(key));
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        this.syncing = null;
+      });
+    return this.syncing;
+  }
+
+  /** Fetch latest page of a room and emit messages newer than what listeners already have. */
+  async syncRoom(key: string, baseline?: number): Promise<number> {
+    const me = this.client.user?.id;
+    if (me == null) return 0;
+    const last = this.lastIds.get(key);
+    const room = this.rooms.get(key);
+    // never seen this room in this session: only establish a baseline, don't replay history
+    if (last == null && baseline == null) {
+      if (room?.messageId) this.lastIds.set(key, room.messageId);
+      if (key !== this.activeRoomKey) return 0;
+    }
+    const page = await this.history(key, undefined, 40);
+    const fresh = newerThan(page, last ?? baseline ?? room?.messageId ?? Infinity).filter((m) => m.messageId == null || !this.emitted.has(m.messageId));
+    const { kind, seq } = this.parseKey(key);
+    for (const m of fresh) {
+      this.markEmitted(key, m.messageId);
+      const isMine = m.sendUserSeq === me;
+      this.emit("message", { ...m, roomKey: key, roomKind: kind, roomSeq: seq, isMine, usePush: room ? room.usePush : true });
+    }
+    if (fresh.length && room) {
+      const lastMsg = fresh[fresh.length - 1];
+      room.preview = lastMsg.attach ? `📎 ${lastMsg.attach.name}` : lastMsg.message.slice(0, 200);
+      room.messageId = Math.max(room.messageId || 0, lastMsg.messageId || 0);
+      room.createdAt = lastMsg.createdAt || room.createdAt;
+      this.emitRooms();
+    }
+    return fresh.length;
   }
 
   private emitRooms() {
@@ -277,6 +396,7 @@ export class MessengerCore {
   async sendText(key: string, text: string) {
     const { kind, seq } = this.parseKey(key);
     const res = await this.client.sendMessage(kind, seq, text);
+    this.markEmitted(key, res.messageId);
     const room = this.rooms.get(key);
     if (room) {
       room.preview = text.slice(0, 200);
@@ -307,6 +427,12 @@ export class MessengerCore {
 
   setActiveRoom(key: string | null) {
     this.activeRoomKey = key;
+  }
+
+  /** Window focus / visibility regained: catch up immediately. */
+  onFocus() {
+    this.focused = true;
+    void this.sync("focus");
   }
 
   async users(force = false): Promise<Person[]> {
@@ -365,4 +491,11 @@ export class MessengerCore {
     room.usePin = pin;
     this.emitRooms();
   }
+}
+
+/** Messages with numeric id strictly greater than `after`, ascending. Pure; unit-tested. */
+export function newerThan(list: ChatMessage[], after: number): ChatMessage[] {
+  return list
+    .filter((m) => m.messageId != null && m.messageId > after)
+    .sort((a, b) => (a.messageId || 0) - (b.messageId || 0));
 }

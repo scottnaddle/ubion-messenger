@@ -277,6 +277,8 @@ export class XmppClient extends EventEmitter {
           this.backoff = 1000;
           this.sock?.setTimeout(0);
           this.write(`<presence><status>${this.status}</status></presence>`);
+          // XEP-0280: also receive copies of chats routed to / sent from other resources (official app)
+          this.write("<iq type='set' id='carbons1'><enable xmlns='urn:xmpp:carbons:2'/></iq>");
           this.startPing();
           this.emit("state", "online");
         }

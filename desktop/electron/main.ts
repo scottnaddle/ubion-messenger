@@ -181,7 +181,7 @@ function createWindow() {
     startHidden = false;
   });
   win.on("focus", () => {
-    core.focused = true;
+    core.onFocus();
     win?.flashFrame(false);
     send("window:focus", true);
   });
@@ -274,7 +274,12 @@ function registerIpc() {
   handle("rooms:pin", (key: string, pin: boolean) => core.setPin(key, pin));
   handle("rooms:openDirect", (userId: number) => core.openDirect(userId));
   handle("rooms:createGroup", (ids: number[]) => core.createGroup(ids));
-  handle("msg:history", (key: string, before?: number) => core.history(key, before));
+  handle("msg:history", async (key: string, before?: number) => {
+    const list = await core.history(key, before);
+    core.noteSeen(key, list);
+    return list;
+  });
+  handle("rooms:sync", () => core.sync("manual"));
   handle("msg:search", (key: string, kw: string) => core.searchInRoom(key, kw));
   handle("msg:send", (key: string, text: string) => core.sendText(key, text));
   handle("msg:markRead", (key: string, mid?: number) => core.markRead(key, mid));
@@ -388,7 +393,7 @@ app.whenReady().then(async () => {
   startHidden = process.argv.includes("--hidden") || !!app.getLoginItemSettings().wasOpenedAsHidden;
   createWindow();
 
-  powerMonitor.on("resume", () => core.reconnect());
+  powerMonitor.on("resume", () => (core.reconnect(), void core.sync("resume")));
   powerMonitor.on("unlock-screen", () => core.reconnect());
   let away = false;
   setInterval(() => {

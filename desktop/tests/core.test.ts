@@ -37,6 +37,13 @@ describe("routing", () => {
     expect(r.msg.messageId).toBe(77);
     expect(r.isMine).toBe(false);
   });
+  it("treats server JSON type 'chat' (observed live) as a chat message", () => {
+    const r = routeXmppBody({ type: "chat", subtype: "single", from: { userSeq: 229 }, toSeq: 312, message: "hi", messageId: 5 }, me);
+    expect(r.isChat).toBe(true);
+    expect([r.kind, r.seq]).toEqual(["buddy", 229]);
+    expect(routeXmppBody({ type: "noti" }, me).isChat).toBe(false);
+    expect(routeXmppBody({ type: "confirm", subtype: "single" }, me).isChat).toBe(false);
+  });
   it("routes my own echo to the peer room", () => {
     const r = routeXmppBody({ type: "message", subtype: "single", from: { userSeq: 312 }, toSeq: 229, message: "x" }, me);
     expect(r.seq).toBe(229);
