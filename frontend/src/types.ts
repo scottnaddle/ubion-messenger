@@ -16,6 +16,7 @@ export type Room = {
 
 export type Message = {
   messageId?: number;
+  clientId?: string;
   sendUserSeq?: number;
   sendUserName: string;
   targetUserSeq?: number;

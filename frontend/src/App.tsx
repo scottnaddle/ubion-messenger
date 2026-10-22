@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { useEvents } from "./hooks/useEvents";
+import { isSendEnter } from "./lib/composer";
+import { dedupeByMessageId, mergeMessages, upsertMessage } from "./lib/messages";
 import type { Me, Message, Person, Room } from "./types";
 
 type Theme = "dark" | "light";
@@ -43,7 +45,13 @@ export default function App() {
   const [notifOk, setNotifOk] = useState(Notification.permission === "granted");
   const listRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
+  const composingRef = useRef(false);
+  const pendingSendRef = useRef(false);
   const active = useMemo(() => rooms.find((r) => r.key === activeKey) || null, [rooms, activeKey]);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const meRef = useRef(me);
+  meRef.current = me;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -86,7 +94,7 @@ export default function App() {
     stickBottom.current = true;
     try {
       const r = await api.messages(room.kind, room.seq, 50);
-      setMessages(r.messages);
+      setMessages(dedupeByMessageId(r.messages.map((m) => ({ ...m }))));
       setRooms((prev) => prev.map((x) => (x.key === room.key ? { ...x, unread: 0 } : x)));
     } catch (e: any) {
       setErr(String(e.message || e));
@@ -110,11 +118,7 @@ export default function App() {
     try {
       const r = await api.messages(active.kind, active.seq, 40, before);
       if (!r.messages.length) return;
-      setMessages((m) => {
-        const ids = new Set(m.map((x) => x.messageId));
-        const older = r.messages.filter((x) => !ids.has(x.messageId));
-        return [...older, ...m];
-      });
+      setMessages((m) => mergeMessages(r.messages, m));
       requestAnimationFrame(() => {
         if (el) el.scrollTop = el.scrollHeight - prevH;
       });
@@ -145,16 +149,19 @@ export default function App() {
             const room = { ...copy[idx] };
             room.preview = p.message || room.preview;
             room.messageId = p.messageId || room.messageId;
-            if (!active || active.key !== room.key) room.unread = (room.unread || 0) + 1;
+            const cur = activeRef.current;
+            if (!cur || cur.key !== room.key) room.unread = (room.unread || 0) + 1;
             copy.splice(idx, 1);
             copy.unshift(room);
             return copy;
           });
-          if (active && keyGuess === active.key) {
-            setMessages((m) => {
-              if (p.messageId && m.some((x) => x.messageId === p.messageId)) return m;
-              return [...m, p];
-            });
+          const cur = activeRef.current;
+          if (cur && keyGuess === cur.key) {
+            const withTs = {
+              ...p,
+              createdAt: p.createdAt || new Date().toISOString(),
+            };
+            setMessages((m) => upsertMessage(m, withTs));
           }
           if (document.hidden && notifOk && p.usePush !== false && p.message) {
             try {
@@ -199,17 +206,20 @@ export default function App() {
     return rooms.filter((r) => r.name.toLowerCase().includes(s) || r.preview.toLowerCase().includes(s));
   }, [rooms, q]);
 
-  const onSend = async () => {
-    if (!active || !draft.trim()) return;
+  const onSendFrom = async (textIn?: string) => {
+    if (composingRef.current && textIn == null) return;
+    const text = (textIn ?? draft).trim();
+    if (!active || !text) return;
     if (!active.isSelf) {
       const ok = window.confirm(
         "이 방은 자기(메모) 대화가 아닙니다. 실제로 전송할까요?\n(테스트 중에는 취소하는 것을 권장합니다.)"
       );
       if (!ok) return;
     }
-    const text = draft;
     setDraft("");
+    const clientId = `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const temp: Message = {
+      clientId,
       message: text,
       sendUserName: me?.name || "나",
       sendUserSeq: me?.id,
@@ -217,12 +227,17 @@ export default function App() {
       userImage: me?.thumbnail || "",
       pending: true,
     };
-    setMessages((m) => [...m, temp]);
+    setMessages((m) => upsertMessage(m, temp));
     stickBottom.current = true;
     try {
       const r = await api.send(active.kind, active.seq, text, !active.isSelf);
       setMessages((m) =>
-        m.map((x) => (x === temp ? { ...x, pending: false, messageId: r.messageId } : x))
+        upsertMessage(m, {
+          ...temp,
+          pending: false,
+          messageId: r.messageId,
+          clientId,
+        })
       );
       setRooms((prev) => {
         const copy = [...prev];
@@ -235,10 +250,14 @@ export default function App() {
         return copy;
       });
     } catch (e: any) {
-      setMessages((m) => m.map((x) => (x === temp ? { ...x, pending: false, failed: true } : x)));
+      setMessages((m) =>
+        m.map((x) => (x.clientId === clientId ? { ...x, pending: false, failed: true } : x))
+      );
       setErr(String(e.message || e));
     }
   };
+
+  const onSend = () => onSendFrom();
 
   const enableNotif = async () => {
     const p = await Notification.requestPermission();
@@ -387,13 +406,14 @@ export default function App() {
               {loadingMsgs ? <div className="muted pad">불러오는 중…</div> : null}
               {messages.map((m, i) => {
                 const mine = m.sendUserSeq === me?.id;
+                const ts = m.createdAt || new Date().toISOString();
                 return (
-                  <div key={`${m.messageId || "t"}-${i}`} className={`msg ${mine ? "mine" : ""} ${m.failed ? "failed" : ""}`}>
+                  <div key={m.clientId || (m.messageId != null ? `id-${m.messageId}` : `i-${i}`)} className={`msg ${mine ? "mine" : ""} ${m.failed ? "failed" : ""}`}>
                     {!mine ? <Avatar src={m.userImage} name={m.sendUserName} /> : <div className="avatar spacer" />}
                     <div className="bubble">
                       <div className="msg-meta">
                         <strong>{mine ? "나" : m.sendUserName}</strong>
-                        <span>{fmtTime(m.createdAt)}</span>
+                        <span>{fmtTime(ts)}</span>
                         {m.pending ? <span className="muted">보내는 중…</span> : null}
                         {m.failed ? <span className="err-inline">실패</span> : null}
                       </div>
@@ -409,11 +429,35 @@ export default function App() {
                 onChange={(e) => setDraft(e.target.value)}
                 placeholder={active.isSelf ? "메모 입력… Enter 전송" : "메시지 입력… Enter 전송 (Shift+Enter 줄바꿈)"}
                 rows={2}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    onSend();
+                onCompositionStart={() => {
+                  composingRef.current = true;
+                }}
+                onCompositionEnd={(e) => {
+                  composingRef.current = false;
+                  // Commit final composed value into React state before optional send
+                  const v = (e.target as HTMLTextAreaElement).value;
+                  setDraft(v);
+                  if (pendingSendRef.current) {
+                    pendingSendRef.current = false;
+                    // defer so draft state / DOM value includes the last syllable
+                    queueMicrotask(() => onSendFrom(v));
                   }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || e.shiftKey) return;
+                  const ne = e.nativeEvent as KeyboardEvent & { isComposing?: boolean };
+                  const composing =
+                    !!ne.isComposing ||
+                    !!e.nativeEvent.isComposing ||
+                    composingRef.current ||
+                    (ne.keyCode ?? (e as any).keyCode) === 229;
+                  if (composing) {
+                    // Let IME commit the syllable; send once on compositionend
+                    pendingSendRef.current = true;
+                    return;
+                  }
+                  e.preventDefault();
+                  onSend();
                 }}
               />
               <button className="send" disabled={!draft.trim()} onClick={onSend}>
