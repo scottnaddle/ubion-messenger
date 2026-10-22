@@ -400,8 +400,9 @@ export function Todos({
               data-testid="all-rooms"
               checked={!!settings.allRooms}
               onChange={async (e) => {
-                setSettings(await api().call("todo:setAllRooms", e.target.checked));
-                toast(e.target.checked ? "모든 채팅방에서 자동 수집을 켰어요" : "고른 채팅방에서만 수집해요");
+                const on = e.target.checked;
+                setSettings(await api().call("todo:setAllRooms", on));
+                toast(on ? "모든 채팅방에서 자동 수집을 켰어요" : "고른 채팅방에서만 수집해요");
               }}
             />
           </label>
@@ -452,8 +453,9 @@ export function Todos({
                     className="switch"
                     checked={on}
                     onChange={async (e) => {
-                      setSettings(await api().call("todo:enableRoom", r.key, e.target.checked));
-                      toast(e.target.checked ? `${r.name}: 자동 수집 켜짐` : `${r.name}: 자동 수집 꺼짐`);
+                      const on = e.target.checked;
+                      setSettings(await api().call("todo:enableRoom", r.key, on));
+                      toast(on ? `${r.name}: 자동 수집 켜짐` : `${r.name}: 자동 수집 꺼짐`);
                     }}
                   />
                 </li>
