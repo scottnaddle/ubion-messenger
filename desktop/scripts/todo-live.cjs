@@ -265,7 +265,7 @@ async function blurShot(page, file) {
     results.fail.push("todos-rail-missing");
   }
 
-  // Wizard (Cmd+K)
+  // Wizard (Cmd+K) + recent-use order check
   try {
     await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
     await sleep(1500);
@@ -273,17 +273,50 @@ async function blurShot(page, file) {
     if (await wiz.count()) {
       results.ok.push("wizard-open");
       await blurShot(page, "09-wizard.png");
-      await wiz.fill("회의실");
-      await sleep(600);
-      await blurShot(page, "10-wizard-회의실.png");
+      // Open 차량 then 회의실 (GET pages only) so 회의실 is most recent
       await wiz.fill("차량");
-      await sleep(600);
+      await sleep(500);
       await blurShot(page, "11-wizard-차량.png");
-      await wiz.fill("워크스");
-      await sleep(600);
-      await blurShot(page, "12-wizard-works.png");
-      // Open Works hub only (GET page) — do not submit anything
-      const worksHit = page.locator('.wizard-item:has-text("Works")').first();
+      const car = page.locator('.wizard-item:has-text("차량"), .wizard-item:has-text("법인공용")').first();
+      if (await car.count()) {
+        await car.click();
+        await sleep(2000);
+        results.ok.push("wizard-open-car");
+        // reopen wizard
+        await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+        await sleep(1000);
+      }
+      await page.locator(".wizard input").fill("회의실");
+      await sleep(500);
+      await blurShot(page, "10-wizard-회의실.png");
+      const room = page.locator('.wizard-item:has-text("회의실")').first();
+      if (await room.count()) {
+        await room.click();
+        await sleep(2000);
+        results.ok.push("wizard-open-room");
+      }
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+      await sleep(1200);
+      // Empty query browse order: first non-pin rows should prefer 회의실 over 차량 (more recent)
+      await page.locator(".wizard input").fill("");
+      await sleep(400);
+      const titles = await page.locator(".wizard-title").allTextContents();
+      const clean = titles.map((x) => x.replace(/고정|최근/g, "").trim());
+      L("wizard browse titles: " + clean.slice(0, 8).join(" | "));
+      const iRoom = clean.findIndex((t) => t.includes("회의실"));
+      const iCar = clean.findIndex((t) => t.includes("차량") || t.includes("법인공용"));
+      if (iRoom >= 0 && iCar >= 0 && iRoom < iCar) {
+        results.ok.push("wizard-recent-order");
+      } else if (iRoom >= 0) {
+        results.notes.push("wizard-order room@" + iRoom + " car@" + iCar + " titles=" + clean.slice(0, 6).join(","));
+      } else {
+        results.notes.push("wizard-order-no-room-in-list");
+      }
+      await blurShot(page, "12-wizard-recent-order.png");
+      await page.locator(".wizard input").fill("워크스");
+      await sleep(500);
+      await blurShot(page, "12b-wizard-works.png");
+      const worksHit = page.locator('.wizard-item:has-text("Works"), .wizard-item:has-text("워크스"), .wizard-item:has-text("COCO")').first();
       if (await worksHit.count()) {
         await worksHit.click();
         await sleep(2500);

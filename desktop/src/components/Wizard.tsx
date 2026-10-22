@@ -14,6 +14,7 @@ export type WizardHit = {
   reason: string;
   pinned: boolean;
   usage: number;
+  lastUsedAt?: number;
   source: string;
 };
 
@@ -138,7 +139,7 @@ export function Wizard({ open, onClose, onLocal, toast }: Props) {
                   <span className="wizard-title">
                     {h.title}
                     {h.pinned && <span className="pill tiny">고정</span>}
-                    {!h.pinned && h.usage >= 3 && <span className="pill tiny">자주</span>}
+                    {!h.pinned && !!h.lastUsedAt && <span className="pill tiny">최근</span>}
                   </span>
                   <span className="muted tiny">
                     {h.subtitle || h.appName} · {h.source}

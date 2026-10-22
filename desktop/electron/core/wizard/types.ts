@@ -17,11 +17,14 @@ export type WizardHit = WizardItem & {
   reason: string;
   pinned: boolean;
   usage: number;
+  lastUsedAt?: number;
 };
 
 export type WizardPrefs = {
-  /** item ids manually pinned */
+  /** item ids manually pinned — array order = display pin order */
   pins: string[];
   /** item id → open count */
   usage: Record<string, number>;
+  /** item id → last opened epoch ms */
+  lastUsed: Record<string, number>;
 };

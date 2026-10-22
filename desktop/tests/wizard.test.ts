@@ -59,3 +59,82 @@ describe("wizard works synonyms", () => {
     expect(idx.some((i) => i.appName === "works")).toBe(true);
   });
 });
+
+import { sortBrowseHits, sortSearchHits } from "../electron/core/wizard/sort";
+import type { WizardHit } from "../electron/core/wizard/types";
+
+function hit(partial: Partial<WizardHit> & { id: string; title: string }): WizardHit {
+  return {
+    subtitle: "",
+    url: "/" + partial.id,
+    target: "portal",
+    source: "menu",
+    aliases: [],
+    score: 0,
+    reason: "",
+    pinned: false,
+    usage: 0,
+    lastUsedAt: 0,
+    ...partial,
+  };
+}
+
+describe("wizard sort order", () => {
+  it("browse: pins (pin order) then recency then frequency", () => {
+    const pins = ["pin-b", "pin-a"]; // b before a in pin order
+    const hits = [
+      hit({ id: "old", title: "Old", usage: 99, lastUsedAt: 1000 }),
+      hit({ id: "pin-a", title: "PinA", pinned: true, usage: 1, lastUsedAt: 5000 }),
+      hit({ id: "pin-b", title: "PinB", pinned: true, usage: 1, lastUsedAt: 9000 }),
+      hit({ id: "recent", title: "Recent", usage: 1, lastUsedAt: 8000 }),
+      hit({ id: "freq", title: "Freq", usage: 50, lastUsedAt: 2000 }),
+      hit({ id: "fresh", title: "Fresh", usage: 0, lastUsedAt: 0 }),
+    ];
+    const ids = sortBrowseHits(hits, pins).map((h) => h.id);
+    expect(ids.slice(0, 2)).toEqual(["pin-b", "pin-a"]);
+    expect(ids[2]).toBe("recent"); // most recent among unpinned
+    expect(ids[3]).toBe("freq"); // older than recent but higher usage than old? old lastUsed 1000 < freq 2000
+    // recent(8000) > freq(2000) > old(1000) > fresh(0)
+    expect(ids).toEqual(["pin-b", "pin-a", "recent", "freq", "old", "fresh"]);
+  });
+
+  it("browse: higher frequency wins when same recency", () => {
+    const hits = [
+      hit({ id: "a", title: "A", usage: 2, lastUsedAt: 100 }),
+      hit({ id: "b", title: "B", usage: 9, lastUsedAt: 100 }),
+    ];
+    expect(sortBrowseHits(hits, []).map((h) => h.id)).toEqual(["b", "a"]);
+  });
+
+  it("search: relevance primary, then recency, then frequency", () => {
+    const hits = [
+      hit({ id: "weak-recent", title: "W", score: 50, lastUsedAt: 9999, usage: 100 }),
+      hit({ id: "strong-old", title: "S", score: 90, lastUsedAt: 1, usage: 0 }),
+      hit({ id: "strong-recent", title: "SR", score: 90, lastUsedAt: 5000, usage: 1 }),
+      hit({ id: "strong-freq", title: "SF", score: 90, lastUsedAt: 5000, usage: 8 }),
+    ];
+    const ids = sortSearchHits(hits, []).map((h) => h.id);
+    expect(ids[0]).toBe("strong-freq"); // same score+recency, higher freq
+    expect(ids[1]).toBe("strong-recent");
+    expect(ids[2]).toBe("strong-old");
+    expect(ids[3]).toBe("weak-recent");
+  });
+
+  it("search: equal score → pinned before unpinned, pin order preserved", () => {
+    const pins = ["p2", "p1"];
+    const hits = [
+      hit({ id: "u", title: "U", score: 80, lastUsedAt: 9999, usage: 99 }),
+      hit({ id: "p1", title: "P1", score: 80, pinned: true }),
+      hit({ id: "p2", title: "P2", score: 80, pinned: true }),
+    ];
+    expect(sortSearchHits(hits, pins).map((h) => h.id)).toEqual(["p2", "p1", "u"]);
+  });
+
+  it("does not auto-pin high-frequency items above recent", () => {
+    const hits = [
+      hit({ id: "freq", title: "Freq", usage: 100, lastUsedAt: 10 }),
+      hit({ id: "recent", title: "Recent", usage: 1, lastUsedAt: 10_000 }),
+    ];
+    expect(sortBrowseHits(hits, []).map((h) => h.id)).toEqual(["recent", "freq"]);
+  });
+});

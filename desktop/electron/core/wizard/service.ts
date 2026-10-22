@@ -2,6 +2,7 @@ import type { MenuEntry } from "../portal";
 import { buildWizardIndex, type GetJson } from "./index";
 import { scoreMatch } from "./match";
 import { expandQuery } from "./synonyms";
+import { sortBrowseHits, sortSearchHits } from "./sort";
 import { WizardStore } from "./store";
 import type { WizardHit, WizardItem } from "./types";
 
@@ -20,31 +21,38 @@ export class WizardService {
     return this.items.length;
   }
 
+  /** Inject/replace index (tests / offline). */
+  setItems(items: WizardItem[]) {
+    this.items = items;
+  }
+
   list(): WizardItem[] {
     return this.items;
   }
 
   search(query: string, limit = 20): WizardHit[] {
     const prefs = this.store.get();
-    const autoPin = new Set(this.store.topUsage(5));
     const q = query.trim();
-    const queries = q ? expandQuery(q) : [""];
 
-    let hits: WizardHit[];
     if (!q) {
-      // Empty query: pins + frequent + rest
-      hits = this.items.map((it) => ({
-        ...it,
-        score: prefs.pins.includes(it.id) ? 1000 : autoPin.has(it.id) ? 500 + (prefs.usage[it.id] || 0) : prefs.usage[it.id] || 0,
-        reason: prefs.pins.includes(it.id) ? "pin" : autoPin.has(it.id) ? "frequent" : "usage",
-        pinned: prefs.pins.includes(it.id),
-        usage: prefs.usage[it.id] || 0,
-      }));
-      hits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, "ko"));
-      return hits.slice(0, limit);
+      const hits: WizardHit[] = this.items.map((it) => {
+        const pinned = prefs.pins.includes(it.id);
+        const usage = prefs.usage[it.id] || 0;
+        const lastUsedAt = prefs.lastUsed[it.id] || 0;
+        return {
+          ...it,
+          score: pinned ? 1 : lastUsedAt ? 0.5 : 0,
+          reason: pinned ? "pin" : lastUsedAt ? "recent" : usage ? "usage" : "index",
+          pinned,
+          usage,
+          lastUsedAt,
+        };
+      });
+      return sortBrowseHits(hits, prefs.pins).slice(0, limit);
     }
 
-    hits = [];
+    const queries = expandQuery(q);
+    const hits: WizardHit[] = [];
     for (const it of this.items) {
       let best = { score: 0, reason: "none" };
       for (const qq of queries) {
@@ -52,18 +60,16 @@ export class WizardService {
         if (s.score > best.score) best = s;
       }
       if (best.score <= 0) continue;
-      const pinned = prefs.pins.includes(it.id);
-      const usage = prefs.usage[it.id] || 0;
       hits.push({
         ...it,
-        score: best.score + (pinned ? 15 : 0) + Math.min(10, usage),
+        score: best.score,
         reason: best.reason,
-        pinned,
-        usage,
+        pinned: prefs.pins.includes(it.id),
+        usage: prefs.usage[it.id] || 0,
+        lastUsedAt: prefs.lastUsed[it.id] || 0,
       });
     }
-    hits.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title, "ko"));
-    return hits.slice(0, limit);
+    return sortSearchHits(hits, prefs.pins).slice(0, limit);
   }
 
   pin(id: string, on: boolean) {

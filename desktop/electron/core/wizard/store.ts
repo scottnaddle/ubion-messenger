@@ -3,14 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import type { WizardPrefs } from "./types";
 
-const DEFAULTS: WizardPrefs = { pins: [], usage: {} };
-
 function file() {
   return path.join(app.getPath("userData"), "wizard-prefs.json");
 }
 
 export class WizardStore {
-  private prefs: WizardPrefs = { ...DEFAULTS, usage: {} };
+  private prefs: WizardPrefs = { pins: [], usage: {}, lastUsed: {} };
 
   load() {
     try {
@@ -18,9 +16,10 @@ export class WizardStore {
       this.prefs = {
         pins: Array.isArray(raw.pins) ? raw.pins.map(String) : [],
         usage: raw.usage && typeof raw.usage === "object" ? raw.usage : {},
+        lastUsed: raw.lastUsed && typeof raw.lastUsed === "object" ? raw.lastUsed : {},
       };
     } catch {
-      this.prefs = { pins: [], usage: {} };
+      this.prefs = { pins: [], usage: {}, lastUsed: {} };
     }
   }
 
@@ -30,37 +29,40 @@ export class WizardStore {
   }
 
   get(): WizardPrefs {
-    return { pins: [...this.prefs.pins], usage: { ...this.prefs.usage } };
+    return {
+      pins: [...this.prefs.pins],
+      usage: { ...this.prefs.usage },
+      lastUsed: { ...this.prefs.lastUsed },
+    };
   }
 
   isPinned(id: string) {
     return this.prefs.pins.includes(id);
   }
 
+  /** Manual pin: on → append to pin order (if new); off → remove. */
   setPinned(id: string, on: boolean) {
-    const set = new Set(this.prefs.pins);
-    if (on) set.add(id);
-    else set.delete(id);
-    this.prefs.pins = [...set];
+    if (on) {
+      if (!this.prefs.pins.includes(id)) this.prefs.pins.push(id);
+    } else {
+      this.prefs.pins = this.prefs.pins.filter((x) => x !== id);
+    }
     this.persist();
     return this.get();
   }
 
-  recordUse(id: string) {
+  recordUse(id: string, at = Date.now()) {
     this.prefs.usage[id] = (this.prefs.usage[id] || 0) + 1;
+    this.prefs.lastUsed[id] = at;
     this.persist();
-    return this.prefs.usage[id];
+    return { usage: this.prefs.usage[id], lastUsedAt: at };
   }
 
   usageOf(id: string) {
     return this.prefs.usage[id] || 0;
   }
 
-  /** Auto-pin candidates: top N by usage (not already manually unpinned — we only auto-surface in sort). */
-  topUsage(n = 5): string[] {
-    return Object.entries(this.prefs.usage)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, n)
-      .map(([id]) => id);
+  lastUsedOf(id: string) {
+    return this.prefs.lastUsed[id] || 0;
   }
 }
