@@ -1,0 +1,1 @@
+"""Daou messenger local bridge."""

@@ -1,0 +1,15 @@
+__pycache__/
+.venv/
+*.pyc
+.DS_Store
+jar.txt
+cookies.txt
+*.dmg
+node_modules/
+frontend/node_modules/
+frontend/dist/
+.daou/
+*.log
+.env
+app.asar
+msgr.dmg
