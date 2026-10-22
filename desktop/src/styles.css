@@ -349,3 +349,17 @@ input, textarea, select { font: inherit; color: inherit; }
 .todo-room-list li { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .pill.tiny { font-size: 10px; padding: 1px 6px; border-radius: 999px; background: var(--bg3); color: var(--muted); font-weight: 600; }
 .chat-todo-chip { display: flex; gap: 8px; align-items: center; margin: 6px 12px; padding: 8px 10px; border-radius: 10px; border: 1px dashed var(--accent); background: var(--bg2); font-size: .9em; }
+
+/* ---- Wizard / 위저드 ---- */
+.wizard-back { z-index: 80; }
+.wizard { width: min(560px, 92vw); max-height: min(70vh, 560px); display: flex; flex-direction: column;
+  background: var(--bg); border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.25); overflow: hidden; }
+.wizard-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.wizard-head input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--fg); font: inherit; font-size: 1.05em; }
+.wizard-hint { padding: 6px 16px 0; }
+.wizard-list { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
+.wizard-list li.on .wizard-item, .wizard-item:hover { background: var(--bg3); }
+.wizard-item { display: flex; gap: 10px; align-items: center; width: 100%; text-align: left; padding: 10px 10px; border-radius: 10px; color: var(--fg); }
+.wizard-ic { flex: none; width: 32px; height: 32px; border-radius: 8px; background: var(--bg2); display: grid; place-items: center; }
+.wizard-title { display: flex; gap: 6px; align-items: center; font-weight: 600; }
+kbd { border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }

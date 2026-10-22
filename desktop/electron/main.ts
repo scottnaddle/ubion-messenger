@@ -27,6 +27,7 @@ import {
 } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
 import { TodoService } from "./core/todo/service";
+import { WizardService } from "./core/wizard/service";
 import {
   clearPassword,
   loadPassword,
@@ -58,6 +59,7 @@ let unsubscribe: Array<() => void> = [];
 let startHidden = false;
 const updater = new Updater(() => win);
 const todoService = new TodoService(path.join(__dirname, "../../resources"));
+const wizardService = new WizardService();
 
 const resPath = (f: string) =>
   app.isPackaged ? path.join(process.resourcesPath, "resources", f) : path.join(__dirname, "../../resources", f);
@@ -674,6 +676,34 @@ function registerIpc() {
     todoService.store.remove(String(id));
   });
 
+  // ---- wizard / 위저드 (Cmd+K launcher) ----
+  handle("wizard:refresh", async () => {
+    const menu = await core.portal.menu(core.client.baseUrl, false);
+    const n = await wizardService.refresh(menu.items, async (path) => {
+      const res = await core.client.request(path, { method: "GET" });
+      if (res.status !== 200) {
+        const e = new Error(`HTTP ${res.status}`) as Error & { status?: number };
+        e.status = res.status;
+        throw e;
+      }
+      try {
+        return JSON.parse(res.text);
+      } catch {
+        throw new Error("invalid JSON");
+      }
+    });
+    return { count: n, at: Date.now() };
+  });
+  handle("wizard:search", (q?: string) => wizardService.search(String(q || ""), 24));
+  handle("wizard:pin", (id: string, on: boolean) => wizardService.pin(String(id), !!on));
+  handle("wizard:open", (id: string) => {
+    const item = wizardService.list().find((h) => h.id === String(id));
+    if (!item) throw new Error("항목을 찾을 수 없습니다");
+    wizardService.recordOpen(item.id);
+    return item;
+  });
+  handle("wizard:prefs", () => wizardService.store.get());
+
 }
 
 function uniquePath(p: string) {
@@ -738,6 +768,7 @@ app.whenReady().then(async () => {
   registerMediaProtocol();
   registerIpc();
   wireCore();
+  wizardService.start();
   todoService.start({
     resourcesDir: path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, "../.."), "resources"),
     onPipeline: (ev) => send("core:event", { type: "todo", payload: ev }),

@@ -13,6 +13,7 @@ import { Menu } from "./components/Menu";
 import { Mail } from "./components/Mail";
 import { Approval } from "./components/Approval";
 import { Todos } from "./components/Todos";
+import { Wizard } from "./components/Wizard";
 
 export type Toast = { id: number; text: string; kind?: "error" | "info"; action?: { label: string; onClick: () => void } };
 
@@ -27,6 +28,7 @@ export function App() {
   const [presence, setPresence] = useState<Record<number, Presence>>({});
   const [view, setView] = useState<"home" | "menu" | "chats" | "people" | "mail" | "approval" | "todos">("chats");
   const [showSettings, setShowSettings] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [portalBadge, setPortalBadge] = useState({ approval: 0, noti: 0, mail: 0 });
@@ -151,8 +153,12 @@ export function App() {
         setShowSettings(true);
       } else if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setView("chats");
-        document.getElementById("room-filter")?.focus();
+        if (e.shiftKey) {
+          setView("chats");
+          document.getElementById("room-filter")?.focus();
+        } else {
+          setShowWizard(true);
+        }
       } else if (mod && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setView("people");
@@ -295,6 +301,17 @@ export function App() {
           )}
         </div>
       </div>
+      {showWizard && (
+        <Wizard
+          open={showWizard}
+          onClose={() => setShowWizard(false)}
+          onLocal={(v) => {
+            setShowWizard(false);
+            if (v === "home" || v === "chats" || v === "people" || v === "mail" || v === "approval" || v === "todos") setView(v as any);
+          }}
+          toast={(m, k) => toast(m, k || "info")}
+        />
+      )}
       {showSettings && (
         <SettingsModal
           settings={settings}
