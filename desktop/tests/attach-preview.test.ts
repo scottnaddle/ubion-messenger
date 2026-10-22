@@ -47,6 +47,18 @@ describe("attach normalize", () => {
   });
 });
 
+describe("live attach shape (2026-10-23)", () => {
+  it("no expiry field → createdAt + 1y label; download:false → expired", () => {
+    const live = { cryptId: "c".repeat(32), name: "notes.md", path: "/x", extention: "md", size: 24454, preview: false, mobilePreview: true, download: true, imageFile: false };
+    const m = normalizeRestMessage({ messageId: 1, messageType: "SENDFILE", createdAt: "2026-10-23T08:30:00+09:00", chatMessageAttachFileModel: live });
+    expect(expiryLabel(m.attach!)).toBe("유효기간 : ~ 2027.10.23");
+    expect(isExpired(m.attach!, Date.parse("2026-12-01"))).toBe(false);
+    expect(isExpired(normalizeAttach({ ...live, download: false })!)).toBe(true);
+    const img = normalizeAttach({ ...live, name: "a.png", extention: "png", imageFile: true, thumbnail: "/t", thumbMid: "/m" })!;
+    expect(attachKind(img)).toBe("image");
+  });
+});
+
 describe("link preview", () => {
   it("parses OpenGraph with fallbacks and entity decoding", () => {
     const p = parseOpenGraph(`<html><head><title>Fallback</title>

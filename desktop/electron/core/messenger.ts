@@ -65,7 +65,7 @@ export function routeXmppBody(obj: Record<string, any>, me: number) {
     createdAt: obj.createdAt || obj.sendDate || obj.sendAt || new Date().toISOString(),
     userImage: String(fr.userImg || ""),
     messageType: obj.messageType ? String(obj.messageType) : normalizeAttach(a) ? "SENDFILE" : "TEXT",
-    attach: normalizeAttach(a, obj.message ? String(obj.message) : undefined),
+    attach: normalizeAttach(a, obj.message ? String(obj.message) : undefined, obj.createdAt || obj.sendDate || obj.sendAt || new Date().toISOString()),
   };
   const receipt =
     type === "confirm" && fromSeq != null && seq != null
