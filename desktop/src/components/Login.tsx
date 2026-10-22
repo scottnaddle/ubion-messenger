@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { api, type SessionUser, type Settings } from "../api";
 
-export function Login({ settings, onLoggedIn }: { settings: Settings; onLoggedIn: (u: SessionUser) => void }) {
+type WebNeeded = { webLoginRequired: true; message: string };
+const isWebNeeded = (r: unknown): r is WebNeeded => !!r && typeof r === "object" && (r as any).webLoginRequired === true;
+
+export function Login({ settings, onLoggedIn, webPrompt }: { settings: Settings; onLoggedIn: (u: SessionUser) => void; webPrompt?: string }) {
   const [serverUrl, setServerUrl] = useState(settings.serverUrl);
   const [username, setUsername] = useState(settings.username);
   const [password, setPassword] = useState("");
@@ -10,6 +13,21 @@ export function Login({ settings, onLoggedIn }: { settings: Settings; onLoggedIn
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [advanced, setAdvanced] = useState(false);
+  const [webMsg, setWebMsg] = useState(webPrompt || "");
+
+  /** Opens the server's own login page (ID/PW/OTP typed there, never seen by the app). */
+  const webLogin = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const u = await api().call<SessionUser | null>("auth:webLogin", { serverUrl });
+      if (u) onLoggedIn(u);
+    } catch (e2) {
+      setErr((e2 as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   const canUseSaved = settings.hasSavedPassword && username === settings.username;
 
   const submit = async (e: React.FormEvent) => {
@@ -19,10 +37,11 @@ export function Login({ settings, onLoggedIn }: { settings: Settings; onLoggedIn
     setBusy(true);
     setErr("");
     try {
-      const u = await api().call<SessionUser>("auth:login", {
+      const r = await api().call<SessionUser | WebNeeded>("auth:login", {
         serverUrl, username, password: password || undefined, rememberMe, autoLogin,
       });
-      onLoggedIn(u);
+      if (isWebNeeded(r)) setWebMsg(r.message.split("\n")[0]);
+      else onLoggedIn(r);
     } catch (e2) {
       setErr((e2 as Error).message);
     } finally {
@@ -72,7 +91,14 @@ export function Login({ settings, onLoggedIn }: { settings: Settings; onLoggedIn
           </label>
         </div>
         {err && <div className="form-error">{err}</div>}
+        {webMsg ? (
+          <div className="form-error web-login-box">
+            <div>{webMsg}</div>
+            <button type="button" className="primary" disabled={busy} onClick={webLogin}>웹에서 인증하고 로그인</button>
+          </div>
+        ) : null}
         <button className="primary" disabled={busy}>{busy ? "로그인 중…" : "로그인"}</button>
+        <button type="button" className="link small" disabled={busy} onClick={webLogin}>웹 로그인으로 접속</button>
         <p className="muted tiny">비밀번호는 OS 보안 저장소(Keychain/DPAPI)에 암호화되어 저장됩니다.</p>
       </form>
     </div>

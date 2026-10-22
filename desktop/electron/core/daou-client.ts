@@ -3,6 +3,7 @@ import { normalizeAttach } from "./attach";
 import type { AttachModel, ChatMessage, Department, RoomMember, LoginOptions, Person, Room, RoomKind, SessionUser } from "./types";
 import { canonMessageId, ensureTimestamp } from "./messages";
 import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
+import { fromElectronCookie, needsWebLogin, onSessionExpired, WEB_LOGIN_MESSAGE, type ElectronCookieIn } from "./web-login";
 
 type ReqInit = {
   method?: string;
@@ -15,6 +16,8 @@ type ReqInit = {
 type Res = { status: number; text: string; buffer: Buffer; contentType: string };
 
 export class HttpError extends Error {
+  /** true → the account must finish login on the server's web page (OTP / 2-step / pending step). */
+  webLogin = false;
   constructor(public status: number, msg: string, public diag?: string) {
     super(msg);
   }
@@ -39,6 +42,11 @@ export class DaouClient {
   private relogin: Promise<void> | null = null;
   /** Called after every successful (re-)login and after logout, so the in-app portal window can resync cookies. */
   onSessionChanged: (() => void) | null = null;
+  /** Session came from the web-login window (no native credentials): on expiry prompt web login, never re-POST /api/login. */
+  webSession = false;
+  private authLostNotified = false;
+  /** Called once when a web session expires (401). */
+  onAuthLost: (() => void) | null = null;
 
   constructor(baseUrl = "https://coco.ubion.co.kr") {
     this.baseUrl = baseUrl.replace(/\/$/, "");
@@ -48,8 +56,39 @@ export class DaouClient {
   async login(opts: LoginOptions): Promise<SessionUser> {
     this.baseUrl = opts.serverUrl.replace(/\/$/, "");
     this.creds = opts;
+    this.webSession = false;
     await this.doLogin();
-    return this.fetchSession();
+    try {
+      return await this.fetchSession();
+    } catch (e) {
+      // 200 login but session check refused (seen with OTP accounts): offer web login.
+      if (e instanceof HttpError && needsWebLogin({ phase: "session", status: e.status })) {
+        const w = new HttpError(e.status, `${WEB_LOGIN_MESSAGE}\n${e.message}`, e.diag);
+        w.webLogin = true;
+        throw w;
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Adopt a cookie session completed in the web-login window. No credentials are kept,
+   * so a later 401 triggers onAuthLost (web prompt) instead of native re-login loops.
+   */
+  async adoptWebSession(serverUrl: string, cookies: ElectronCookieIn[]): Promise<SessionUser> {
+    this.baseUrl = serverUrl.replace(/\/$/, "");
+    const jar = new CookieJar();
+    const url = this.baseUrl + "/";
+    for (const c of cookies) {
+      try { await jar.setCookie(fromElectronCookie(c), url); } catch { /* foreign domain etc. */ }
+    }
+    this.jar = jar;
+    this.creds = null;
+    this.webSession = true;
+    this.authLostNotified = false;
+    const u = await this.fetchSession();
+    try { this.onSessionChanged?.(); } catch { /* ignore */ }
+    return u;
   }
 
   private async doLogin() {
@@ -78,7 +117,10 @@ export class DaouClient {
     // 200 but redirected to a pending step (pw change / OTP / device approval): session is not usable yet.
     if (isPendingRedirect(d.redirect) || flags.length) {
       const issue = classify(d, flags) ?? "unknown";
-      throw new HttpError(403, userMessage(d, issue), diagLine(d) + (flags.length ? ` flags=${flags.join(",")}` : ""));
+      const web = needsWebLogin({ phase: "login", status: 200, issue, pendingRedirect: isPendingRedirect(d.redirect), flags });
+      const err = new HttpError(403, (web ? WEB_LOGIN_MESSAGE + "\n" : "") + userMessage(d, issue), diagLine(d) + (flags.length ? ` flags=${flags.join(",")}` : ""));
+      err.webLogin = web;
+      throw err;
     }
     if (body?.data?.xmppDomain) this.xmppDomain = body.data.xmppDomain;
     try { this.onSessionChanged?.(); } catch { /* ignore */ }
@@ -124,6 +166,7 @@ export class DaouClient {
     this.jar = new CookieJar();
     this.user = null;
     this.creds = null;
+    this.webSession = false;
     try { this.onSessionChanged?.(); } catch { /* ignore */ }
   }
 
@@ -366,9 +409,16 @@ export class DaouClient {
 
   async request(path: string, init: ReqInit = {}): Promise<Res> {
     const res = await this.rawRequest(path, init);
-    if (res.status === 401 && init.retry !== false && this.creds) {
-      await this.refreshSession();
-      return this.rawRequest(path, init);
+    if (res.status === 401 && init.retry !== false) {
+      const act = onSessionExpired({ webSession: this.webSession, hasCreds: !!this.creds, alreadyPrompted: this.authLostNotified });
+      if (act === "native-relogin") {
+        await this.refreshSession();
+        return this.rawRequest(path, init);
+      }
+      if (act === "prompt-web") {
+        this.authLostNotified = true;
+        try { this.onAuthLost?.(); } catch { /* ignore */ }
+      }
     }
     return res;
   }

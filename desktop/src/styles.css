@@ -364,3 +364,4 @@ input, textarea, select { font: inherit; color: inherit; }
 .lc-title { font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .lc-desc { color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .lc-img { flex: none; width: 64px; height: 64px; object-fit: cover; border-radius: 6px; align-self: center; }
+.web-login-box { display: flex; flex-direction: column; gap: 8px; }
