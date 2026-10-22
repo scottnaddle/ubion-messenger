@@ -1,4 +1,4 @@
-import type { ChatMessage } from "./types";
+import type { ChatMessage, ReadReceipt, Room } from "./types";
 
 const RECONCILE_MS = 120_000;
 
@@ -106,4 +106,51 @@ export function dedupeByMessageId(list: ChatMessage[]): ChatMessage[] {
     out.push(m);
   }
   return out;
+}
+
+/**
+ * Apply a read receipt exactly like the official client's reducer: every message (up to endId) that
+ * still has needConfirmCount > 0, was not sent by the reader and is not yet confirmed by the reader
+ * gets the reader added to confirmUsers and its count decremented.
+ */
+export function applyReadReceipt(list: ChatMessage[], r: Pick<ReadReceipt, "readerSeq" | "endId">): ChatMessage[] {
+  let changed = false;
+  const out = list.map((m) => {
+    if (!m.needConfirmCount || m.needConfirmCount <= 0) return m;
+    if (m.sendUserSeq === r.readerSeq) return m;
+    if (m.confirmUsers?.includes(r.readerSeq)) return m;
+    if (r.endId != null && m.messageId != null && m.messageId > r.endId) return m;
+    if (m.messageId == null && !m.pending) return m;
+    changed = true;
+    return { ...m, needConfirmCount: m.needConfirmCount - 1, confirmUsers: [...(m.confirmUsers || []), r.readerSeq] };
+  });
+  return changed ? out : list;
+}
+
+/** Merge authoritative REST counts; counts only ever decrease, so never resurrect a live decrement. */
+export function mergeReceipts(
+  list: ChatMessage[],
+  updates: Array<{ messageId: number; needConfirmCount: number; confirmUsers: number[] }>
+): ChatMessage[] {
+  const by = new Map(updates.map((u) => [u.messageId, u]));
+  let changed = false;
+  const out = list.map((m) => {
+    const u = m.messageId != null ? by.get(m.messageId) : undefined;
+    if (!u) return m;
+    const n = m.needConfirmCount == null ? u.needConfirmCount : Math.min(m.needConfirmCount, u.needConfirmCount);
+    const users = [...new Set([...(m.confirmUsers || []), ...u.confirmUsers])];
+    if (n === m.needConfirmCount && users.length === (m.confirmUsers || []).length) return m;
+    changed = true;
+    return { ...m, needConfirmCount: n, confirmUsers: users };
+  });
+  return changed ? out : list;
+}
+
+export type RoomFilter = "all" | "unread" | "dm" | "group";
+/** Sidebar tabs: 1:1 = buddy rooms (incl. memo-to-self), 그룹 = group rooms only; notice channels only in 전체/안읽음. */
+export function roomMatchesFilter(r: Room, f: RoomFilter): boolean {
+  if (f === "unread") return r.unread > 0;
+  if (f === "dm") return r.kind === "buddy";
+  if (f === "group") return r.kind === "room";
+  return true;
 }

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, media, type ChatMessage, type Presence, type Room, type SessionUser } from "../api";
-import { dedupeByMessageId, upsertMessage } from "../../electron/core/messages";
+import { applyReadReceipt, dedupeByMessageId, mergeReceipts, upsertMessage } from "../../electron/core/messages";
 import { isSendEnter } from "../lib/composer";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
@@ -51,14 +51,10 @@ export function ChatView({
         const el = listRef.current;
         stickBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120 || payload.isMine;
         setMsgs((l) => upsertMessage(l, payload));
-      } else if (type === "confirm" && (!payload.roomKey || payload.roomKey === room.key)) {
-        // read receipts changed: refresh counts of the latest page quietly
-        api().call<ChatMessage[]>("msg:history", room.key).then((list) => {
-          setMsgs((l) => {
-            const byId = new Map(list.map((m) => [m.messageId, m]));
-            return l.map((m) => (m.messageId != null && byId.has(m.messageId) ? { ...m, needConfirmCount: byId.get(m.messageId)!.needConfirmCount } : m));
-          });
-        }).catch(() => undefined);
+      } else if (type === "confirm" && payload.roomKey === room.key) {
+        setMsgs((l) => applyReadReceipt(l, payload));
+      } else if (type === "receipts" && payload.roomKey === room.key) {
+        setMsgs((l) => mergeReceipts(l, payload.updates));
       }
     };
     window.addEventListener("ubion:event", h);
@@ -115,7 +111,8 @@ export function ChatView({
     const clientId = `c${Date.now()}${Math.random()}`;
     const optimistic: ChatMessage = {
       clientId, message: text, sendUserSeq: me.id, sendUserName: me.name, userImage: me.thumbnail || "",
-      createdAt: new Date().toISOString(), pending: true,
+      createdAt: new Date().toISOString(), pending: true, confirmUsers: [],
+      needConfirmCount: room.kind === "room" ? Math.max(0, (room.memberCount || 1) - 1) : room.kind === "buddy" && !room.isSelf ? 1 : 0,
     };
     stickBottom.current = true;
     setMsgs((l) => [...l, optimistic]);
@@ -167,6 +164,7 @@ export function ChatView({
   };
 
   const canSend = room.kind !== "pubsub" && room.kind !== "unknown";
+  const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
   const subtitle =
     room.kind === "buddy"
       ? [room.position, presence ? PRES_LABEL[presence] : PRES_LABEL.offline].filter(Boolean).join(" · ")
@@ -211,7 +209,8 @@ export function ChatView({
                 <Fragment key={m.messageId ?? m.clientId ?? i}>
                   {newDay && <div className="day-sep"><span>{dayLabel(m.createdAt)}</span></div>}
                   <MessageRow
-                    m={m} mine={mine} grouped={!!grouped} showTime={showTime} isGroup={room.kind !== "buddy"}
+                    m={m} mine={mine} grouped={!!grouped} showTime={showTime} room={room} meId={me.id}
+                    isLastMine={m === lastMine}
                     onImage={() => setViewer(m)} onRetry={() => retry(m)} toast={toast}
                   />
                 </Fragment>
@@ -254,9 +253,9 @@ function Linkified({ text }: { text: string }) {
 }
 
 function MessageRow({
-  m, mine, grouped, showTime, isGroup, onImage, onRetry, toast,
+  m, mine, grouped, showTime, room, meId, isLastMine, onImage, onRetry, toast,
 }: {
-  m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; isGroup: boolean;
+  m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   onImage: () => void; onRetry: () => void; toast: (t: string) => void;
 }) {
   const deleted = m.messageType === "DELETEDMESSAGE";
@@ -302,7 +301,7 @@ function MessageRow({
               <span className="tiny muted">전송 중…</span>
             ) : (
               <>
-                {!!m.needConfirmCount && <span className="unread-n">{isGroup || mine ? m.needConfirmCount : ""}</span>}
+                <ReadMark m={m} room={room} meId={meId} mine={mine} isLastMine={isLastMine} />
                 {showTime && <span className="tiny muted">{timeLabel(m.createdAt)}</span>}
               </>
             )}
@@ -442,5 +441,59 @@ function SearchPanel({ room, onClose }: { room: Room; onClose: () => void }) {
         ))}
       </div>
     </aside>
+  );
+}
+
+/**
+ * Read receipt label, official semantics: unread member count (needConfirmCount) next to every message
+ * while > 0, nothing for notice channels. Extra: subtle "읽음" under my latest 1:1 message once read.
+ * Click opens who-read popover (group: member list from /api/chat/members).
+ */
+function ReadMark({ m, room, meId, mine, isLastMine }: { m: ChatMessage; room: Room; meId: number; mine: boolean; isLastMine: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (room.kind === "pubsub" || room.isSelf || m.messageId == null) return null;
+  const n = m.needConfirmCount || 0;
+  if (n <= 0) {
+    return mine && isLastMine && room.kind === "buddy" ? <span className="read-done tiny">읽음</span> : null;
+  }
+  return (
+    <span className="read-wrap">
+      <button
+        className="unread-n"
+        title={room.kind === "buddy" ? "상대방이 아직 읽지 않았습니다" : `${n}명이 읽지 않았습니다`}
+        onClick={(e) => { e.stopPropagation(); if (room.kind === "room") setOpen((o) => !o); }}
+      >
+        {n}
+      </button>
+      {open && <ReadersPopover m={m} room={room} meId={meId} onClose={() => setOpen(false)} />}
+    </span>
+  );
+}
+
+function ReadersPopover({ m, room, meId, onClose }: { m: ChatMessage; room: Room; meId: number; onClose: () => void }) {
+  const [members, setMembers] = useState<{ userId: number; name: string; image: string }[] | null>(null);
+  useEffect(() => {
+    api().call("rooms:members", room.key).then(setMembers).catch(() => setMembers([]));
+    const h = () => onClose();
+    setTimeout(() => window.addEventListener("click", h), 0);
+    return () => window.removeEventListener("click", h);
+  }, [room.key, onClose]);
+  const read = new Set(m.confirmUsers || []);
+  const others = (members || []).filter((u) => u.userId !== m.sendUserSeq);
+  const unreadList = others.filter((u) => !read.has(u.userId));
+  const readList = others.filter((u) => read.has(u.userId));
+  return (
+    <div className="readers" onClick={(e) => e.stopPropagation()}>
+      {!members ? (
+        <div className="muted small">불러오는 중…</div>
+      ) : (
+        <>
+          <div className="readers-h">안 읽음 {unreadList.length}</div>
+          {unreadList.map((u) => <div key={u.userId} className="readers-row"><Avatar name={u.name} src={u.image} size={20} />{u.name}{u.userId === meId ? " (나)" : ""}</div>)}
+          <div className="readers-h">읽음 {readList.length}</div>
+          {readList.map((u) => <div key={u.userId} className="readers-row muted"><Avatar name={u.name} src={u.image} size={20} />{u.name}{u.userId === meId ? " (나)" : ""}</div>)}
+        </>
+      )}
+    </div>
   );
 }

@@ -47,6 +47,8 @@ export type ChatMessage = {
   failed?: boolean;
   confirmCount?: number;
   needConfirmCount?: number;
+  /** userSeqs who have read this message (REST `confirmUsers`) */
+  confirmUsers?: number[];
 };
 
 export type SessionUser = {
@@ -88,7 +90,14 @@ export type MessengerEventMap = {
   loggedOut: { reason?: string };
   rooms: Room[];
   message: ChatMessage & { roomKey: string; roomKind: RoomKind; roomSeq: number; isMine: boolean; usePush: boolean };
-  confirm: { roomKey?: string; messageId?: number };
+  /** Someone (readerSeq) read messages of a room up to endId (XMPP type "confirm" or local mark-read). */
+  confirm: ReadReceipt;
+  /** Authoritative read counts from REST for the open room (sync fallback). */
+  receipts: { roomKey: string; updates: Array<{ messageId: number; needConfirmCount: number; confirmUsers: number[] }> };
   presence: { userId: number; presence: Presence };
   connection: { state: ConnState; error?: string };
 };
+
+export type ReadReceipt = { roomKey: string; readerSeq: number; beginId?: number; endId?: number };
+
+export type RoomMember = { userId: number; name: string; image: string; position: string };

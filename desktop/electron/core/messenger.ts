@@ -13,6 +13,7 @@ import type {
   Presence,
   Room,
   RoomKind,
+  RoomMember,
   SessionUser,
 } from "./types";
 
@@ -40,9 +41,11 @@ export function routeXmppBody(obj: Record<string, any>, me: number) {
   const toSeq = obj.toSeq != null ? Number(obj.toSeq) : undefined;
   let kind: RoomKind = "unknown";
   let seq: number | undefined;
+  const senderSeq = obj.senderSeq != null ? Number(obj.senderSeq) : undefined;
   if (subtype === "single") {
     kind = "buddy";
-    seq = fromSeq === me ? toSeq : fromSeq;
+    // official client: a confirm sent by me (read on another device) belongs to the room of senderSeq
+    seq = type === "confirm" && fromSeq === me ? senderSeq ?? toSeq : fromSeq === me ? toSeq : fromSeq;
   } else if (subtype === "pubsub") {
     kind = "pubsub";
     seq = toSeq ?? fromSeq;
@@ -73,7 +76,17 @@ export function routeXmppBody(obj: Record<string, any>, me: number) {
         }
       : undefined,
   };
-  return { type, subtype, kind, seq, msg, usePush: obj.usePush !== false, isMine: fromSeq === me, isChat: isChatType(type) };
+  const receipt =
+    type === "confirm" && fromSeq != null && seq != null
+      ? {
+          roomKey: `${kind}:${seq}`,
+          readerSeq: fromSeq,
+          beginId: canonMessageId(obj.confirmedBeginMessageId),
+          endId: canonMessageId(obj.confirmedEndMessageId) ?? canonMessageId(obj.messageId),
+        }
+      : undefined;
+  if (obj.needConfirmCount != null) msg.needConfirmCount = Number(obj.needConfirmCount);
+  return { type, subtype, kind, seq, msg, usePush: obj.usePush !== false, isMine: fromSeq === me, isChat: isChatType(type), receipt };
 }
 
 type Listener<K extends keyof MessengerEventMap> = (p: MessengerEventMap[K]) => void;
@@ -226,7 +239,18 @@ export class MessengerCore {
     if (me == null) return;
     const r = routeXmppBody(obj, me);
     if (r.type === "confirm") {
-      this.emit("confirm", { roomKey: r.seq != null ? `${r.kind}:${r.seq}` : undefined, messageId: r.msg.messageId });
+      if (r.receipt) {
+        // I read this room on another client (official app / mobile): clear its unread badge now
+        if (r.receipt.readerSeq === me) {
+          const room = this.rooms.get(r.receipt.roomKey);
+          if (room && room.unread) {
+            room.unread = 0;
+            this.emitRooms();
+          }
+          this.scheduleSync();
+        }
+        this.emit("confirm", r.receipt);
+      }
       return;
     }
     if (!r.isChat || r.seq == null || Number.isNaN(r.seq) || r.kind === "unknown") {
@@ -241,6 +265,8 @@ export class MessengerCore {
     if (msg.messageId != null && this.emitted.has(msg.messageId)) return;
     this.markEmitted(key, msg.messageId);
     const room = this.rooms.get(key);
+    if (msg.needConfirmCount == null) msg.needConfirmCount = initialNeedConfirm(r.kind, r.seq, me, room);
+    msg.confirmUsers = [];
     const viewing = this.activeRoomKey === key && this.focused;
     if (room) {
       room.preview = msg.attach ? `📎 ${msg.attach.name}` : msg.message.slice(0, 200);
@@ -338,6 +364,12 @@ export class MessengerCore {
     const page = await this.history(key, undefined, 40);
     const fresh = newerThan(page, last ?? baseline ?? room?.messageId ?? Infinity).filter((m) => m.messageId == null || !this.emitted.has(m.messageId));
     const { kind, seq } = this.parseKey(key);
+    if (key === this.activeRoomKey) {
+      const updates = page
+        .filter((m) => m.messageId != null && m.needConfirmCount != null)
+        .map((m) => ({ messageId: m.messageId!, needConfirmCount: m.needConfirmCount!, confirmUsers: m.confirmUsers || [] }));
+      if (updates.length) this.emit("receipts", { roomKey: key, updates });
+    }
     for (const m of fresh) {
       this.markEmitted(key, m.messageId);
       const isMine = m.sendUserSeq === me;
@@ -363,7 +395,8 @@ export class MessengerCore {
 
   unreadTotal(): number {
     let n = 0;
-    for (const r of this.rooms.values()) if (r.usePush) n += r.unread;
+    // official app: every room's server unreadMessageCount is shown as its badge, muted or not
+    for (const r of this.rooms.values()) n += r.unread;
     return n;
   }
 
@@ -413,6 +446,12 @@ export class MessengerCore {
   }
 
   /** Mark read up to the latest message, only meaningful when room is open + window focused. */
+  async members(key: string): Promise<RoomMember[]> {
+    const { kind, seq } = this.parseKey(key);
+    if (kind !== "room") return [];
+    return this.client.listMembers(seq);
+  }
+
   async markRead(key: string, messageId?: number) {
     const room = this.rooms.get(key);
     const mid = messageId ?? room?.messageId;
@@ -423,6 +462,8 @@ export class MessengerCore {
     if (!mid) return;
     const { kind, seq } = this.parseKey(key);
     await this.client.markRead(kind, seq, mid);
+    const me = this.client.user?.id;
+    if (me != null) this.emit("confirm", { roomKey: key, readerSeq: me, endId: mid });
   }
 
   setActiveRoom(key: string | null) {
@@ -498,4 +539,11 @@ export function newerThan(list: ChatMessage[], after: number): ChatMessage[] {
   return list
     .filter((m) => m.messageId != null && m.messageId > after)
     .sort((a, b) => (a.messageId || 0) - (b.messageId || 0));
+}
+
+/** Official getNeedConfirmCount(): group → members-1, 1:1 → 1, own memo room / pubsub → 0. */
+export function initialNeedConfirm(kind: RoomKind, seq: number, me: number, room?: Room): number {
+  if (kind === "room") return Math.max(0, (room?.memberCount || 1) - 1);
+  if (kind === "buddy") return seq === me ? 0 : 1;
+  return 0;
 }

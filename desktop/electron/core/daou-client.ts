@@ -1,5 +1,5 @@
 import { CookieJar } from "tough-cookie";
-import type { AttachModel, ChatMessage, Department, LoginOptions, Person, Room, RoomKind, SessionUser } from "./types";
+import type { AttachModel, ChatMessage, Department, RoomMember, LoginOptions, Person, Room, RoomKind, SessionUser } from "./types";
 import { canonMessageId, ensureTimestamp } from "./messages";
 
 type ReqInit = {
@@ -131,6 +131,7 @@ export class DaouClient {
     const uid = this.user?.id;
     let kind: RoomKind = "unknown";
     let seq = 0;
+    // official: buddyRoomType "single" | "my" (memo-to-self), roomType "group" | "pubsub"
     if (r.buddySeq != null) {
       kind = "buddy";
       seq = Number(r.buddySeq);
@@ -154,7 +155,7 @@ export class DaouClient {
       usePush: r.usePush !== false,
       avatar: String(r.userImage || ""),
       memberCount: r.memberCount != null ? Number(r.memberCount) : undefined,
-      isSelf: kind === "buddy" && seq === uid,
+      isSelf: kind === "buddy" && (seq === uid || r.buddyRoomType === "my"),
       peerUserId: kind === "buddy" ? seq : undefined,
       position: r.buddyPosition ? String(r.buddyPosition) : undefined,
     };
@@ -292,6 +293,17 @@ export class DaouClient {
     return out;
   }
 
+  async listMembers(roomSeq: number): Promise<RoomMember[]> {
+    const uid = this.requireUser().id;
+    const body = await this.getJson(`/api/chat/members/${roomSeq}?userSeq=${uid}`);
+    return (body.data || []).map((m: any) => ({
+      userId: Number(m.memberSeq ?? m.userId),
+      name: String(m.memberName || m.name || ""),
+      image: String(m.memberImage || ""),
+      position: String(m.jobTitle || ""),
+    }));
+  }
+
   async createGroupRoom(memberIds: number[]): Promise<number> {
     const uid = this.requireUser().id;
     const qs = memberIds.map((id) => `memberSeq=${id}`).join("&");
@@ -418,6 +430,9 @@ export function normalizeRestMessage(m: Record<string, any>, roomKey?: string): 
     companyId: m.companyId != null ? Number(m.companyId) : undefined,
     confirmCount: m.confirmCount != null ? Number(m.confirmCount) : undefined,
     needConfirmCount: m.needConfirmCount != null ? Number(m.needConfirmCount) : undefined,
+    confirmUsers: Array.isArray(m.confirmUsers)
+      ? m.confirmUsers.map((u: any) => Number(typeof u === "object" && u ? u.userSeq ?? u.id : u)).filter(Number.isFinite)
+      : undefined,
     attach,
     messageType: m.messageType ? String(m.messageType) : attach ? "SENDFILE" : "TEXT",
   });

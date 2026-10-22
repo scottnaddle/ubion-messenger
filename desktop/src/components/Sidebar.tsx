@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { api, type Presence, type Room } from "../api";
 import { roomTimeLabel } from "../lib/format";
+import { roomMatchesFilter } from "../../electron/core/messages";
 import { Avatar, Icon } from "./ui";
 
 export function Sidebar({
@@ -14,9 +15,7 @@ export function Sidebar({
   const shown = useMemo(() => {
     const k = q.trim().toLowerCase();
     return rooms.filter((r) => {
-      if (filter === "unread" && !r.unread) return false;
-      if (filter === "dm" && r.kind !== "buddy") return false;
-      if (filter === "group" && r.kind === "buddy") return false;
+      if (!roomMatchesFilter(r, filter)) return false;
       return !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k);
     });
   }, [rooms, q, filter]);

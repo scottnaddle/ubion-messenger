@@ -85,6 +85,7 @@ function wireCore() {
     fwd("rooms"),
     fwd("message"),
     fwd("confirm"),
+    fwd("receipts"),
     fwd("presence"),
     fwd("connection"),
     fwd("loggedOut"),
@@ -280,6 +281,7 @@ function registerIpc() {
     return list;
   });
   handle("rooms:sync", () => core.sync("manual"));
+  handle("rooms:members", (key: string) => core.members(key));
   handle("msg:search", (key: string, kw: string) => core.searchInRoom(key, kw));
   handle("msg:send", (key: string, text: string) => core.sendText(key, text));
   handle("msg:markRead", (key: string, mid?: number) => core.markRead(key, mid));

@@ -141,7 +141,7 @@ export function App() {
   }, [rooms]);
 
   const activeRoom = useMemo(() => rooms.find((r) => r.key === activeKey) || null, [rooms, activeKey]);
-  const totalUnread = rooms.reduce((n, r) => n + (r.usePush ? r.unread : 0), 0);
+  const totalUnread = rooms.reduce((n, r) => n + r.unread, 0);
 
   useEffect(() => {
     document.title = totalUnread ? `(${totalUnread}) UBION Messenger` : "UBION Messenger";
