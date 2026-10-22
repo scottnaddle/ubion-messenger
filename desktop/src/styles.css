@@ -64,7 +64,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .rail-btn { position: relative; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--rail-fg); }
 .rail-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
 .rail-btn.on { background: rgba(255,255,255,.14); color: #fff; }
-.rail-badge { position: absolute; top: 2px; right: 0; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; display: grid; place-items: center; border: 2px solid var(--rail); }
+.rail-badge { position: absolute; top: -3px; right: -8px; z-index: 1; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; display: grid; place-items: center; border: 2px solid var(--rail); }
 .rail-spacer { flex: 1; }
 .rail-me { margin-top: 6px; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
