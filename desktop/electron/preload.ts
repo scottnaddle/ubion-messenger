@@ -1,0 +1,29 @@
+import { contextBridge, ipcRenderer, webUtils } from "electron";
+
+type Res<T> = { ok: true; data: T } | { ok: false; error: string };
+
+async function call<T = any>(ch: string, ...args: unknown[]): Promise<T> {
+  const r = (await ipcRenderer.invoke(ch, ...args)) as Res<T>;
+  if (!r.ok) throw new Error(r.error);
+  return r.data;
+}
+
+function sub(ch: string, cb: (p: any) => void) {
+  const l = (_e: unknown, p: unknown) => cb(p);
+  ipcRenderer.on(ch, l);
+  return () => ipcRenderer.removeListener(ch, l);
+}
+
+const api = {
+  call,
+  onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
+  onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),
+  onOpenSettings: (cb: () => void) => sub("nav:settings", cb),
+  onFocus: (cb: (f: boolean) => void) => sub("window:focus", cb),
+  onBadge: (cb: (n: number) => void) => sub("badge:changed", cb),
+  pathForFile: (f: File) => webUtils.getPathForFile(f),
+  platform: process.platform,
+};
+
+contextBridge.exposeInMainWorld("ubion", api);
+export type UbionApi = typeof api;

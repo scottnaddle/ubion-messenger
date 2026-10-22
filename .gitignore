@@ -13,3 +13,10 @@ frontend/dist/
 .env
 app.asar
 msgr.dmg
+desktop/node_modules/
+desktop/out/
+desktop/release/
+desktop/dist-smoke/
+desktop/*.tsbuildinfo
+desktop/out/*.tsbuildinfo
+.ref/
