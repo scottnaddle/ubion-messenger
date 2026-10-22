@@ -120,13 +120,17 @@ type=meeting todo로 저장(시간+링크+암호 참조) → 일정 설정 화�
 사용자별 설정 없음(설정 화면·키 입력·모델/주소 필드 제거). 회사 공용 LiteLLM 프록시(OpenAI 호환)를 빌드 시점 설정으로만 사용.
 
 - 빌드 환경변수 (electron-vite `define`, 기본값 빈 문자열, 저장소에 값 커밋 금지):
-  - `UBM_AI_BASE_URL` — 예: `https://ai.internal.example` (끝 `/` 무시)
-  - `UBM_AI_KEY` — LiteLLM virtual key
+  - `UBM_AI_BASE_URL` — 기본 `https://llm.ubion.global/v1` (끝 `/` 무시)
+  - `UBM_AI_KEY` — 공용 앱 키(LiteLLM virtual key). 기본값 없음, 빌드 시에만 주입
   - `UBM_AI_MODEL` — 기본 `ubm-todo` (LiteLLM model alias)
+  - 키 주입: `desktop/scripts/with-ai-key.sh <빌드 명령>` (예: `scripts/with-ai-key.sh npm run dist:mac`).
+    `ssh -i ~/.ssh/openmaus_vps root@212.47.67.143 cat /root/litellm-keys/ubion-messenger.key` 로 키를 읽어 해당 프로세스 env 에만 넣음 — 출력·파일 저장·커밋 없음. 읽기 실패 시 경고 후 AI 꺼진 빌드.
+    주의: 키는 빌드 결과물(main 번들)에 포함되므로 앱 패키지를 외부에 배포하지 말 것.
   - URL 또는 키가 비어 있으면 기능 꺼짐 → 규칙만으로 추출(알림·오류 없음)
 - 요청: `POST {UBM_AI_BASE_URL}/chat/completions`
   - 헤더 `Authorization: Bearer {UBM_AI_KEY}`, `Content-Type: application/json`
-  - 본문: `{model, temperature:0, max_tokens:400, response_format:{type:"json_object"}, messages:[system, user]}`
+  - 본문: `{model, user, temperature:0, max_tokens:400, response_format:{type:"json_object"}, messages:[system, user]}`
+  - `user` = 로그인한 DaouOffice login id(소문자, 최대 64자, 비밀값 없음) — 직원별 사용량 집계용. 로그인 전이면 생략.
   - user content = `{"sentences":[{"idx":0,"text":"…"}]}` — 요청당 최대 5문장, 문장당 500자, 전송 전 마스킹(이름·전화·이메일·URL·Zoom ID/암호·긴 토큰)
 - 응답: `choices[0].message.content` = JSON `{"items":[{"idx":number,"isTask":boolean,"title":string,"confidence":number,"dueText":string}]}`. 프롬프트·파싱은 앱에 있음. 형식 오류는 무시(규칙 결과 유지).
 - 대상: 규칙 신뢰도 0.5–0.85 구간의 제안만. AI는 할일을 새로 만들지 않음 — 기존 제안의 제목/기한 보정 또는 (isTask=false, confidence≥0.8) 제안 제거만.

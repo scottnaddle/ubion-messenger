@@ -70,6 +70,7 @@ let unsubscribe: Array<() => void> = [];
 let startHidden = false;
 const updater = new Updater(() => win);
 const todoService = new TodoService(path.join(__dirname, "../../resources"));
+todoService.getAiUser = () => core.client.user?.loginId;
 const wizardService = new WizardService();
 
 const resPath = (f: string) =>

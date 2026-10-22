@@ -50,6 +50,13 @@ describe("Company AI assist via LiteLLM proxy (mocked HTTP)", () => {
     expect(sent).toHaveLength(5);
     expect(sent[0].text).toHaveLength(500);
   });
+  it("sends lowercased DaouOffice login id as OpenAI user; omitted when unknown", async () => {
+    const f = vi.fn<FetchLike>(async () => okJson({ choices: [{ message: { content: '{"items":[]}' } }] }));
+    await new AiClient({ baseUrl: "https://ai.example", model: "ubm-todo", getKey: () => "vk-test", getUser: () => " Hong.GilDong ", fetch: f }).classify(["x"]);
+    expect(JSON.parse(f.mock.calls[0][1].body!).user).toBe("hong.gildong");
+    await new AiClient({ baseUrl: "https://ai.example", model: "ubm-todo", getKey: () => "vk-test", getUser: () => "", fetch: f }).classify(["x"]);
+    expect("user" in JSON.parse(f.mock.calls[1][1].body!)).toBe(false);
+  });
   it("calls chat/completions with bearer key", async () => {
     const f = vi.fn<FetchLike>(async () => okJson({ choices: [{ message: { content: '{"items":[{"idx":0,"isTask":true,"title":"자료 공유","confidence":0.9,"dueText":""}]}' } }] }));
     const c = new AiClient({ baseUrl: "https://ai.example/", model: "ubm-todo", getKey: () => "vk-test", fetch: f });

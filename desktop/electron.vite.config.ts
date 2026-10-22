@@ -5,11 +5,11 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
-    // Company AI (LiteLLM proxy) — build-time only; empty → feature off. Never commit values.
+    // Company AI (LiteLLM proxy) — build-time only; key empty → feature off. Key via scripts/with-ai-key.sh; never commit it.
     define: {
-      __UBM_AI_BASE_URL__: JSON.stringify(process.env.UBM_AI_BASE_URL || ""),
+      __UBM_AI_BASE_URL__: JSON.stringify(process.env.UBM_AI_BASE_URL ?? "https://llm.ubion.global/v1"),
       __UBM_AI_KEY__: JSON.stringify(process.env.UBM_AI_KEY || ""),
-      __UBM_AI_MODEL__: JSON.stringify(process.env.UBM_AI_MODEL || ""),
+      __UBM_AI_MODEL__: JSON.stringify(process.env.UBM_AI_MODEL || "ubm-todo"),
     },
     build: { rollupOptions: { input: { index: resolve("electron/main.ts") } } },
   },

@@ -21,13 +21,15 @@ export class TodoService {
   private onPipeline: ((ev: PipelineEvent) => void) | null = null;
   private getCalendarBusy: (() => boolean) | null = null;
   private resourcesDir: string;
+  /** Logged-in DaouOffice login id (set by main) — sent as OpenAI `user` for usage tracking. */
+  getAiUser: () => string | undefined = () => undefined;
   private llmQueue = new LlmQueue(async (m) => this.llmClient()?.classify(m) ?? null);
 
   /** Company-wide config baked in at build time; null → rule-only. */
   llmClient(fetchImpl: FetchLike = (u, i) => fetch(u, i as any) as any) {
     const cfg = aiConfig();
     if (!cfg) return null;
-    return new AiClient({ baseUrl: cfg.baseUrl, model: cfg.model, getKey: () => cfg.key, fetch: fetchImpl, timeoutMs: 8000 });
+    return new AiClient({ baseUrl: cfg.baseUrl, model: cfg.model, getKey: () => cfg.key, getUser: () => this.getAiUser(), fetch: fetchImpl, timeoutMs: 8000 });
   }
 
   constructor(resourcesDir: string) {

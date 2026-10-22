@@ -8,6 +8,7 @@ import { normalizeKoreanDate } from "./dates-ko";
 
 export const LLM_BAND = { min: 0.5, max: 0.85 };
 export const DEFAULT_LLM_MODEL = "ubm-todo";
+export const DEFAULT_LLM_BASE = "https://llm.ubion.global/v1";
 
 declare const __UBM_AI_BASE_URL__: string | undefined;
 declare const __UBM_AI_KEY__: string | undefined;
@@ -58,9 +59,16 @@ export const SYSTEM_PROMPT =
   'title: short Korean to-do (<=30 chars), no names. dueText: the exact date/time phrase from the sentence or "". ' +
   "confidence 0..1. Placeholders like <NAME> are masked data; never guess them.";
 
-export function buildRequest(model: string, sentences: string[]) {
+/** OpenAI `user` for per-employee usage tracking: DaouOffice login id, lowercased; nothing else. */
+export function aiUser(loginId: string | undefined): string | undefined {
+  const u = (loginId || "").trim().toLowerCase().slice(0, 64);
+  return u || undefined;
+}
+
+export function buildRequest(model: string, sentences: string[], user?: string) {
   return {
     model,
+    ...(user ? { user } : {}),
     temperature: 0,
     max_tokens: 400,
     response_format: { type: "json_object" },
@@ -103,7 +111,7 @@ export function finalizeDue(dueText: string | undefined, anchorIso: string): str
 
 export class AiClient {
   constructor(
-    private opts: { baseUrl: string; model: string; getKey: () => string | undefined; fetch: FetchLike; timeoutMs?: number },
+    private opts: { baseUrl: string; model: string; getKey: () => string | undefined; getUser?: () => string | undefined; fetch: FetchLike; timeoutMs?: number },
   ) {}
 
   private async call(path: string, body?: any, method = "POST") {
@@ -130,7 +138,7 @@ export class AiClient {
     masked = masked.slice(0, 5).map((t) => t.slice(0, 500));
     try {
       if (!masked.length) return [];
-      const j = await this.call("/chat/completions", buildRequest(this.opts.model, masked));
+      const j = await this.call("/chat/completions", buildRequest(this.opts.model, masked, aiUser(this.opts.getUser?.())));
       const content = j?.choices?.[0]?.message?.content;
       return typeof content === "string" ? parseVerdicts(content, masked.length) : null;
     } catch {
