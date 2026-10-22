@@ -12,8 +12,9 @@ import { Home } from "./components/Home";
 import { Menu } from "./components/Menu";
 import { Mail } from "./components/Mail";
 import { Approval } from "./components/Approval";
+import { Todos } from "./components/Todos";
 
-export type Toast = { id: number; text: string; kind?: "error" | "info" };
+export type Toast = { id: number; text: string; kind?: "error" | "info"; action?: { label: string; onClick: () => void } };
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -24,7 +25,7 @@ export function App() {
   const [conn, setConn] = useState<ConnState>("offline");
   const [netOnline, setNetOnline] = useState(navigator.onLine);
   const [presence, setPresence] = useState<Record<number, Presence>>({});
-  const [view, setView] = useState<"home" | "menu" | "chats" | "people" | "mail" | "approval">("chats");
+  const [view, setView] = useState<"home" | "menu" | "chats" | "people" | "mail" | "approval" | "todos">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -32,10 +33,10 @@ export function App() {
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeKey;
 
-  const toast = useCallback((text: string, kind: Toast["kind"] = "error") => {
+  const toast = useCallback((text: string, kind: Toast["kind"] = "error", action?: Toast["action"]) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
+    setToasts((t) => [...t, { id, text, kind, action }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 5500 : 4500);
   }, []);
 
   // theme
@@ -90,6 +91,17 @@ export function App() {
           setUser(null);
           setRooms([]);
           setActiveKey(null);
+        } else if (type === "todo") {
+          const p = payload;
+          if (p?.type === "auto" && p.item) {
+            const id = p.item.id as string;
+            toast(`할일 자동 등록: ${p.item.title}`, "info", {
+              label: "실행 취소",
+              onClick: () => void api().call("todo:undoAuto", id),
+            });
+          } else if (p?.type === "suggest") {
+            toast("할일로 추가할까요? — 할일 탭에서 확인", "info");
+          }
         }
         window.dispatchEvent(new CustomEvent("ubion:event", { detail: { type, payload } }));
       }),
@@ -204,6 +216,9 @@ export function App() {
           <Icon name="chat" />
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
         </button>
+        <button className={`rail-btn ${view === "todos" ? "on" : ""}`} title="할일" onClick={() => setView("todos")}>
+          <Icon name="todo" />
+        </button>
         <button className={`rail-btn ${view === "people" ? "on" : ""}`} title="조직도 (⌘N)" onClick={() => setView("people")}>
           <Icon name="people" />
         </button>
@@ -231,6 +246,15 @@ export function App() {
             <Mail />
           ) : view === "approval" ? (
             <Approval />
+          ) : view === "todos" ? (
+            <Todos
+              rooms={rooms}
+              toast={(m) => toast(m, "info")}
+              onOpenSource={(roomKey) => {
+                setActiveKey(roomKey);
+                setView("chats");
+              }}
+            />
           ) : (
             <>
               {view === "home" ? (
@@ -297,7 +321,14 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
   return (
     <div className="toasts">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind || ""}`}>{t.text}</div>
+        <div key={t.id} className={`toast ${t.kind || ""}`}>
+          <span>{t.text}</span>
+          {t.action && (
+            <button className="link small" style={{ marginLeft: 10, color: "#fff" }} onClick={t.action.onClick}>
+              {t.action.label}
+            </button>
+          )}
+        </div>
       ))}
     </div>
   );

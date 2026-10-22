@@ -19,6 +19,8 @@ export function ChatView({
   const [dragOver, setDragOver] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [uploading, setUploading] = useState(0);
+  const [extractOn, setExtractOn] = useState(false);
+  const [roomSuggestions, setRoomSuggestions] = useState<Array<{ id: string; kind: string; draft: any; evidenceText: string }>>([]);
   const listRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
   const prevHeight = useRef<number | null>(null);
@@ -42,6 +44,26 @@ export function ChatView({
       alive = false;
     };
   }, [room.key, toast]);
+
+  useEffect(() => {
+    let alive = true;
+    api().call<{ enabledRooms: string[] }>("todo:settings:get").then((s) => {
+      if (alive) setExtractOn(s.enabledRooms.includes(room.key));
+    }).catch(() => undefined);
+    api().call<Array<{ id: string; kind: string; draft: any; evidenceText: string; roomKey: string }>>("todo:suggestions").then((list) => {
+      if (alive) setRoomSuggestions(list.filter((x) => x.roomKey === room.key));
+    }).catch(() => undefined);
+    const h = (ev: Event) => {
+      const { type, payload } = (ev as CustomEvent).detail;
+      if (type === "todo") {
+        api().call<Array<{ id: string; kind: string; draft: any; evidenceText: string; roomKey: string }>>("todo:suggestions").then((list) => {
+          if (alive) setRoomSuggestions(list.filter((x) => x.roomKey === room.key));
+        }).catch(() => undefined);
+      }
+    };
+    window.addEventListener("ubion:event", h);
+    return () => { alive = false; window.removeEventListener("ubion:event", h); };
+  }, [room.key]);
 
   // realtime
   useEffect(() => {
@@ -185,10 +207,33 @@ export function ChatView({
           <div className="name">{room.name}</div>
           <div className="sub muted">{subtitle}</div>
         </div>
+        <button
+          className={`icon-btn ${extractOn ? "on" : ""}`}
+          title={extractOn ? "이 방 할일 추출 켜짐" : "이 방 할일 추출 꺼짐 (클릭하여 켜기)"}
+          onClick={async () => {
+            const next = !extractOn;
+            await api().call("todo:enableRoom", room.key, next);
+            setExtractOn(next);
+            toast(next ? "이 대화방 할일 추출을 켰습니다" : "이 대화방 할일 추출을 껐습니다", "info");
+          }}
+        >
+          <Icon name="todo" size={18} />
+        </button>
         <button className={`icon-btn ${searchOpen ? "on" : ""}`} title="대화 내용 검색" onClick={() => setSearchOpen((s) => !s)}>
           <Icon name="search" size={18} />
         </button>
       </header>
+      {roomSuggestions.length > 0 && (
+        <div>
+          {roomSuggestions.slice(0, 3).map((s) => (
+            <div key={s.id} className="chat-todo-chip">
+              <span className="grow">{s.kind === "complete" ? "완료로 표시할까요?" : "할일로 추가할까요?"} — {s.draft?.title || s.evidenceText.slice(0, 40)}</span>
+              <button className="primary small" onClick={async () => { await api().call("todo:acceptSuggestion", s.id); toast("반영했습니다", "info"); setRoomSuggestions((x) => x.filter((i) => i.id !== s.id)); }}>추가</button>
+              <button className="link small" onClick={async () => { await api().call("todo:rejectSuggestion", s.id); setRoomSuggestions((x) => x.filter((i) => i.id !== s.id)); }}>무시</button>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="chat-body">
         <div className="msg-list" ref={listRef} onScroll={onScroll}>
           {loadingOlder && <div className="loader-line">이전 메시지 불러오는 중…</div>}

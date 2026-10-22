@@ -88,6 +88,8 @@ export function SettingsModal({
             </div>
             {settings.downloadDir && <button className="link small" onClick={() => set({ downloadDir: "" })}>기본값</button>}
           </div>
+          <h4>할일 추출 (v1.1)</h4>
+          <p className="muted small">채팅 기반 할일·일정 추출은 방마다 옵트인(기본 꺼짐)이며 데이터는 이 기기에만 저장됩니다. LLM 서버 호출은 기본 꺼짐. 상세는 할일 탭 → 설정.</p>
           <h4>업데이트</h4>
           <UpdateRow />
           <Toggle k="autoUpdate" label="자동으로 업데이트 확인" desc="시작할 때와 4시간마다 확인합니다" />

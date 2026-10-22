@@ -26,6 +26,7 @@ import {
   FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY, parseFlexTodoTotal, flexProgressCountFromText,
 } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
+import { TodoService } from "./core/todo/service";
 import {
   clearPassword,
   loadPassword,
@@ -56,6 +57,7 @@ let core = new MessengerCore(settings.serverUrl);
 let unsubscribe: Array<() => void> = [];
 let startHidden = false;
 const updater = new Updater(() => win);
+const todoService = new TodoService(path.join(__dirname, "../../resources"));
 
 const resPath = (f: string) =>
   app.isPackaged ? path.join(process.resourcesPath, "resources", f) : path.join(__dirname, "../../resources", f);
@@ -112,7 +114,15 @@ function wireCore() {
     core.on("portalNewPost", (p) => notifyNewPost(p)),
     core.on("portalNewPostSummary", (p) => notifyNewPostSummary(p)),
     core.on("rooms", () => updateBadge()),
-    core.on("message", (m) => maybeNotify(m)),
+    core.on("message", (m) => {
+      maybeNotify(m);
+      try {
+        const ev = todoService.handleMessage(m, m.roomKey, m.roomKind, m.isMine, core.user?.id);
+        if (ev) send("core:event", { type: "todo", payload: ev });
+      } catch (e) {
+        console.warn("todo pipeline:", (e as Error).message);
+      }
+    }),
   ];
 }
 
@@ -529,6 +539,13 @@ function registerIpc() {
   handle("msg:history", async (key: string, before?: number) => {
     const list = await core.history(key, before);
     core.noteSeen(key, list);
+    try {
+      const room = core.getRooms().find((r) => r.key === key);
+      for (const m of list) {
+        const isMine = !!core.user && m.sendUserSeq === core.user.id;
+        todoService.handleMessage(m, key, room?.kind || "unknown", isMine, core.user?.id, true);
+      }
+    } catch { /* ignore */ }
     return list;
   });
   handle("rooms:sync", () => core.sync("manual"));
@@ -597,6 +614,66 @@ function registerIpc() {
   handle("app:openExternal", (url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
   });
+  // ---- todos / schedule / zoom (v1.1) ----
+  handle("todo:list", (filter?: { status?: string; type?: string }) => todoService.store.list(filter as any));
+  handle("todo:get", (id: string) => todoService.store.get(String(id)));
+  handle("todo:add", (input: any) => todoService.store.add(input));
+  handle("todo:update", (id: string, patch: any) => {
+    const r = todoService.store.update(String(id), patch);
+    if (!r) throw new Error("할일을 찾을 수 없습니다");
+    return r;
+  });
+  handle("todo:complete", (id: string) => {
+    const r = todoService.store.complete(String(id));
+    if (!r) throw new Error("할일을 찾을 수 없습니다");
+    return r;
+  });
+  handle("todo:delete", (id: string) => {
+    todoService.store.remove(String(id));
+  });
+  handle("todo:suggestions", () => todoService.store.suggestions());
+  handle("todo:acceptSuggestion", (id: string) => {
+    const r = todoService.store.acceptSuggestion(String(id));
+    if (!r) throw new Error("제안을 찾을 수 없습니다");
+    send("core:event", { type: "todo", payload: { type: "auto", item: r } });
+    return r;
+  });
+  handle("todo:rejectSuggestion", (id: string) => {
+    todoService.store.rejectSuggestion(String(id));
+  });
+  handle("todo:settings:get", () => todoService.settings());
+  handle("todo:settings:set", (patch: any) => todoService.store.updateSettings(patch || {}));
+  handle("todo:enableRoom", (roomKey: string, on: boolean) => {
+    const s = todoService.settings();
+    const set = new Set(s.enabledRooms);
+    if (on) set.add(String(roomKey));
+    else set.delete(String(roomKey));
+    return todoService.store.updateSettings({ enabledRooms: [...set] });
+  });
+  handle("todo:deleteAllExtracted", () => {
+    todoService.store.deleteAllExtracted();
+  });
+  handle("todo:exportIcs", async () => {
+    const ics = todoService.exportIcs();
+    const r = await dialog.showSaveDialog(win!, {
+      defaultPath: path.join(settings.downloadDir || app.getPath("downloads"), "ubion-todos.ics"),
+      filters: [{ name: "iCalendar", extensions: ["ics"] }],
+    });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, ics, "utf8");
+    shell.showItemInFolder(r.filePath);
+    return r.filePath;
+  });
+  handle("todo:schedule", () => {
+    const todos = todoService.store.list({ status: "open" }).filter((t) => t.due || t.start);
+    const cal = core.portal.getWidget("calendar");
+    return { todos, calendar: cal };
+  });
+  handle("zoom:join", (todoId: string) => todoService.joinZoom(String(todoId)));
+  handle("todo:undoAuto", (id: string) => {
+    todoService.store.remove(String(id));
+  });
+
 }
 
 function uniquePath(p: string) {
@@ -638,6 +715,7 @@ app.on("second-instance", showWindow);
 app.on("activate", showWindow);
 app.on("before-quit", () => {
   quitting = true;
+  todoService.stop();
   core.shutdown();
 });
 app.on("window-all-closed", () => {
@@ -660,6 +738,24 @@ app.whenReady().then(async () => {
   registerMediaProtocol();
   registerIpc();
   wireCore();
+  todoService.start({
+    resourcesDir: path.join(app.isPackaged ? process.resourcesPath : path.join(__dirname, "../.."), "resources"),
+    onPipeline: (ev) => send("core:event", { type: "todo", payload: ev }),
+    getCalendarBusy: () => {
+      try {
+        const cal = core.portal.getWidget("calendar") as any;
+        const items = cal?.items || [];
+        const now = Date.now();
+        return items.some((e: any) => {
+          const a = e.start ? new Date(e.start).getTime() : 0;
+          const b = e.end ? new Date(e.end).getTime() : a + 3600000;
+          return a <= now && now <= b;
+        });
+      } catch {
+        return false;
+      }
+    },
+  });
   createTray();
   startHidden = process.argv.includes("--hidden") || !!app.getLoginItemSettings().wasOpenedAsHidden;
   createWindow();
