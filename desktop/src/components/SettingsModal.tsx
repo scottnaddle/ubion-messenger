@@ -80,6 +80,7 @@ export function SettingsModal({
           <Toggle k="closeToTray" label="창을 닫으면 트레이로 최소화" />
           <Toggle k="rememberMe" label="로그인 정보 저장" desc={info && !info.encryption ? "이 시스템에서는 보안 저장소를 사용할 수 없습니다" : "OS 보안 저장소에 암호화"} />
           <Toggle k="autoLogin" label="자동 로그인" disabled={!settings.rememberMe} />
+          <Toggle k="flexAutoLogin" label="flex 자동 로그인" desc="저장된 포털 비밀번호로 flex.team에 로그인합니다 (username@ubion.co.kr)" disabled={!settings.rememberMe} />
           <div className="row">
             <div>
               <div>다운로드 폴더</div>

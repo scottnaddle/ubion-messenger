@@ -35,7 +35,7 @@ export function toElectronCookie(c: Pick<Cookie, "key" | "value" | "domain" | "p
 }
 
 /** flex.team (HR) and its subdomains — allowed in the in-app portal window (same persist:portal session). */
-export const FLEX_HOME = "https://flex.team/home";
+export const FLEX_HOME = "https://flex.team/home/todo/inbox";
 export function isFlexUrl(url: string): boolean {
   try {
     const u = new URL(url);

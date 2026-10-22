@@ -11,6 +11,7 @@ export type Settings = {
   theme: "system" | "light" | "dark"; notifications: boolean; notificationPreview: boolean;
   notificationSound: boolean; launchAtLogin: boolean; closeToTray: boolean; downloadDir: string;
   fontSize: number; autoUpdate: boolean; portalPostNotify: boolean; portalOpenMode: "external" | "inapp"; portalOpenModeChosen?: boolean;
+  flexAutoLogin?: boolean;
   hasSavedPassword?: boolean;
 };
 
@@ -32,6 +33,7 @@ export type Bridge = {
     approvalList(box: ApprovalBox, page: number, keyword?: string): Promise<ApprovalList>;
     approvalCounts(): Promise<{ todo: number; upcoming: number }>;
     approvalDoc(id: number | string): Promise<ApprovalDocumentDetail>;
+    flexPending(force?: boolean): Promise<{ count: number | null; at: number; error?: string }>;
   };
   pathForFile(f: File): string;
   platform: string;

@@ -55,9 +55,11 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }
   const [snap, setSnap] = useState<Snap | null>(null);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState<number | null>(null);
+  const [flexCount, setFlexCount] = useState<number | null>(null);
 
   useEffect(() => {
     api().portal.get().then((s: Snap) => setSnap(s)).catch(() => undefined);
+    api().portal.flexPending().then((r) => setFlexCount(r.count)).catch(() => setFlexCount(null));
     const h = (ev: Event) => {
       const { type, payload } = (ev as CustomEvent).detail;
       if (type === "portalSummary") setSnap((s) => (s ? { ...s, summary: payload } : s));
@@ -73,7 +75,10 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }
 
   const refresh = async () => {
     setBusy(true);
-    try { setSnap(await api().portal.refresh()); setAt(Date.now()); } catch { /* card errors shown */ }
+    try {
+      setSnap(await api().portal.refresh()); setAt(Date.now());
+      setFlexCount((await api().portal.flexPending(true)).count);
+    } catch { /* card errors shown */ }
     setBusy(false);
   };
 
@@ -105,8 +110,8 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }
             {c.gadgetName || c.appName} {c.count}
           </button>
         ))}
-        <button className="chip" title="flex 승인 대기 — 건수는 flex 공개 API가 없어 표시하지 않습니다" onClick={() => open("https://flex.team/home")}>
-          flex 승인 대기 -
+        <button className={`chip ${flexCount ? "on" : ""}`} title="flex 승인 대기" onClick={() => open("https://flex.team/home/todo/inbox")}>
+          flex 승인 대기 {flexCount == null ? "-" : flexCount}
         </button>
       </div>
       <p className="muted tiny home-hint">항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.</p>
@@ -119,10 +124,10 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }
             </button></li>))}</ul>
           <Empty show={!!posts && !posts.items.length} text="최근 글이 없습니다" />
         </Card>
-        <Card title="flex 승인 대기" webUrl="https://flex.team/home" isStatic>
-          <ul><li><button onClick={() => open("https://flex.team/home")}>
+        <Card title="flex 승인 대기" count={flexCount ?? undefined} webUrl="https://flex.team/home/todo/inbox" isStatic>
+          <ul><li><button onClick={() => open("https://flex.team/home/todo/inbox")}>
             <span className="tag">flex</span> <span className="ellipsis">휴가·근무 승인 요청 보기</span>
-            <span className="muted small"> · 건수 미지원</span>
+            <span className="muted small"> · {flexCount == null ? "건수 확인 중/불가" : `${flexCount}건`}</span>
           </button></li></ul>
         </Card>
         <Card title="오늘 일정" count={cal?.total} webUrl={`/app/calendar/daily/${new Date().toLocaleDateString("sv-SE")}`} state={w.calendar}>

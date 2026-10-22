@@ -33,6 +33,7 @@ const api = {
       call<import("./core/portal").ApprovalList>("portal:approvalList", box, page, keyword),
     approvalCounts: () => call<{ todo: number; upcoming: number }>("portal:approvalCounts"),
     approvalDoc: (id: number | string) => call<import("./core/portal").ApprovalDocumentDetail>("portal:approvalDoc", id),
+    flexPending: (force?: boolean) => call<{ count: number | null; at: number; error?: string }>("portal:flexPending", force),
   },
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   platform: process.platform,

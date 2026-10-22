@@ -501,7 +501,7 @@ export const LOCAL_MENU: MenuEntry[] = [
   { id: "l-noti", name: "알림", appName: "noti", url: "", custom: false, target: "local", local: "home", section: "메신저" },
   { id: "l-chat", name: "대화", appName: "chat", url: "", custom: false, target: "local", local: "chats", section: "메신저" },
   { id: "l-org", name: "조직도", appName: "org", url: "", custom: false, target: "local", local: "people", section: "메신저" },
-  { id: "l-flex", name: "flex (휴가·근무)", appName: "flex", url: "https://flex.team/home", custom: true, target: "portal", section: "메신저" },
+  { id: "l-flex", name: "flex (휴가·근무)", appName: "flex", url: "https://flex.team/home/todo/inbox", custom: true, target: "portal", section: "메신저" },
 ];
 
 /** At most this many individual new-post notifications per check; the rest are summarised. */

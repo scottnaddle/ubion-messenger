@@ -24,6 +24,8 @@ export type Settings = {
   portalOpenModeChosen?: boolean;
   /** Hidden (no UI): allow plaintext XMPP TCP 5222 if BOSH/HTTPS cannot connect. Off by default. */
   xmppTcpFallback: boolean;
+  /** Auto-fill flex.team login with portal email (username@ubion.co.kr) + saved portal password. */
+  flexAutoLogin: boolean;
   /** Highest 전사게시판 post id seen (number only) — lets posts made while the app was closed notify on next start. */
   portalLastPostId?: number;
 };
@@ -45,6 +47,7 @@ export const DEFAULTS: Settings = {
   portalPostNotify: true,
   portalOpenMode: "inapp",
   xmppTcpFallback: false,
+  flexAutoLogin: true,
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");

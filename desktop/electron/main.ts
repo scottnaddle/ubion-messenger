@@ -21,6 +21,7 @@ import { Updater } from "./updater";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
 import { isPortalUrl, isFlexUrl, isFlexSsoUrl, toElectronCookie } from "./core/portal-cookies";
+import { isFlexLoginUrl, flexEmailFromUsername, flexAutoLoginScript, maskFlexLog } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
 import {
   clearPassword,
@@ -184,6 +185,27 @@ function openPortal(rel: string, mode?: "external" | "inapp") {
 const PORTAL_PARTITION = "persist:portal";
 let portalWin: BrowserWindow | null = null;
 const portalSession = () => session.fromPartition(PORTAL_PARTITION);
+/** Max one flex auto-login attempt per messenger session; reset on logout / successful flex landing. */
+let flexAutoLoginTried = false;
+let flexPendingCache: { count: number | null; at: number; error?: string } = { count: null, at: 0 };
+let flexCountPathLearned: string | null = null;
+let flexRequestLearnerOn = false;
+
+function ensureFlexRequestLearner() {
+  if (flexRequestLearnerOn) return;
+  flexRequestLearnerOn = true;
+  portalSession().webRequest.onCompleted({ urls: ["https://flex.team/*", "https://*.flex.team/*"] }, (d) => {
+    if (d.method !== "GET" || d.statusCode < 200 || d.statusCode >= 300) return;
+    try {
+      const u = new URL(d.url);
+      if (!/todo|inbox|approv|pending|badge|count|notification|time-off|timeoff|workflow/i.test(u.pathname)) return;
+      if (/\.(js|css|png|svg|woff2?|map)(\?|$)/.test(u.pathname)) return;
+      if (!flexCountPathLearned) flexCountPathLearned = u.pathname + u.search;
+    } catch { /* ignore */ }
+  });
+}
+
+
 
 /** Copy the core's current portal cookies (GOSSOcookie etc.) into the partition. Values are never logged. */
 async function syncPortalCookies() {
@@ -213,6 +235,143 @@ function portalNavMenu() {
   ]);
 }
 
+
+async function tryFlexAutoLogin(wc: BrowserWindow["webContents"]) {
+  if (flexAutoLoginTried || !settings.flexAutoLogin || !settings.rememberMe) return;
+  const url = wc.getURL();
+  if (!isFlexLoginUrl(url)) return;
+  const email = flexEmailFromUsername(settings.username);
+  const password = loadPassword();
+  if (!email || !password) return;
+  flexAutoLoginTried = true; // one try even if fill fails
+  try {
+    const status = await wc.executeJavaScript(flexAutoLoginScript(email, password), true);
+    if (status !== "ok") {
+      console.log("[flex] auto-login skipped:", maskFlexLog(String(status)));
+      return;
+    }
+    // Wait up to ~12s for navigation away from login; leave the page for manual login on failure.
+    for (let i = 0; i < 24; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (wc.isDestroyed()) return;
+      if (!isFlexLoginUrl(wc.getURL())) {
+        void refreshFlexPending(true).catch(() => undefined);
+        return;
+      }
+    }
+    console.log("[flex] auto-login did not leave login page — manual login needed");
+  } catch (e) {
+    console.log("[flex] auto-login error:", maskFlexLog(String((e as Error)?.message || e)));
+  }
+}
+
+function attachFlexWindowHooks(w: BrowserWindow) {
+  ensureFlexRequestLearner();
+  const wc = w.webContents;
+  const onNav = () => {
+    const u = wc.getURL();
+    if (isFlexLoginUrl(u)) void tryFlexAutoLogin(wc);
+    else if (isFlexUrl(u) && !isFlexLoginUrl(u)) {
+      void refreshFlexPending(true).catch(() => undefined);
+    }
+  };
+  wc.on("did-finish-load", onNav);
+  wc.on("did-navigate", onNav);
+  wc.on("did-navigate-in-page", onNav);
+}
+
+/** Read-only GET against flex using the persist:portal session cookies. Never approve/modify. */
+async function flexSessionGet(path: string): Promise<{ status: number; json: any; text: string }> {
+  const ses = portalSession();
+  const url = path.startsWith("http") ? path : `https://flex.team${path.startsWith("/") ? "" : "/"}${path}`;
+  const res = await ses.fetch(url, { method: "GET", headers: { accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" } });
+  const text = await res.text();
+  let json: any = null;
+  try { json = JSON.parse(text); } catch { /* not json */ }
+  return { status: res.status, json, text };
+}
+
+/**
+ * Discover / read the pending approval count the flex web app uses.
+ * Candidates are probed only via GET; result is cached. Returns null on failure.
+ */
+async function refreshFlexPending(force = false): Promise<{ count: number | null; at: number; error?: string }> {
+  if (!force && Date.now() - flexPendingCache.at < 60_000) return flexPendingCache;
+  const candidates = [
+    ...(flexCountPathLearned ? [flexCountPathLearned] : []),
+    "/api/v2/time-tracking/time-off/approvals/pending/count",
+    "/api/v2/time-tracking/time-off/approvals/count",
+    "/api/v2/approvals/pending/count",
+    "/api/v2/todo/inbox/count",
+    "/api/v2/home/todo/count",
+    "/api/v3/time-off/approvals/pending/count",
+    "/api-web/v2/time-tracking/time-off/request/approvals/count",
+    "/api-web/v2/todo/count",
+  ];
+  for (const path of candidates) {
+    try {
+      const { status, json, text } = await flexSessionGet(path);
+      if (status < 200 || status >= 300 || json == null) continue;
+      const n = pickFlexCount(json);
+      if (n != null) {
+        flexPendingCache = { count: n, at: Date.now() };
+        return flexPendingCache;
+      }
+      // Some endpoints return a list — use length
+      if (Array.isArray(json)) {
+        flexPendingCache = { count: json.length, at: Date.now() };
+        return flexPendingCache;
+      }
+      if (Array.isArray(json?.data)) {
+        flexPendingCache = { count: json.data.length, at: Date.now() };
+        return flexPendingCache;
+      }
+      void text;
+    } catch {
+      /* try next */
+    }
+  }
+  // Fallback: scrape the open flex window inbox (read-only DOM), never click approve/reject.
+  const scraped = await scrapeFlexPendingFromWindow();
+  if (scraped != null) {
+    flexPendingCache = { count: scraped, at: Date.now() };
+    return flexPendingCache;
+  }
+  flexPendingCache = { count: null, at: Date.now(), error: "unavailable" };
+  return flexPendingCache;
+}
+
+async function scrapeFlexPendingFromWindow(): Promise<number | null> {
+  if (!portalWin || portalWin.isDestroyed()) return null;
+  const u = portalWin.webContents.getURL();
+  if (!isFlexUrl(u) || isFlexLoginUrl(u)) return null;
+  try {
+    const n = await portalWin.webContents.executeJavaScript(`(() => {
+      const t = document.body?.innerText || "";
+      // Common badge patterns near "해야 할 일" / inbox headers
+      const m = t.match(/해야\s*할\s*일[^\d]{0,20}(\d{1,4})/) || t.match(/승인\s*대기[^\d]{0,20}(\d{1,4})/);
+      if (m) return Number(m[1]);
+      // Count list rows in the todo inbox if present
+      const rows = document.querySelectorAll('[data-testid*="todo"], [class*="TodoList"] li, [class*="inbox"] li, main li');
+      if (rows.length > 0 && rows.length < 500) return rows.length;
+      return null;
+    })()`, true);
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function pickFlexCount(json: any): number | null {
+  if (json == null) return null;
+  if (typeof json === "number" && Number.isFinite(json)) return json;
+  for (const k of ["count", "total", "pendingCount", "pending", "todoCount", "totalCount", "size"]) {
+    const v = json[k] ?? json?.data?.[k] ?? json?.result?.[k];
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+  }
+  return null;
+}
+
 async function openPortalWindow(url: string) {
   await syncPortalCookies();
   if (portalWin && !portalWin.isDestroyed()) {
@@ -227,6 +386,7 @@ async function openPortalWindow(url: string) {
     webPreferences: { partition: PORTAL_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   portalWin.setMenu(portalNavMenu());
+  attachFlexWindowHooks(portalWin);
   const base = core.client.baseUrl;
   const inWin = (u: string) => isPortalUrl(u, base) || isFlexUrl(u) || isFlexSsoUrl(u);
   portalWin.webContents.setWindowOpenHandler(({ url: u }) => {
@@ -399,12 +559,17 @@ function registerIpc() {
       saveSettings(settings);
       if (o.rememberMe) savePassword(password);
       else clearPassword();
+      flexAutoLoginTried = false;
+      flexPendingCache = { count: null, at: 0 };
       return user;
     }
   );
   handle("auth:logout", async () => {
     await core.logout("user");
     await clearPortalSession();
+    flexAutoLoginTried = false;
+    flexPendingCache = { count: null, at: 0 };
+    flexCountPathLearned = null;
     settings = { ...settings, autoLogin: false };
     saveSettings(settings);
     updateBadge();
@@ -483,6 +648,7 @@ function registerIpc() {
   });
   handle("portal:approvalCounts", () => core.portal.approvalCounts());
   handle("portal:approvalDoc", (id: unknown) => core.portal.approvalDoc(normalizeApprovalDocId(id)));
+  handle("portal:flexPending", async (force?: boolean) => refreshFlexPending(!!force));
   handle("app:openExternal", (url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
   });
