@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { MessengerCore } from "./core/messenger";
 import { Updater } from "./updater";
+import { IS_TEST_BUILD } from "./flavor";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
 import { isPortalUrl, isFlexUrl, isFlexSsoUrl, toElectronCookie } from "./core/portal-cookies";
@@ -37,8 +38,11 @@ import {
   type Settings,
 } from "./settings";
 
-const APP_NAME = "UBION Messenger";
+const APP_NAME = IS_TEST_BUILD ? "UBION Messenger Test" : "UBION Messenger";
 app.setName(APP_NAME);
+if (IS_TEST_BUILD && !app.commandLine.hasSwitch("user-data-dir")) {
+  app.setPath("userData", path.join(app.getPath("appData"), "UBION Messenger Test"));
+}
 if (process.platform === "win32") app.setAppUserModelId("global.ubion.messenger");
 
 if (!app.requestSingleInstanceLock()) {

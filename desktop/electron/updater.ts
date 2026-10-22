@@ -1,3 +1,4 @@
+import { IS_TEST_BUILD } from "./flavor";
 import { app, BrowserWindow, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -48,7 +49,7 @@ export class Updater {
   }
 
   get supported() {
-    return app.isPackaged && (process.platform === "win32" || process.platform === "darwin");
+    return !IS_TEST_BUILD && app.isPackaged && (process.platform === "win32" || process.platform === "darwin");
   }
 
   schedule(enabled: boolean) {
