@@ -1,6 +1,7 @@
 import { CookieJar } from "tough-cookie";
 import type { AttachModel, ChatMessage, Department, RoomMember, LoginOptions, Person, Room, RoomKind, SessionUser } from "./types";
 import { canonMessageId, ensureTimestamp } from "./messages";
+import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
 
 type ReqInit = {
   method?: string;
@@ -13,7 +14,7 @@ type ReqInit = {
 type Res = { status: number; text: string; buffer: Buffer; contentType: string };
 
 export class HttpError extends Error {
-  constructor(public status: number, msg: string) {
+  constructor(public status: number, msg: string, public diag?: string) {
     super(msg);
   }
 }
@@ -60,15 +61,23 @@ export class DaouClient {
         retry: false,
       }
     );
+    const d = diagnose(res.status, res.text, "/api/login");
     let body: any = null;
     try {
       body = JSON.parse(res.text);
     } catch {
       /* html */
     }
+    const flags = Object.entries(body?.data || {})
+      .filter(([k, v]) => v === true && /otp|pwd|password|change|expire|lock|device|captcha/i.test(k) && k !== "useSkipPwdChange")
+      .map(([k]) => k);
     if (res.status !== 200 || (body && body.code && String(body.code) !== "200")) {
-      const msg = body?.message || `로그인 실패 (HTTP ${res.status})`;
-      throw new HttpError(res.status === 200 ? 401 : res.status, msg);
+      throw new HttpError(res.status === 200 ? 401 : res.status, userMessage(d, classify(d, flags)), diagLine(d));
+    }
+    // 200 but redirected to a pending step (pw change / OTP / device approval): session is not usable yet.
+    if (isPendingRedirect(d.redirect) || flags.length) {
+      const issue = classify(d, flags) ?? "unknown";
+      throw new HttpError(403, userMessage(d, issue), diagLine(d) + (flags.length ? ` flags=${flags.join(",")}` : ""));
     }
     if (body?.data?.xmppDomain) this.xmppDomain = body.data.xmppDomain;
     try { this.onSessionChanged?.(); } catch { /* ignore */ }
@@ -342,7 +351,11 @@ export class DaouClient {
 
   private async getJson(path: string, init: ReqInit = {}): Promise<any> {
     const res = await this.request(path, init);
-    if (res.status !== 200) throw new HttpError(res.status, `HTTP ${res.status} ${path.split("?")[0]}`);
+    if (res.status !== 200) {
+      const d = diagnose(res.status, res.text, path.split("?")[0]);
+      if (path.startsWith("/api/user/session")) throw new HttpError(res.status, userMessage(d, classify(d)), diagLine(d));
+      throw new HttpError(res.status, d.message ? `${d.message} (${diagLine(d)})` : diagLine(d), diagLine(d));
+    }
     try {
       return JSON.parse(res.text);
     } catch {

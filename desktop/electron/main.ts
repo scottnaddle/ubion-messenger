@@ -74,7 +74,7 @@ function send(channel: string, payload: unknown) {
 }
 
 function errMsg(e: unknown): string {
-  if (e instanceof HttpError && e.status === 401) return "인증이 만료되었습니다. 다시 로그인해 주세요.";
+  if (e instanceof HttpError && e.status === 401 && !e.diag) return "인증이 만료되었습니다. 다시 로그인해 주세요.";
   if (e instanceof Error) {
     if (/fetch failed|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|aborted/i.test(e.message + String((e as any).cause)))
       return "서버에 연결할 수 없습니다. 네트워크(사내망/VPN)를 확인하세요.";
@@ -510,14 +510,23 @@ function registerIpc() {
   handle(
     "auth:login",
     async (o: { serverUrl: string; username: string; password?: string; rememberMe: boolean; autoLogin: boolean }) => {
-      const password = o.password || (o.rememberMe ? loadPassword() : null);
+      // Saved password belongs to settings.username only; never reuse it for a different account.
+      const sameUser = o.username.trim() === (settings.username || "").trim();
+      const password = o.password || (o.rememberMe && sameUser ? loadPassword() : null);
       if (!password) throw new Error("비밀번호를 입력하세요");
       const serverUrl = (o.serverUrl || settings.serverUrl).trim().replace(/\/$/, "");
       if (!/^https?:\/\//.test(serverUrl)) throw new Error("서버 주소는 https:// 로 시작해야 합니다");
       if (core.user) await core.logout();
       core = new MessengerCore(serverUrl);
       wireCore();
-      const user = await core.login({ serverUrl, username: o.username.trim(), password });
+      let user;
+      try {
+        user = await core.login({ serverUrl, username: o.username.trim(), password });
+      } catch (e) {
+        // Safe diagnostic: status + server code/message/redirect only (no id/password/cookies).
+        if (e instanceof HttpError && e.diag) console.log("[auth] login failed:", e.diag);
+        throw e;
+      }
       settings = { ...settings, serverUrl, username: o.username.trim(), rememberMe: o.rememberMe, autoLogin: o.rememberMe && o.autoLogin };
       saveSettings(settings);
       if (o.rememberMe) savePassword(password);
