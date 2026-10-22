@@ -1,5 +1,7 @@
 /**
  * Live flex auto-login + API discovery on Scott's Mac.
+ * Pending count (read-only): POST /action/v3/todo/assigned-todos/search
+ *   body filter statuses TODO+IN_PROGRESS → response.total (= UI 진행). GET → 405.
  * Uses Keychain daou-coco password (never printed). Isolated Electron userData.
  * GET-only after login; never approve/reject.
  */

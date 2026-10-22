@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { isFlexUrl, isFlexSsoUrl } from "../electron/core/portal-cookies";
 import { LOCAL_MENU } from "../electron/core/portal";
-import { flexEmailFromUsername, isFlexLoginUrl, FLEX_INBOX, maskFlexLog } from "../electron/core/flex";
+import { flexEmailFromUsername, isFlexLoginUrl, FLEX_INBOX, maskFlexLog, parseFlexTodoTotal, flexProgressCountFromText, FLEX_TODO_SEARCH } from "../electron/core/flex";
 describe("flex in-app window", () => {
   it("allows flex.team hosts only over https", () => {
     expect(isFlexUrl("https://flex.team/home/todo/inbox")).toBe(true);
@@ -32,5 +32,19 @@ describe("flex helpers", () => {
   it("masks secrets in logs", () => {
     expect(maskFlexLog("user@x.com token=abc123")).toContain("<email>");
     expect(maskFlexLog("token=abc123")).toContain("<MASK>");
+  });
+});
+
+describe("flex pending count", () => {
+  it("parses assigned-todos search total", () => {
+    expect(parseFlexTodoTotal({ total: 3, assignedTodos: [] })).toBe(3);
+    expect(parseFlexTodoTotal({})).toBe(null);
+  });
+  it("scrapes 진행 (N) from inbox text", () => {
+    expect(flexProgressCountFromText("필터\n진행 (3)\n김병하")).toBe(3);
+    expect(flexProgressCountFromText("없음")).toBe(null);
+  });
+  it("uses the SPA search path", () => {
+    expect(FLEX_TODO_SEARCH).toContain("/action/v3/todo/assigned-todos/search");
   });
 });

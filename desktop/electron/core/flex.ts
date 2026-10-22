@@ -6,6 +6,19 @@
 export const FLEX_INBOX = "https://flex.team/home/todo/inbox";
 export const FLEX_LOGIN_PATH = "/auth/login";
 
+/**
+ * The flex SPA loads 할 일 via this endpoint (POST only — GET returns 405).
+ * Body filters TODO+IN_PROGRESS (= UI "진행"). Response.total matches the inbox badge.
+ * Read-only: never approve/reject/modify.
+ */
+export const FLEX_TODO_SEARCH =
+  "/action/v3/todo/assigned-todos/search?size=1&sort=DESC&orderBy=UPDATED_AT";
+export const FLEX_TODO_PENDING_BODY = {
+  condition: "AND",
+  filter: { statuses: { selections: ["TODO", "IN_PROGRESS"], condition: "INCLUDE_ALL" } },
+} as const;
+
+
 export function isFlexLoginUrl(url: string): boolean {
   try {
     const u = new URL(url);
@@ -78,4 +91,19 @@ export function maskFlexLog(s: string): string {
     .replace(/\S+@\S+/g, "<email>")
     .replace(/((?:[?&]|^|\s)(?:token|t|code|key|auth|otp|jwt|password|passwd|pwd)=)[^&\s]+/gi, "$1<MASK>")
     .replace(/Bearer\s+\S+/gi, "Bearer <MASK>");
+}
+
+/** Parse pending count from assigned-todos/search JSON ({ total }). */
+export function parseFlexTodoTotal(json: unknown): number | null {
+  if (json == null || typeof json !== "object") return null;
+  const t = (json as { total?: unknown }).total;
+  return typeof t === "number" && Number.isFinite(t) && t >= 0 ? t : null;
+}
+
+/** DOM scrape for the inbox "진행 (N)" badge (read-only). */
+export function flexProgressCountFromText(text: string): number | null {
+  const m = text.match(/진행\s*\((\d{1,4})\)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
 }

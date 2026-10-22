@@ -112,7 +112,7 @@ export function installMockIfNeeded() {
         actionCheck: { isApprovalWaitingUser: true },
         comments: [{ id: "1", author: "김하늘", content: "확인했습니다", createdAt: isoNow }],
       }),
-      flexPending: async () => ({ count: null, at: 0 }),
+      flexPending: async () => ({ count: 3, at: Date.now() }),
     },
     pathForFile: () => "",
     platform: new URLSearchParams(location.search).get("platform") || "darwin",

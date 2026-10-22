@@ -21,7 +21,10 @@ import { Updater } from "./updater";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
 import { isPortalUrl, isFlexUrl, isFlexSsoUrl, toElectronCookie } from "./core/portal-cookies";
-import { isFlexLoginUrl, flexEmailFromUsername, flexAutoLoginScript, maskFlexLog } from "./core/flex";
+import {
+  isFlexLoginUrl, flexEmailFromUsername, flexAutoLoginScript, maskFlexLog,
+  FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY, parseFlexTodoTotal, flexProgressCountFromText,
+} from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
 import {
   clearPassword,
@@ -188,22 +191,6 @@ const portalSession = () => session.fromPartition(PORTAL_PARTITION);
 /** Max one flex auto-login attempt per messenger session; reset on logout / successful flex landing. */
 let flexAutoLoginTried = false;
 let flexPendingCache: { count: number | null; at: number; error?: string } = { count: null, at: 0 };
-let flexCountPathLearned: string | null = null;
-let flexRequestLearnerOn = false;
-
-function ensureFlexRequestLearner() {
-  if (flexRequestLearnerOn) return;
-  flexRequestLearnerOn = true;
-  portalSession().webRequest.onCompleted({ urls: ["https://flex.team/*", "https://*.flex.team/*"] }, (d) => {
-    if (d.method !== "GET" || d.statusCode < 200 || d.statusCode >= 300) return;
-    try {
-      const u = new URL(d.url);
-      if (!/todo|inbox|approv|pending|badge|count|notification|time-off|timeoff|workflow/i.test(u.pathname)) return;
-      if (/\.(js|css|png|svg|woff2?|map)(\?|$)/.test(u.pathname)) return;
-      if (!flexCountPathLearned) flexCountPathLearned = u.pathname + u.search;
-    } catch { /* ignore */ }
-  });
-}
 
 
 
@@ -266,7 +253,6 @@ async function tryFlexAutoLogin(wc: BrowserWindow["webContents"]) {
 }
 
 function attachFlexWindowHooks(w: BrowserWindow) {
-  ensureFlexRequestLearner();
   const wc = w.webContents;
   const onNav = () => {
     const u = wc.getURL();
@@ -280,11 +266,15 @@ function attachFlexWindowHooks(w: BrowserWindow) {
   wc.on("did-navigate-in-page", onNav);
 }
 
-/** Read-only GET against flex using the persist:portal session cookies. Never approve/modify. */
-async function flexSessionGet(path: string): Promise<{ status: number; json: any; text: string }> {
+/** Read-only JSON POST against flex (session cookies). Used only for assigned-todos/search. */
+async function flexSessionPost(path: string, body: unknown): Promise<{ status: number; json: any; text: string }> {
   const ses = portalSession();
   const url = path.startsWith("http") ? path : `https://flex.team${path.startsWith("/") ? "" : "/"}${path}`;
-  const res = await ses.fetch(url, { method: "GET", headers: { accept: "application/json, text/plain, */*", "x-requested-with": "XMLHttpRequest" } });
+  const res = await ses.fetch(url, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+    body: JSON.stringify(body),
+  });
   const text = await res.text();
   let json: any = null;
   try { json = JSON.parse(text); } catch { /* not json */ }
@@ -292,46 +282,20 @@ async function flexSessionGet(path: string): Promise<{ status: number; json: any
 }
 
 /**
- * Discover / read the pending approval count the flex web app uses.
- * Candidates are probed only via GET; result is cached. Returns null on failure.
+ * Pending 할 일 count (= flex inbox "진행").
+ * The SPA uses POST /action/v3/todo/assigned-todos/search (GET → 405); body is a status filter only (read-only).
+ * Falls back to DOM "진행 (N)" scrape. Never approve/reject/modify.
  */
 async function refreshFlexPending(force = false): Promise<{ count: number | null; at: number; error?: string }> {
   if (!force && Date.now() - flexPendingCache.at < 60_000) return flexPendingCache;
-  const candidates = [
-    ...(flexCountPathLearned ? [flexCountPathLearned] : []),
-    "/api/v2/time-tracking/time-off/approvals/pending/count",
-    "/api/v2/time-tracking/time-off/approvals/count",
-    "/api/v2/approvals/pending/count",
-    "/api/v2/todo/inbox/count",
-    "/api/v2/home/todo/count",
-    "/api/v3/time-off/approvals/pending/count",
-    "/api-web/v2/time-tracking/time-off/request/approvals/count",
-    "/api-web/v2/todo/count",
-  ];
-  for (const path of candidates) {
-    try {
-      const { status, json, text } = await flexSessionGet(path);
-      if (status < 200 || status >= 300 || json == null) continue;
-      const n = pickFlexCount(json);
-      if (n != null) {
-        flexPendingCache = { count: n, at: Date.now() };
-        return flexPendingCache;
-      }
-      // Some endpoints return a list — use length
-      if (Array.isArray(json)) {
-        flexPendingCache = { count: json.length, at: Date.now() };
-        return flexPendingCache;
-      }
-      if (Array.isArray(json?.data)) {
-        flexPendingCache = { count: json.data.length, at: Date.now() };
-        return flexPendingCache;
-      }
-      void text;
-    } catch {
-      /* try next */
+  try {
+    const { status, json } = await flexSessionPost(FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY);
+    const n = status >= 200 && status < 300 ? parseFlexTodoTotal(json) : null;
+    if (n != null) {
+      flexPendingCache = { count: n, at: Date.now() };
+      return flexPendingCache;
     }
-  }
-  // Fallback: scrape the open flex window inbox (read-only DOM), never click approve/reject.
+  } catch { /* fall through */ }
   const scraped = await scrapeFlexPendingFromWindow();
   if (scraped != null) {
     flexPendingCache = { count: scraped, at: Date.now() };
@@ -346,31 +310,13 @@ async function scrapeFlexPendingFromWindow(): Promise<number | null> {
   const u = portalWin.webContents.getURL();
   if (!isFlexUrl(u) || isFlexLoginUrl(u)) return null;
   try {
-    const n = await portalWin.webContents.executeJavaScript(`(() => {
-      const t = document.body?.innerText || "";
-      // Common badge patterns near "해야 할 일" / inbox headers
-      const m = t.match(/해야\s*할\s*일[^\d]{0,20}(\d{1,4})/) || t.match(/승인\s*대기[^\d]{0,20}(\d{1,4})/);
-      if (m) return Number(m[1]);
-      // Count list rows in the todo inbox if present
-      const rows = document.querySelectorAll('[data-testid*="todo"], [class*="TodoList"] li, [class*="inbox"] li, main li');
-      if (rows.length > 0 && rows.length < 500) return rows.length;
-      return null;
-    })()`, true);
-    return typeof n === "number" && Number.isFinite(n) ? n : null;
+    const text = await portalWin.webContents.executeJavaScript(`document.body?.innerText || ""`, true);
+    return flexProgressCountFromText(String(text || ""));
   } catch {
     return null;
   }
 }
 
-function pickFlexCount(json: any): number | null {
-  if (json == null) return null;
-  if (typeof json === "number" && Number.isFinite(json)) return json;
-  for (const k of ["count", "total", "pendingCount", "pending", "todoCount", "totalCount", "size"]) {
-    const v = json[k] ?? json?.data?.[k] ?? json?.result?.[k];
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-  }
-  return null;
-}
 
 async function openPortalWindow(url: string) {
   await syncPortalCookies();
@@ -569,7 +515,6 @@ function registerIpc() {
     await clearPortalSession();
     flexAutoLoginTried = false;
     flexPendingCache = { count: null, at: 0 };
-    flexCountPathLearned = null;
     settings = { ...settings, autoLogin: false };
     saveSettings(settings);
     updateBadge();
