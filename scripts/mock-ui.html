@@ -1,0 +1,47 @@
+<!doctype html><html lang="ko" data-theme="dark"><head>
+<meta charset="utf-8"/><title>Daou Mock</title>
+<style>
+:root{--bg:#1a1d21;--side:#19171d;--text:#e8e6e3;--muted:#9a9691;--accent2:#1264a3;--row-active:#2c0e33;--border:#2c2e33;--bubble:#222529;--bubble-mine:#2a4a6b;--badge:#e01e5a}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--text)}
+.app{display:grid;grid-template-columns:320px 1fr;height:100vh}
+.sidebar{background:var(--side);display:flex;flex-direction:column}
+.head{padding:14px;display:flex;gap:10px;align-items:center}
+.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#7c3aed,#611f69);display:grid;place-items:center;font-weight:800}
+.search{padding:0 12px 10px}input{width:100%;border:0;border-radius:8px;padding:10px;background:rgba(0,0,0,.25);color:#fff}
+.row{display:grid;grid-template-columns:40px 1fr auto;gap:10px;padding:8px 12px;align-items:center}
+.row.active{background:var(--row-active)}
+.av{width:36px;height:36px;border-radius:8px;background:#4a4458;display:grid;place-items:center;font-weight:700}
+.n{font-weight:600;font-size:14px}.p{font-size:12px;opacity:.7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+.badge{background:var(--badge);border-radius:999px;padding:0 6px;font-size:11px;min-width:18px;text-align:center}
+.chat{display:flex;flex-direction:column}.ch{padding:14px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center}
+.msgs{flex:1;padding:16px 20px;overflow:auto}
+.msg{display:grid;grid-template-columns:40px 1fr;gap:10px;margin:10px 0}
+.b{background:var(--bubble);border-radius:12px;padding:8px 12px;max-width:70%}
+.msg.mine .b{background:var(--bubble-mine)}
+.meta{font-size:12px;color:var(--muted);margin-bottom:2px}
+.composer{display:grid;grid-template-columns:1fr auto;gap:10px;padding:12px 16px;border-top:1px solid var(--border)}
+textarea{border:1px solid var(--border);border-radius:10px;padding:12px;background:#222529;color:#fff;min-height:56px;resize:none}
+button.send{border:0;border-radius:10px;padding:0 18px;background:var(--accent2);color:#fff;font-weight:700}
+.dot{width:8px;height:8px;border-radius:50%;background:#2de08a;display:inline-block;margin-left:6px}
+.label{font-size:11px;opacity:.55;padding:8px 14px 4px;text-transform:uppercase}
+</style></head><body>
+<div class="app">
+<aside class="sidebar">
+  <div class="head"><div class="logo">D</div><div><strong>Daou</strong><div style="font-size:12px;opacity:.75">You <span class="dot"></span></div></div></div>
+  <div class="search"><input value="Search conversations…" readonly/></div>
+  <div class="label">Conversations (3)</div>
+  <div class="row active"><div class="av">A</div><div><div class="n">Alex Kim</div><div class="p">Can we sync at 3pm?</div></div><div class="badge">2</div></div>
+  <div class="row"><div class="av">#</div><div><div class="n"># product-design</div><div class="p">Mock standup notes…</div></div><div></div></div>
+  <div class="row"><div class="av">📝</div><div><div class="n">Memo (me)</div><div class="p">Shopping list draft</div></div><div></div></div>
+</aside>
+<main class="chat">
+  <div class="ch"><div class="av">A</div><div><h2 style="margin:0;font-size:16px">Alex Kim</h2><div style="font-size:12px;color:var(--muted)">buddy · demo data</div></div></div>
+  <div class="msgs">
+    <div class="msg"><div class="av">A</div><div class="b"><div class="meta"><strong>Alex Kim</strong> 09:41</div>Hey — can we sync at 3pm about the launch checklist?</div></div>
+    <div class="msg mine"><div class="av">Y</div><div class="b"><div class="meta"><strong>You</strong> 09:42</div>Works for me. I’ll bring the latest mockups.</div></div>
+    <div class="msg"><div class="av">A</div><div class="b"><div class="meta"><strong>Alex Kim</strong> 09:43</div>Perfect. Also drop the FAQ draft in the channel when ready.</div></div>
+  </div>
+  <div class="composer"><textarea readonly>Message… Enter to send</textarea><button class="send">Send</button></div>
+</main>
+</div>
+</body></html>
