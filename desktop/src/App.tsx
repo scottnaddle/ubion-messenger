@@ -218,7 +218,7 @@ export function App() {
         <button className={`rail-btn ${view === "menu" ? "on" : ""}`} title="메뉴 (DaouOffice 전체 기능)" onClick={() => setView("menu")}>
           <Icon name="grid" />
         </button>
-        <button className={`rail-btn ${view === "chats" ? "on" : ""}`} title="대화 (⌘K)" onClick={() => setView("chats")}>
+        <button className={`rail-btn ${view === "chats" ? "on" : ""}`} title="대화" onClick={() => setView("chats")}>
           <Icon name="chat" />
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
         </button>

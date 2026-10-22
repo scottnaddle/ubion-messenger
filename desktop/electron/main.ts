@@ -656,12 +656,6 @@ function registerIpc() {
     todoService.store.updateSettings(setManyRoomsCollecting(todoService.settings(), (keys || []).map(String), !!on)));
   handle("todo:setAllRooms", (on: boolean) =>
     todoService.store.updateSettings(setAllRooms(todoService.settings(), !!on)));
-  handle("todo:llm:status", () => ({ hasKey: todoService.store.hasLlmKey() }));
-  handle("todo:llm:setKey", (key: string | null) => {
-    todoService.store.setLlmKey(key ? String(key) : null);
-    return { hasKey: todoService.store.hasLlmKey() };
-  });
-  handle("todo:llm:test", () => todoService.llmClient().test().then((r) => ({ ok: r.ok, message: r.message })));
   handle("todo:roomOn", (roomKey: string) => todoService.store.isRoomEnabled(String(roomKey)));
   handle("todo:deleteAllExtracted", () => {
     todoService.store.deleteAllExtracted();

@@ -1,13 +1,31 @@
 /**
- * Optional DeepSeek-assisted extraction (OpenAI-compatible chat/completions).
- * OFF by default. Only ambiguous-band (0.5–0.85) sentences, masked, are sent.
+ * Company-wide AI-assisted extraction via the company LiteLLM proxy (OpenAI-compatible chat/completions).
+ * Configured at build time only (UBM_AI_BASE_URL / UBM_AI_KEY / UBM_AI_MODEL); any empty value → feature off.
+ * Only ambiguous-band (0.5–0.85) sentences, masked, are sent.
  * Dates are always finalized by rules (normalizeKoreanDate); the model only gives a span.
  */
 import { normalizeKoreanDate } from "./dates-ko";
 
 export const LLM_BAND = { min: 0.5, max: 0.85 };
-export const DEFAULT_LLM_BASE = "https://api.deepseek.com";
-export const DEFAULT_LLM_MODEL = "deepseek-chat";
+export const DEFAULT_LLM_MODEL = "ubm-todo";
+
+declare const __UBM_AI_BASE_URL__: string | undefined;
+declare const __UBM_AI_KEY__: string | undefined;
+declare const __UBM_AI_MODEL__: string | undefined;
+
+export type AiConfig = { baseUrl: string; key: string; model: string };
+
+/** Build-time config (injected by electron-vite `define`). Returns null when the feature is off. */
+export function aiConfig(raw?: { baseUrl?: string; key?: string; model?: string }): AiConfig | null {
+  const r = raw ?? {
+    baseUrl: typeof __UBM_AI_BASE_URL__ === "string" ? __UBM_AI_BASE_URL__ : "",
+    key: typeof __UBM_AI_KEY__ === "string" ? __UBM_AI_KEY__ : "",
+    model: typeof __UBM_AI_MODEL__ === "string" ? __UBM_AI_MODEL__ : "",
+  };
+  const baseUrl = (r.baseUrl || "").trim(), key = (r.key || "").trim();
+  if (!baseUrl || !key) return null;
+  return { baseUrl, key, model: (r.model || "").trim() || DEFAULT_LLM_MODEL };
+}
 
 export type LlmVerdict = { idx: number; isTask: boolean; title?: string; confidence: number; dueText?: string };
 export type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }) =>
@@ -83,9 +101,7 @@ export function finalizeDue(dueText: string | undefined, anchorIso: string): str
   return normalizeKoreanDate(dueText, anchorIso)?.iso;
 }
 
-const scrub = (s: string) => s.replace(/sk-[\w-]+/g, "sk-***");
-
-export class DeepSeekClient {
+export class AiClient {
   constructor(
     private opts: { baseUrl: string; model: string; getKey: () => string | undefined; fetch: FetchLike; timeoutMs?: number },
   ) {}
@@ -109,19 +125,11 @@ export class DeepSeekClient {
     }
   }
 
-  /** Connection test: GET /models (no chat content sent). */
-  async test(): Promise<{ ok: boolean; message: string; models?: string[] }> {
-    try {
-      const j = await this.call("/models", undefined, "GET");
-      const models = (j?.data || []).map((m: any) => String(m.id));
-      return { ok: true, message: models.includes(this.opts.model) ? "연결됨" : "연결됨 (모델 이름을 확인하세요)", models };
-    } catch (e: any) {
-      return { ok: false, message: e?.name === "AbortError" ? "시간 초과" : scrub(String(e?.message || e)) };
-    }
-  }
-
+  /** At most 5 sentences per request, each ≤500 chars (already masked). */
   async classify(masked: string[]): Promise<LlmVerdict[] | null> {
+    masked = masked.slice(0, 5).map((t) => t.slice(0, 500));
     try {
+      if (!masked.length) return [];
       const j = await this.call("/chat/completions", buildRequest(this.opts.model, masked));
       const content = j?.choices?.[0]?.message?.content;
       return typeof content === "string" ? parseVerdicts(content, masked.length) : null;

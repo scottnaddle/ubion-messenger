@@ -20,8 +20,6 @@ const DEFAULT_TODO_SETTINGS: TodoSettings = {
   quietDuringMeetings: true,
   zoomNotifyMinutes: [10, 1],
   llmFallback: false,
-  llmBaseUrl: "https://api.deepseek.com",
-  llmModel: "deepseek-chat",
   politeMode: false,
 };
 
@@ -71,6 +69,8 @@ export class TodoStore {
     } catch {
       this.secrets = {};
     }
+    // after secrets load: dropLegacyLlm may persist(), which rewrites the secrets file
+    this.dropLegacyLlm();
   }
 
   private persist() {
@@ -261,24 +261,15 @@ export class TodoStore {
     this.persist();
   }
 
-  private keyFile() {
-    return path.join(app.getPath("userData"), "llm-key.bin");
-  }
-  /** API key: safeStorage only; never logged or returned to the renderer. */
-  setLlmKey(key: string | null) {
-    const f = this.keyFile();
-    if (!key) {
-      try { fs.unlinkSync(f); } catch {}
-      return;
+  /** Migration: per-user AI key/URL/model (v1.1.0 dev builds) are no longer used — remove them. */
+  private dropLegacyLlm() {
+    try { fs.unlinkSync(path.join(app.getPath("userData"), "llm-key.bin")); } catch {}
+    const st = this.db.settings as Record<string, unknown> | undefined;
+    if (st && ("llmBaseUrl" in st || "llmModel" in st)) {
+      delete st.llmBaseUrl;
+      delete st.llmModel;
+      this.persist();
     }
-    if (!safeStorage.isEncryptionAvailable()) throw new Error("암호화 저장소를 사용할 수 없어요");
-    fs.writeFileSync(f, safeStorage.encryptString(key.trim()), { mode: 0o600 });
-  }
-  getLlmKey(): string | undefined {
-    try { return safeStorage.decryptString(fs.readFileSync(this.keyFile())); } catch { return undefined; }
-  }
-  hasLlmKey() {
-    return fs.existsSync(this.keyFile());
   }
 
   ignoreStreak(roomKey: string) {

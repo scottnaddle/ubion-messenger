@@ -11,7 +11,7 @@ import { planReminders, bossIconPath } from "./reminders";
 import { buildZoomJoin } from "./zoom";
 import { todosToIcs } from "./ics";
 import type { TodoItem, TodoSettings } from "./types";
-import { DeepSeekClient, LlmQueue, finalizeDue, inBand, type FetchLike } from "./llm";
+import { AiClient, aiConfig, LlmQueue, finalizeDue, inBand, type FetchLike } from "./llm";
 
 export class TodoService {
   store = new TodoStore();
@@ -21,11 +21,13 @@ export class TodoService {
   private onPipeline: ((ev: PipelineEvent) => void) | null = null;
   private getCalendarBusy: (() => boolean) | null = null;
   private resourcesDir: string;
-  private llmQueue = new LlmQueue((m) => this.llmClient().classify(m));
+  private llmQueue = new LlmQueue(async (m) => this.llmClient()?.classify(m) ?? null);
 
+  /** Company-wide config baked in at build time; null → rule-only. */
   llmClient(fetchImpl: FetchLike = (u, i) => fetch(u, i as any) as any) {
-    const s = this.store.getSettings();
-    return new DeepSeekClient({ baseUrl: s.llmBaseUrl, model: s.llmModel, getKey: () => this.store.getLlmKey(), fetch: fetchImpl, timeoutMs: 8000 });
+    const cfg = aiConfig();
+    if (!cfg) return null;
+    return new AiClient({ baseUrl: cfg.baseUrl, model: cfg.model, getKey: () => cfg.key, fetch: fetchImpl, timeoutMs: 8000 });
   }
 
   constructor(resourcesDir: string) {
@@ -92,11 +94,10 @@ export class TodoService {
     return ev;
   }
 
-  /** Ambiguous band only, opt-in, key present. Failures leave the rule suggestion untouched. */
+  /** Ambiguous band only, build-time AI config present. Failures leave the rule suggestion untouched. */
   private maybeAssist(sugId: string, msg: ChatMessage, prior: ChatMessage[]) {
-    const s = this.store.getSettings();
     const sug = this.store.suggestions().find((x) => x.id === sugId);
-    if (!s.llmFallback || !sug || !inBand(sug.draft.confidence ?? 0) || !this.store.hasLlmKey()) return;
+    if (!aiConfig() || !sug || !inBand(sug.draft.confidence ?? 0)) return;
     const names = [msg.sendUserName, ...prior.map((p) => p.sendUserName)].filter(Boolean) as string[];
     const anchor = msg.createdAt || new Date().toISOString();
     this.llmQueue.push({

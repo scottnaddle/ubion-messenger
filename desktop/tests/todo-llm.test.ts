@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { maskForLlm, parseVerdicts, DeepSeekClient, LlmQueue, inBand, finalizeDue, buildRequest, type FetchLike } from "../electron/core/todo/llm";
+import { aiConfig, maskForLlm, parseVerdicts, AiClient, LlmQueue, inBand, finalizeDue, buildRequest, type FetchLike } from "../electron/core/todo/llm";
 
 const okJson = (j: any) => ({ ok: true, status: 200, json: async () => j });
 
-describe("DeepSeek assist (mocked HTTP)", () => {
+describe("Company AI assist via LiteLLM proxy (mocked HTTP)", () => {
   it("band is 0.5–0.85 only", () => {
     expect([inBand(0.49), inBand(0.5), inBand(0.7), inBand(0.85), inBand(0.95)]).toEqual([false, true, true, false, false]);
   });
@@ -31,38 +31,46 @@ describe("DeepSeek assist (mocked HTTP)", () => {
     expect(finalizeDue("언젠가", anchor)).toBeUndefined();
   });
   it("request uses JSON response_format and configured model", () => {
-    const r = buildRequest("deepseek-chat", ["a"]);
-    expect(r.model).toBe("deepseek-chat");
+    const r = buildRequest("ubm-todo", ["a"]);
+    expect(r.model).toBe("ubm-todo");
     expect(r.response_format).toEqual({ type: "json_object" });
+  });
+  it("build-time config: empty url or key → off; model defaults to ubm-todo", () => {
+    expect(aiConfig({})).toBeNull();
+    expect(aiConfig({ baseUrl: "https://ai.example", key: "" })).toBeNull();
+    expect(aiConfig({ baseUrl: "", key: "vk-test" })).toBeNull();
+    expect(aiConfig({ baseUrl: "https://ai.example", key: "vk-test" })).toEqual({ baseUrl: "https://ai.example", key: "vk-test", model: "ubm-todo" });
+    expect(aiConfig()).toBeNull(); // no define injected in tests
+  });
+  it("caps batch at 5 and text at 500 chars", async () => {
+    const f = vi.fn<FetchLike>(async () => okJson({ choices: [{ message: { content: '{"items":[]}' } }] }));
+    const c = new AiClient({ baseUrl: "https://ai.example", model: "ubm-todo", getKey: () => "vk-test", fetch: f });
+    await c.classify(Array.from({ length: 7 }, () => "가".repeat(600)));
+    const sent = JSON.parse(JSON.parse(f.mock.calls[0][1].body!).messages[1].content).sentences;
+    expect(sent).toHaveLength(5);
+    expect(sent[0].text).toHaveLength(500);
   });
   it("calls chat/completions with bearer key", async () => {
     const f = vi.fn<FetchLike>(async () => okJson({ choices: [{ message: { content: '{"items":[{"idx":0,"isTask":true,"title":"자료 공유","confidence":0.9,"dueText":""}]}' } }] }));
-    const c = new DeepSeekClient({ baseUrl: "https://api.deepseek.com/", model: "deepseek-chat", getKey: () => "sk-test", fetch: f });
+    const c = new AiClient({ baseUrl: "https://ai.example/", model: "ubm-todo", getKey: () => "vk-test", fetch: f });
     const v = await c.classify(["자료 공유 부탁"]);
     expect(v?.[0].isTask).toBe(true);
     const [url, init] = f.mock.calls[0];
-    expect(url).toBe("https://api.deepseek.com/chat/completions");
-    expect(init.headers.authorization).toBe("Bearer sk-test");
+    expect(url).toBe("https://ai.example/chat/completions");
+    expect(init.headers.authorization).toBe("Bearer vk-test");
   });
   it("timeout / HTTP error → null (rule-only fallback)", async () => {
     const hang: FetchLike = (_u, init) => new Promise((_, rej) => init.signal!.addEventListener("abort", () => rej(Object.assign(new Error("a"), { name: "AbortError" }))));
-    const c = new DeepSeekClient({ baseUrl: "x", model: "m", getKey: () => "sk-1", fetch: hang, timeoutMs: 20 });
+    const c = new AiClient({ baseUrl: "x", model: "m", getKey: () => "sk-1", fetch: hang, timeoutMs: 20 });
     expect(await c.classify(["x"])).toBeNull();
-    const c2 = new DeepSeekClient({ baseUrl: "x", model: "m", getKey: () => "sk-1", fetch: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
+    const c2 = new AiClient({ baseUrl: "x", model: "m", getKey: () => "sk-1", fetch: async () => ({ ok: false, status: 401, json: async () => ({}) }) });
     expect(await c2.classify(["x"])).toBeNull();
-    expect((await c2.test()).ok).toBe(false);
   });
   it("no key → nothing sent", async () => {
     const f = vi.fn<FetchLike>();
-    const c = new DeepSeekClient({ baseUrl: "x", model: "m", getKey: () => undefined, fetch: f });
+    const c = new AiClient({ baseUrl: "x", model: "m", getKey: () => undefined, fetch: f });
     expect(await c.classify(["x"])).toBeNull();
     expect(f).not.toHaveBeenCalled();
-  });
-  it("connection test GETs /models and masks key in errors", async () => {
-    const c = new DeepSeekClient({ baseUrl: "https://api.deepseek.com", model: "deepseek-chat", getKey: () => "sk-abc", fetch: async () => okJson({ data: [{ id: "deepseek-chat" }] }) });
-    expect(await c.test()).toMatchObject({ ok: true, message: "연결됨" });
-    const bad = new DeepSeekClient({ baseUrl: "x", model: "m", getKey: () => "sk-abc", fetch: async () => { throw new Error("fail sk-abc123"); } });
-    expect((await bad.test()).message).not.toContain("sk-abc123");
   });
   it("queue batches, masks, and rate-limits", async () => {
     const classify = vi.fn(async (m: string[]) => m.map((_, idx) => ({ idx, isTask: true, confidence: 0.9 })));

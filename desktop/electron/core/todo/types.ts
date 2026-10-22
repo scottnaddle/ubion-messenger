@@ -105,8 +105,5 @@ export type TodoSettings = {
   zoomNotifyMinutes: number[];
   /** LLM fallback hook — OFF by default, no server calls unless true */
   llmFallback: boolean;
-  /** DeepSeek (OpenAI-compatible) base URL and model; key lives in safeStorage only */
-  llmBaseUrl: string;
-  llmModel: string;
   politeMode: boolean;
 };
