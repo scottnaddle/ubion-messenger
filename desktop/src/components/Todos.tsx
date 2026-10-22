@@ -32,6 +32,9 @@ export type TodoSuggestion = {
 
 type TodoSettings = {
   enabledRooms: string[];
+  allRooms: boolean;
+  disabledRooms: string[];
+  introSeen: boolean;
   remindersEnabled: boolean;
   workStartHour: number;
   workEndHour: number;
@@ -40,6 +43,27 @@ type TodoSettings = {
   llmFallback: boolean;
   politeMode: boolean;
 };
+
+const roomOn = (s: TodoSettings, key: string) =>
+  s.allRooms ? !(s.disabledRooms || []).includes(key) : s.enabledRooms.includes(key);
+
+function CollectIntro({ onAll, onPick, onLater }: { onAll: () => void; onPick: () => void; onLater?: () => void }) {
+  return (
+    <div className="todo-intro" data-testid="todo-intro">
+      <div className="todo-intro-title">대화 속 할일, 여기로 모아드려요</div>
+      <ul>
+        <li>대화에서 <b>요청</b>, <b>마감일</b>, <b>Zoom 회의</b>를 찾아 할일로 모아요.</li>
+        <li>확실하면 바로 등록해요(되돌리기 가능). 애매하면 <b>“추가할까요?”</b>로 먼저 물어봐요.</li>
+        <li>내용은 <b>이 컴퓨터에만</b> 저장돼요. 서버로 보내지 않아요.</li>
+      </ul>
+      <div className="todo-intro-actions">
+        <button className="primary-btn" onClick={onAll}>모든 채팅방에서 켜기</button>
+        <button className="link small" onClick={onPick}>방 골라서 켜기</button>
+        {onLater && <button className="link small muted" onClick={onLater}>나중에</button>}
+      </div>
+    </div>
+  );
+}
 
 function fmtWhen(iso?: string) {
   if (!iso) return "";
@@ -145,6 +169,20 @@ export function Todos({
         </div>
       </div>
 
+      {settings && tab === "open" && !settings.introSeen && !settings.allRooms && settings.enabledRooms.length === 0 && (
+        <CollectIntro
+          onAll={async () => {
+            await api().call("todo:setAllRooms", true);
+            setSettings(await api().call("todo:settings:set", { introSeen: true }));
+            toast("모든 채팅방에서 할일 자동 수집을 켰어요");
+          }}
+          onPick={async () => {
+            setSettings(await api().call("todo:settings:set", { introSeen: true }));
+            setTab("settings");
+          }}
+          onLater={async () => setSettings(await api().call("todo:settings:set", { introSeen: true }))}
+        />
+      )}
       {suggestions.length > 0 && tab === "open" && (
         <div className="todo-suggestions">
           {suggestions.slice(0, 5).map((s) => (
@@ -279,7 +317,24 @@ export function Todos({
               </li>
             ))}
             {(tab === "open" ? open : done).length === 0 && (
-              <li className="muted empty-todo">할일이 없습니다. 채팅방 설정에서 추출을 켜면 자동으로 모입니다.</li>
+              <li className="muted empty-todo" data-testid="todo-empty">
+                {tab === "done" ? (
+                  <>아직 완료한 할일이 없어요.</>
+                ) : settings && (settings.allRooms || settings.enabledRooms.length > 0) ? (
+                  <>
+                    <b>아직 할일이 없어요.</b>
+                    <br />
+                    대화에서 요청·마감·Zoom 회의가 보이면 여기에 모아드릴게요. 위 입력칸으로 직접 추가해도 돼요.
+                  </>
+                ) : (
+                  <>
+                    <b>아직 할일이 없어요.</b>
+                    <br />
+                    자동 수집이 꺼져 있어요. 채팅방 상단의 할일 아이콘이나{" "}
+                    <button className="link small" onClick={() => setTab("settings")}>설정</button>에서 켜면 대화 속 할일이 여기로 모여요.
+                  </>
+                )}
+              </li>
             )}
           </ul>
         </>
@@ -329,9 +384,25 @@ export function Todos({
       {tab === "settings" && settings && (
         <div className="todo-settings">
           <p className="muted small">
-            채팅 할일 추출은 <b>방마다 옵트인</b>입니다. 기본값은 꺼짐. 데이터는 이 기기에만 저장됩니다. LLM 서버 호출은 기본
-            꺼짐입니다.
+            대화에서 요청·마감·Zoom 회의를 찾아 할일로 모아요. 확실하면 바로 등록(되돌리기 가능), 애매하면 먼저 물어봐요.
+            내용은 이 컴퓨터에만 저장돼요. 기본은 꺼짐이에요.
           </p>
+          <label className="row" title="켜면 모든 채팅방의 대화에서 할일을 찾아요. 아래 목록에서 방마다 끌 수 있어요.">
+            <div>
+              <div>모든 채팅방에서 자동 수집</div>
+              <div className="muted tiny">켜도 아래에서 방마다 뺄 수 있어요</div>
+            </div>
+            <input
+              type="checkbox"
+              className="switch"
+              data-testid="all-rooms"
+              checked={!!settings.allRooms}
+              onChange={async (e) => {
+                setSettings(await api().call("todo:setAllRooms", e.target.checked));
+                toast(e.target.checked ? "모든 채팅방에서 자동 수집을 켰어요" : "고른 채팅방에서만 수집해요");
+              }}
+            />
+          </label>
           <label className="row">
             <div>기한 리마인더</div>
             <input
@@ -371,10 +442,17 @@ export function Todos({
               }}
             />
           </label>
-          <h4>추출 허용 대화방</h4>
+          <div className="row">
+            <h4>{settings.allRooms ? "수집할 대화방 (끄면 제외)" : "수집할 대화방"}</h4>
+            <div>
+              <button className="link small" onClick={async () => setSettings(await api().call("todo:enableRooms", rooms.map((r) => r.key), true))}>모두 선택</button>
+              {" · "}
+              <button className="link small" onClick={async () => setSettings(await api().call("todo:enableRooms", rooms.map((r) => r.key), false))}>모두 해제</button>
+            </div>
+          </div>
           <ul className="todo-room-list">
             {rooms.map((r) => {
-              const on = settings.enabledRooms.includes(r.key);
+              const on = roomOn(settings, r.key);
               return (
                 <li key={r.key} className="row">
                   <div>
@@ -386,7 +464,7 @@ export function Todos({
                     checked={on}
                     onChange={async (e) => {
                       setSettings(await api().call("todo:enableRoom", r.key, e.target.checked));
-                      toast(e.target.checked ? `${r.name} 추출 켜짐` : `${r.name} 추출 꺼짐`);
+                      toast(e.target.checked ? `${r.name}: 자동 수집 켜짐` : `${r.name}: 자동 수집 꺼짐`);
                     }}
                   />
                 </li>

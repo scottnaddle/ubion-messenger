@@ -91,6 +91,11 @@ export type ExtractResult = {
 export type TodoSettings = {
   /** Room keys where extraction is enabled (opt-in, default empty = all off) */
   enabledRooms: string[];
+  /** Collect in every room (default off); per-room exclusions in disabledRooms */
+  allRooms: boolean;
+  disabledRooms: string[];
+  /** First-run intro on 할일 tab dismissed */
+  introSeen: boolean;
   remindersEnabled: boolean;
   /** Quiet outside [workStartHour, workEndHour) local */
   workStartHour: number;

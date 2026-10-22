@@ -47,8 +47,8 @@ export function ChatView({
 
   useEffect(() => {
     let alive = true;
-    api().call<{ enabledRooms: string[] }>("todo:settings:get").then((s) => {
-      if (alive) setExtractOn(s.enabledRooms.includes(room.key));
+    api().call<boolean>("todo:roomOn", room.key).then((on) => {
+      if (alive) setExtractOn(!!on);
     }).catch(() => undefined);
     api().call<Array<{ id: string; kind: string; draft: any; evidenceText: string; roomKey: string }>>("todo:suggestions").then((list) => {
       if (alive) setRoomSuggestions(list.filter((x) => x.roomKey === room.key));
@@ -208,16 +208,18 @@ export function ChatView({
           <div className="sub muted">{subtitle}</div>
         </div>
         <button
-          className={`icon-btn ${extractOn ? "on" : ""}`}
-          title={extractOn ? "이 방 할일 추출 켜짐" : "이 방 할일 추출 꺼짐 (클릭하여 켜기)"}
+          className={`collect-chip ${extractOn ? "on" : ""}`}
+          data-testid="collect-chip"
+          title={extractOn ? "이 방 대화에서 할일을 모으는 중이에요 · 눌러서 끄기" : "이 방은 할일 자동 수집이 꺼져 있어요 · 눌러서 켜기"}
           onClick={async () => {
             const next = !extractOn;
             await api().call("todo:enableRoom", room.key, next);
             setExtractOn(next);
-            toast(next ? "이 대화방 할일 추출을 켰습니다" : "이 대화방 할일 추출을 껐습니다", "info");
+            toast(next ? "이 방에서 할일 자동 수집을 켰어요" : "이 방에서 할일 자동 수집을 껐어요", "info");
           }}
         >
-          <Icon name="todo" size={18} />
+          <Icon name="todo" size={14} />
+          <span>{extractOn ? "할일 수집 중" : "할일 수집 꺼짐"}</span>
         </button>
         <button className={`icon-btn ${searchOpen ? "on" : ""}`} title="대화 내용 검색" onClick={() => setSearchOpen((s) => !s)}>
           <Icon name="search" size={18} />

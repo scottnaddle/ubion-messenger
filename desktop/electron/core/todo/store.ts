@@ -7,9 +7,13 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { TodoItem, TodoSettings, TodoSuggestion } from "./types";
 import { titleSimilarity } from "./extract";
+import { isRoomCollecting } from "./rooms";
 
 const DEFAULT_TODO_SETTINGS: TodoSettings = {
   enabledRooms: [],
+  allRooms: false,
+  disabledRooms: [],
+  introSeen: false,
   remindersEnabled: true,
   workStartHour: 9,
   workEndHour: 19,
@@ -81,7 +85,8 @@ export class TodoStore {
   }
 
   getSettings(): TodoSettings {
-    return { ...this.db.settings, enabledRooms: [...this.db.settings.enabledRooms] };
+    const s = { ...DEFAULT_TODO_SETTINGS, ...this.db.settings };
+    return { ...s, enabledRooms: [...(s.enabledRooms || [])], disabledRooms: [...(s.disabledRooms || [])] };
   }
 
   updateSettings(patch: Partial<TodoSettings>) {
@@ -92,7 +97,7 @@ export class TodoStore {
   }
 
   isRoomEnabled(roomKey: string) {
-    return this.db.settings.enabledRooms.includes(roomKey);
+    return isRoomCollecting(this.getSettings(), roomKey);
   }
 
   list(filter?: { status?: TodoItem["status"]; type?: TodoItem["type"] }): TodoItem[] {

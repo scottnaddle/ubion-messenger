@@ -88,8 +88,9 @@ export function SettingsModal({
             </div>
             {settings.downloadDir && <button className="link small" onClick={() => set({ downloadDir: "" })}>기본값</button>}
           </div>
-          <h4>할일 추출 (v1.1)</h4>
-          <p className="muted small">채팅 기반 할일·일정 추출은 방마다 옵트인(기본 꺼짐)이며 데이터는 이 기기에만 저장됩니다. LLM 서버 호출은 기본 꺼짐. 상세는 할일 탭 → 설정.</p>
+          <h4>할일 자동 수집</h4>
+          <CollectAllRow />
+          <p className="muted small">대화에서 요청·마감·Zoom 회의를 찾아 할일 탭에 모아요. 확실하면 바로 등록(되돌리기 가능), 애매하면 먼저 물어봐요. 내용은 이 컴퓨터에만 저장돼요. 방별 설정은 할일 탭 → 설정, 또는 채팅방 상단 칩에서.</p>
           <h4>업데이트</h4>
           <UpdateRow />
           <Toggle k="autoUpdate" label="자동으로 업데이트 확인" desc="시작할 때와 4시간마다 확인합니다" />
@@ -121,5 +122,30 @@ function UpdateRow() {
         <button className="link small" disabled={s?.state === "checking" || s?.state === "downloading"} onClick={() => api().call("update:check")}>업데이트 확인</button>
       </div>
     </div>
+  );
+}
+
+function CollectAllRow() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    api().call<{ allRooms?: boolean }>("todo:settings:get").then((s) => setOn(!!s.allRooms)).catch(() => setOn(false));
+  }, []);
+  if (on === null) return null;
+  return (
+    <label className="row" title="켜면 모든 채팅방의 대화에서 할일을 찾아요. 방마다 끌 수 있어요." data-testid="settings-all-rooms">
+      <div>
+        <div>모든 채팅방에서 자동 수집</div>
+        <div className="muted tiny">기본 꺼짐 · 켜도 방마다 뺄 수 있어요</div>
+      </div>
+      <input
+        type="checkbox"
+        className="switch"
+        checked={on}
+        onChange={async (e) => {
+          const s = await api().call<{ allRooms: boolean }>("todo:setAllRooms", e.target.checked);
+          setOn(!!s.allRooms);
+        }}
+      />
+    </label>
   );
 }

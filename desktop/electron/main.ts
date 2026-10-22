@@ -19,6 +19,7 @@ import path from "node:path";
 import { MessengerCore } from "./core/messenger";
 import { Updater } from "./updater";
 import { IS_TEST_BUILD } from "./flavor";
+import { setAllRooms, setManyRoomsCollecting, setRoomCollecting } from "./core/todo/rooms";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
 import { isPortalUrl, isFlexUrl, isFlexSsoUrl, toElectronCookie } from "./core/portal-cookies";
@@ -649,13 +650,13 @@ function registerIpc() {
   });
   handle("todo:settings:get", () => todoService.settings());
   handle("todo:settings:set", (patch: any) => todoService.store.updateSettings(patch || {}));
-  handle("todo:enableRoom", (roomKey: string, on: boolean) => {
-    const s = todoService.settings();
-    const set = new Set(s.enabledRooms);
-    if (on) set.add(String(roomKey));
-    else set.delete(String(roomKey));
-    return todoService.store.updateSettings({ enabledRooms: [...set] });
-  });
+  handle("todo:enableRoom", (roomKey: string, on: boolean) =>
+    todoService.store.updateSettings(setRoomCollecting(todoService.settings(), String(roomKey), !!on)));
+  handle("todo:enableRooms", (keys: string[], on: boolean) =>
+    todoService.store.updateSettings(setManyRoomsCollecting(todoService.settings(), (keys || []).map(String), !!on)));
+  handle("todo:setAllRooms", (on: boolean) =>
+    todoService.store.updateSettings(setAllRooms(todoService.settings(), !!on)));
+  handle("todo:roomOn", (roomKey: string) => todoService.store.isRoomEnabled(String(roomKey)));
   handle("todo:deleteAllExtracted", () => {
     todoService.store.deleteAllExtracted();
   });
