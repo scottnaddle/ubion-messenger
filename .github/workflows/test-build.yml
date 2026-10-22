@@ -1,0 +1,29 @@
+name: test-build
+
+# Test-flavor builds only (no publish, no release). Runs on push to test/** branches.
+on:
+  push:
+    branches: ["test/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  win-test:
+    runs-on: windows-latest
+    defaults: { run: { working-directory: desktop } }
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm, cache-dependency-path: desktop/package-lock.json }
+      - run: npm ci
+      - run: npx electron-vite build
+      - run: npx electron-builder --win nsis --x64 --publish never -c.extraMetadata.ubionFlavor=test "-c.productName=UBION Messenger Test" -c.appId=global.ubion.messenger.test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UBION-Messenger-Test-Windows
+          path: desktop/release/*.exe
+          if-no-files-found: error
