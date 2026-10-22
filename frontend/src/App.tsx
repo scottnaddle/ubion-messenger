@@ -135,11 +135,12 @@ export default function App() {
         }
         if (evt.type === "message") {
           const p = evt.payload as Message & { roomKind: string; roomSeq: number; usePush?: boolean };
+          const roomSeq = Number(p.roomSeq);
           const keyGuess = rooms.find(
-            (r) => r.kind === p.roomKind && r.seq === p.roomSeq
+            (r) => r.kind === p.roomKind && r.seq === roomSeq
           )?.key;
           setRooms((prev) => {
-            const idx = prev.findIndex((r) => r.kind === p.roomKind && r.seq === p.roomSeq);
+            const idx = prev.findIndex((r) => r.kind === p.roomKind && r.seq === roomSeq);
             if (idx < 0) {
               // refresh list asynchronously
               refreshRooms();

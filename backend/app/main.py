@@ -51,6 +51,29 @@ def _push(evt: dict[str, Any]) -> None:
 
 def _on_xmpp_message(obj: dict) -> None:
     # Normalize for UI; mask nothing here — UI decides. Avoid logging body.
+    try:
+        import json, time
+        from pathlib import Path as _P
+        mid = obj.get("messageId")
+        rec = {
+            "t": time.time(),
+            "keys": sorted(obj.keys()),
+            "type": obj.get("type"),
+            "subtype": obj.get("subtype"),
+            "messageId": mid,
+            "messageId_type": type(mid).__name__,
+            "createdAt": obj.get("createdAt") or obj.get("sendDate") or obj.get("sendAt"),
+            "from_seq": (obj.get("from") or {}).get("userSeq") if isinstance(obj.get("from"), dict) else None,
+            "toSeq": obj.get("toSeq"),
+            "msg_len": len(str(obj.get("message") or "")),
+            "msg_prefix": str(obj.get("message") or "")[:40],
+        }
+        logp = _P.home() / ".daou-app" / "xmpp_debug.jsonl"
+        logp.parent.mkdir(parents=True, exist_ok=True)
+        with open(logp, "a") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
     fr = obj.get("from") or {}
     subtype = obj.get("subtype") or ""
     mtype = obj.get("type") or "message"
@@ -77,18 +100,34 @@ def _on_xmpp_message(obj: dict) -> None:
     elif subtype == "pubsub":
         room_kind = "pubsub"
         room_seq = fr.get("userSeq") or obj.get("toSeq")
+    mid = obj.get("messageId")
+    try:
+        mid = int(mid) if mid is not None and mid != "" else None
+    except (TypeError, ValueError):
+        mid = None
+    created = (
+        obj.get("createdAt")
+        or obj.get("sendDate")
+        or obj.get("sendAt")
+        or obj.get("date")
+        or obj.get("time")
+    )
+    if not created:
+        from datetime import datetime, timezone, timedelta
+        created = datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="milliseconds")
     payload = {
-        "messageId": obj.get("messageId"),
+        "messageId": mid,
         "sendUserSeq": fr.get("userSeq"),
         "sendUserName": fr.get("userName") or "",
         "message": obj.get("message") or "",
-        "createdAt": obj.get("createdAt") or obj.get("sendDate"),
+        "createdAt": created,
         "userImage": fr.get("userImg") or "",
         "roomKind": room_kind,
-        "roomSeq": room_seq,
+        "roomSeq": int(room_seq) if room_seq is not None else None,
         "subtype": subtype,
         "rawType": mtype,
         "usePush": obj.get("usePush", True),
+        "messageType": obj.get("messageType") or subtype or "text",
     }
     _push({"type": "message", "payload": payload})
     # Optional macOS notification fallback (snippet only)

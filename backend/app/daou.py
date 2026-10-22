@@ -183,8 +183,13 @@ class DaouClient:
 
     def normalize_message(self, m: dict) -> dict:
         attach = m.get("chatMessageAttachFileModel") or m.get("attach")
+        mid = m.get("messageId")
+        try:
+            mid = int(mid) if mid is not None and mid != "" else None
+        except (TypeError, ValueError):
+            mid = None
         return {
-            "messageId": m.get("messageId"),
+            "messageId": mid,
             "sendUserSeq": m.get("sendUserSeq"),
             "sendUserName": m.get("sendUserName") or "",
             "targetUserSeq": m.get("targetUserSeq"),
