@@ -29,7 +29,7 @@ async function main() {
   await run("noti /api/my/noti", () => svc.notis(10), (l) => ({ n: l.items.length, total: l.total, fields: keys(l.items[0]), cats: [...new Set(l.items.map((x: any) => x.category))] }));
   await run("noti unread count", () => svc.unreadNotiCount(), (n) => ({ unread: n }));
   await run("mail gadget", () => svc.mails(5), (l) => ({ n: l.items.length, total: l.total, fields: keys(l.items[0]), unseen: l.items.filter((m: any) => !m.seen).length }));
-  await run("mail count", () => svc.mailCount(), (n) => ({ count: n }));
+  await run("mail count", () => svc.mailTodayCount(), (n) => ({ count: n }));
   await run("refreshAll", () => svc.refreshAll(), (ok) => ({ ok, badge: svc.snapshot().badge }));
   await run("whitelist blocks /api/login", () => svc.get("/api/login"), () => "UNEXPECTED");
   console.log("events", events, "methods", [...new Set(methods)]);

@@ -7,7 +7,7 @@ export type Settings = {
   serverUrl: string; username: string; rememberMe: boolean; autoLogin: boolean;
   theme: "system" | "light" | "dark"; notifications: boolean; notificationPreview: boolean;
   notificationSound: boolean; launchAtLogin: boolean; closeToTray: boolean; downloadDir: string;
-  fontSize: number; autoUpdate: boolean; portalPostNotify: boolean; portalOpenMode: "external" | "inapp";
+  fontSize: number; autoUpdate: boolean; portalPostNotify: boolean; portalOpenMode: "external" | "inapp"; portalOpenModeChosen?: boolean;
   hasSavedPassword?: boolean;
 };
 

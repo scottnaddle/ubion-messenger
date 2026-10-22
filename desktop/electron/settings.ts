@@ -18,8 +18,10 @@ export type Settings = {
   autoUpdate: boolean;
   /** OS notification for new 전사게시판 posts */
   portalPostNotify: boolean;
-  /** how portal items open: external browser (default) */
+  /** how portal items open: in-app window with the messenger's session (default, SSO) or external browser */
   portalOpenMode: "external" | "inapp";
+  /** true once the user explicitly picked portalOpenMode in settings (≤1.0.5 persisted "external" without a UI). */
+  portalOpenModeChosen?: boolean;
 };
 
 export const DEFAULTS: Settings = {
@@ -37,7 +39,7 @@ export const DEFAULTS: Settings = {
   fontSize: 14,
   autoUpdate: true,
   portalPostNotify: true,
-  portalOpenMode: "external",
+  portalOpenMode: "inapp",
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");
@@ -45,7 +47,9 @@ const secretFile = () => path.join(app.getPath("userData"), "credential.bin");
 
 export function loadSettings(): Settings {
   try {
-    return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(file(), "utf8")) };
+    const s: Settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(file(), "utf8")) };
+    if (!s.portalOpenModeChosen) s.portalOpenMode = DEFAULTS.portalOpenMode; // 1.0.6 migration: SSO in-app by default
+    return s;
   } catch {
     return { ...DEFAULTS };
   }

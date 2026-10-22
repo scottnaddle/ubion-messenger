@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   dialog,
+  session,
   ipcMain,
   Menu,
   nativeImage,
@@ -19,6 +20,7 @@ import { MessengerCore } from "./core/messenger";
 import { Updater } from "./updater";
 import { HttpError } from "./core/daou-client";
 import type { MessengerEventMap } from "./core/types";
+import { isPortalUrl, toElectronCookie } from "./core/portal-cookies";
 import {
   clearPassword,
   loadPassword,
@@ -80,6 +82,7 @@ function handle(channel: string, fn: (...args: any[]) => any) {
 
 function wireCore() {
   unsubscribe.forEach((u) => u());
+  core.client.onSessionChanged = () => void syncPortalCookies().catch((e) => console.warn("portal cookie sync failed:", (e as Error).name));
   const fwd = <K extends keyof MessengerEventMap>(k: K) =>
     core.on(k, (p) => send("core:event", { type: k, payload: p }));
   unsubscribe = [
@@ -153,11 +156,81 @@ function portalUrl(rel: string): string | null {
 }
 
 /** Open a portal deep link only on explicit user action (opening may mark items as read). */
-function openPortal(rel: string, _mode?: "external" | "inapp") {
+function openPortal(rel: string, mode?: "external" | "inapp") {
   const url = portalUrl(rel);
   if (!url) throw new Error("허용되지 않은 주소입니다");
-  // MVP: always external browser (session is not shared; user may need to sign in on the web).
-  return shell.openExternal(url);
+  if ((mode || settings.portalOpenMode) === "external") return shell.openExternal(url);
+  return openPortalWindow(url);
+}
+
+// ---------- in-app portal window (SSO with the messenger's GOSSOcookie) ----------
+const PORTAL_PARTITION = "persist:portal";
+let portalWin: BrowserWindow | null = null;
+const portalSession = () => session.fromPartition(PORTAL_PARTITION);
+
+/** Copy the core's current portal cookies (GOSSOcookie etc.) into the partition. Values are never logged. */
+async function syncPortalCookies() {
+  const ses = portalSession();
+  if (!core.client.user) {
+    await ses.clearStorageData();
+    return;
+  }
+  const base = core.client.baseUrl;
+  const cookies = await core.client.sessionCookies();
+  for (const c of cookies) await ses.cookies.set(toElectronCookie(c, base));
+  await ses.cookies.flushStore();
+}
+
+async function clearPortalSession() {
+  if (portalWin && !portalWin.isDestroyed()) portalWin.close();
+  await portalSession().clearStorageData().catch(() => undefined);
+}
+
+function portalNavMenu() {
+  // Window menu bar (Windows) / app menu while focused: back, forward, reload, open in external browser.
+  return Menu.buildFromTemplate([
+    { label: "◀ 뒤로", accelerator: "CmdOrCtrl+[", click: () => portalWin?.webContents.navigationHistory.goBack() },
+    { label: "앞으로 ▶", accelerator: "CmdOrCtrl+]", click: () => portalWin?.webContents.navigationHistory.goForward() },
+    { label: "새로고침", accelerator: "CmdOrCtrl+R", click: () => portalWin?.webContents.reload() },
+    { label: "외부 브라우저로 열기", click: () => { const u = portalWin?.webContents.getURL(); if (u && /^https?:/.test(u)) void shell.openExternal(u); } },
+  ]);
+}
+
+async function openPortalWindow(url: string) {
+  await syncPortalCookies();
+  if (portalWin && !portalWin.isDestroyed()) {
+    await portalWin.loadURL(url);
+    if (portalWin.isMinimized()) portalWin.restore();
+    portalWin.show();
+    portalWin.focus();
+    return;
+  }
+  portalWin = new BrowserWindow({
+    width: 1280, height: 860, title: "DaouOffice — UBION Messenger", autoHideMenuBar: false,
+    webPreferences: { partition: PORTAL_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  portalWin.setMenu(portalNavMenu());
+  const base = core.client.baseUrl;
+  portalWin.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (isPortalUrl(u, base)) {
+      void portalWin?.loadURL(u);
+    } else if (/^https?:/.test(u)) void shell.openExternal(u);
+    return { action: "deny" };
+  });
+  portalWin.webContents.on("will-navigate", (e, u) => {
+    if (!isPortalUrl(u, base)) {
+      e.preventDefault();
+      if (/^https?:/.test(u)) void shell.openExternal(u);
+    }
+  });
+  portalWin.webContents.on("will-redirect", (e, u) => {
+    if (!isPortalUrl(u, base)) {
+      e.preventDefault();
+      if (/^https?:/.test(u)) void shell.openExternal(u);
+    }
+  });
+  portalWin.on("closed", () => (portalWin = null));
+  await portalWin.loadURL(url);
 }
 
 function notifyNewPost(p: MessengerEventMap["portalNewPost"]) {
@@ -302,6 +375,7 @@ function registerIpc() {
   );
   handle("auth:logout", async () => {
     await core.logout("user");
+    await clearPortalSession();
     settings = { ...settings, autoLogin: false };
     saveSettings(settings);
     updateBadge();

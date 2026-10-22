@@ -7,10 +7,12 @@ import type {
 
 type Snap = { summary: PortalSummary | null; badge: PortalBadge; widgets: Partial<Record<PortalWidgetId, PortalWidgetState>> };
 
-const CHIP_LABEL: Record<string, string> = {
-  mail: "메일", approval: "결재", approval2: "결재", calendar: "일정", asset: "예약", survey: "설문",
-  report: "보고", community: "커뮤니티", board: "게시판",
+/** Same links as the web "투데이 프로필" gadget. */
+const CHIP_URL: Record<string, string> = {
+  mail: "/app/mail?work=quick&folder=today", survey: "/app/survey", community: "/app/community", report: "/app/report",
+  task: "/app/task", approval: "/app/approval/todo", approval2: "/app/approval/todoreception/all", asset: "/app/asset",
 };
+const chipUrl = (app: string) => (app === "calendar" ? `/app/calendar/daily/${new Date().toLocaleDateString("sv-SE")}` : CHIP_URL[app] || `/app/${app}`);
 
 function ago(s?: string) {
   if (!s) return "";
@@ -75,8 +77,8 @@ export function Home() {
   const todo = w.approvalTodo?.data as { items: ApprovalDoc[]; total: number } | undefined;
   const upcoming = w.approvalUpcoming?.data as { items: ApprovalDoc[]; total: number } | undefined;
   const noti = w.noti?.data as { items: PortalNoti[]; total: number } | undefined;
-  const mail = w.mail?.data as ({ items: MailItem[]; total: number; unread?: number }) | undefined;
-  const chips = (snap?.summary?.chips || []).filter((c, i, a) => a.findIndex((x) => CHIP_LABEL[x.appName] === CHIP_LABEL[c.appName]) === i);
+  const mail = w.mail?.data as ({ items: MailItem[]; total: number; today?: number }) | undefined;
+  const chips = snap?.summary?.chips || [];
 
   return (
     <div className="home">
@@ -87,12 +89,12 @@ export function Home() {
       </div>
       <div className="home-chips">
         {chips.map((c) => (
-          <button key={c.appName} className={`chip ${c.count ? "on" : ""}`} onClick={() => open(`/app/${c.appName === "approval2" ? "approval" : c.appName}`)}>
-            {CHIP_LABEL[c.appName] || c.gadgetName || c.appName} {c.count}
+          <button key={c.appName} className={`chip ${c.count ? "on" : ""}`} onClick={() => open(chipUrl(c.appName))}>
+            {c.gadgetName || c.appName} {c.count}
           </button>
         ))}
       </div>
-      <p className="muted tiny home-hint">항목을 누르면 웹 브라우저에서 열립니다(웹 로그인이 필요할 수 있음). 열면 읽음 처리될 수 있습니다.</p>
+      <p className="muted tiny home-hint">항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.</p>
       <div className="home-grid">
         <Card title="전사게시판 최근글" webUrl="/app/board" state={w.posts}>
           <ul>{posts?.items.map((p) => (
@@ -115,7 +117,7 @@ export function Home() {
               <li key={d.id}><button onClick={() => open(d.url)}><span className="tag">{d.formName}</span> <span className="ellipsis">{d.title}</span></button></li>))}</ul>
           </>}
         </Card>
-        <Card title="알림" count={snap?.badge.noti} webUrl="/app/home" state={w.noti}>
+        <Card title="읽지 않은 알림" count={snap?.badge.noti} webUrl="/app/home" state={w.noti}>
           <ul>{noti?.items.map((n) => (
             <li key={n.id}><button onClick={() => open(n.url)}>
               <span className="tag">{n.category}</span> <span className="ellipsis">{n.message}</span>
@@ -123,7 +125,7 @@ export function Home() {
             </button></li>))}</ul>
           <Empty show={!!noti && !noti.items.length} text="알림이 없습니다" />
         </Card>
-        <Card title="메일" count={mail?.unread} webUrl="/app/mail" state={w.mail}>
+        <Card title="메일 · 오늘 온 메일" count={mail?.today ?? snap?.badge.mail} webUrl="/app/mail?work=quick&folder=today" state={w.mail}>
           <ul>{mail?.items.map((m) => (
             <li key={`${m.folderFullName}/${m.id}`}><button onClick={() => open(m.url)} className={m.seen ? "" : "unseen"}>
               {!m.seen && <span className="dot">●</span>} <b>{m.from}</b> · <span className="ellipsis">{m.subject}</span>

@@ -34,7 +34,7 @@ export function installMockIfNeeded() {
     email: `user${id}@example.com`, thumbnail: "", departmentIds: [i % 2 ? 20 : 21],
   }));
   const handlers: Record<string, (...a: any[]) => any> = {
-    "settings:get": () => ({ serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "external", hasSavedPassword: true }),
+    "settings:get": () => ({ serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", hasSavedPassword: true }),
     "auth:state": () => ({ user: new URLSearchParams(location.search).get("login") ? null : me, conn: "online" }),
     "rooms:list": () => rooms,
     "msg:history": (_k: string, before?: number) => (before ? [] : msgs),
@@ -54,7 +54,7 @@ export function installMockIfNeeded() {
       approvalTodo: { id: "approvalTodo", data: { total: 1, items: [{ id: 11, formName: "지출결의서", title: "10월 법인카드 정산", url: "/app/approval/document/11" }] } },
       approvalUpcoming: { id: "approvalUpcoming", data: { total: 0, items: [] } },
       noti: { id: "noti", data: { total: 3, items: [{ id: 5, category: "approval", senderName: "홍길동", message: "결재 요청이 도착했습니다", createdAt: isoNow, url: "/link/noti/5" }] } },
-      mail: { id: "mail", data: { total: 2, unread: 2, items: [{ id: "101", folderName: "받은편지함", folderFullName: "Inbox", subject: "주간 회의록", from: "김철수", seen: false, url: "/app/mail?work=read&folder=Inbox&uid=101" }] } },
+      mail: { id: "mail", data: { total: 2, today: 2, items: [{ id: "101", folderName: "받은편지함", folderFullName: "Inbox", subject: "주간 회의록", from: "김철수", seen: false, url: "/app/mail?work=read&folder=Inbox&uid=101" }] } },
     },
   };
   const bridge: Bridge = {

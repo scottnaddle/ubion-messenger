@@ -35,6 +35,8 @@ export class DaouClient {
   private companies: Array<{ userId: number; userLoginId: string }> = [];
   private creds: LoginOptions | null = null;
   private relogin: Promise<void> | null = null;
+  /** Called after every successful (re-)login and after logout, so the in-app portal window can resync cookies. */
+  onSessionChanged: (() => void) | null = null;
 
   constructor(baseUrl = "https://coco.ubion.co.kr") {
     this.baseUrl = baseUrl.replace(/\/$/, "");
@@ -69,6 +71,12 @@ export class DaouClient {
       throw new HttpError(res.status === 200 ? 401 : res.status, msg);
     }
     if (body?.data?.xmppDomain) this.xmppDomain = body.data.xmppDomain;
+    try { this.onSessionChanged?.(); } catch { /* ignore */ }
+  }
+
+  /** Cookies the jar would send to the portal origin (GOSSOcookie etc.). Values must never be logged. */
+  async sessionCookies() {
+    return this.jar.getCookies(this.baseUrl + "/");
   }
 
   /** Cookie refresh: re-login once with remembered credentials (coalesced). */
@@ -106,6 +114,7 @@ export class DaouClient {
     this.jar = new CookieJar();
     this.user = null;
     this.creds = null;
+    try { this.onSessionChanged?.(); } catch { /* ignore */ }
   }
 
   loginIdForXmpp(): string {

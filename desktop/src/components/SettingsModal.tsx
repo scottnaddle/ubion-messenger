@@ -65,6 +65,16 @@ export function SettingsModal({
           <Toggle k="notificationPreview" label="알림에 메시지 내용 표시" disabled={!settings.notifications} />
           <Toggle k="notificationSound" label="알림 소리" disabled={!settings.notifications} />
           <Toggle k="portalPostNotify" label="전사게시판 새 글 알림" desc="홈 탭: 새 전사 공지를 데스크톱 알림으로 표시" disabled={!settings.notifications} />
+          <div className="row">
+            <div>
+              <div>포털(홈) 링크 열기</div>
+              <div className="muted small">앱 안 창: 메신저 로그인 그대로 사용(재로그인 불필요) · 외부 브라우저: 웹 로그인이 필요할 수 있음</div>
+            </div>
+            <select value={settings.portalOpenMode} onChange={(e) => set({ portalOpenMode: e.target.value as "inapp" | "external", portalOpenModeChosen: true })}>
+              <option value="inapp">앱 안 창 (자동 로그인)</option>
+              <option value="external">외부 브라우저</option>
+            </select>
+          </div>
           <h4>시스템</h4>
           <Toggle k="launchAtLogin" label="로그인 시 자동 실행" desc="트레이에 숨긴 상태로 시작합니다" />
           <Toggle k="closeToTray" label="창을 닫으면 트레이로 최소화" />

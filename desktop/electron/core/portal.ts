@@ -24,7 +24,10 @@ export type MailItem = {
   seen: boolean; priority?: string; url: string;
 };
 export type PortalList<T> = { items: T[]; total: number };
-/** approval = todo count, noti = unread portal notis, mail = today's mail (user/today chip). Rail badge = approval + noti. */
+/**
+ * approval = todo count (/api/approval/todo/count docCount), noti = unread portal notis (/api/home/noti/count, same as web top bar),
+ * mail = today's mail (/api/mail/message/count?today=on, same as web "오늘 온 메일"). Rail badge = approval + noti.
+ */
 export type PortalBadge = { approval: number; noti: number; mail: number };
 
 export type PortalWidgetId = "posts" | "approvalTodo" | "approvalUpcoming" | "noti" | "mail";
@@ -33,7 +36,8 @@ export type PortalWidgetData = {
   approvalTodo: PortalList<ApprovalDoc>;
   approvalUpcoming: PortalList<ApprovalDoc>;
   noti: PortalList<PortalNoti>;
-  mail: PortalList<MailItem> & { unread?: number };
+  /** today = "오늘 온 메일" count (web: /api/mail/message/count?today=on). NOT unread, NOT mailbox total. */
+  mail: PortalList<MailItem> & { today?: number };
 };
 export type PortalWidgetState<K extends PortalWidgetId = PortalWidgetId> = {
   id: K; data?: PortalWidgetData[K]; error?: string; updatedAt?: number;
@@ -57,6 +61,7 @@ export const PORTAL_WHITELIST: RegExp[] = [
   /^\/api\/approval\/todo\/count$/,
   /^\/api\/my\/noti$/,
   /^\/api\/my\/noti\/unread$/,
+  /^\/api\/home\/noti\/count$/,
   /^\/api\/mail\/message\/gadget$/,
   /^\/api\/mail\/message\/count$/,
 ];
@@ -94,11 +99,28 @@ export function postUrl(boardId: number, postId: number, type?: string) {
   return String(type || "").toUpperCase() === "STREAM" ? `/app/board/${boardId}/post/${postId}/stream` : `/app/board/${boardId}/post/${postId}`;
 }
 
+/**
+ * Apps the web "투데이 프로필" gadget can show (its _connectedApp list, same order as the server).
+ * Anything else in user/today summaries (e.g. appName "board" with empty gadgetName) is never shown on the web.
+ */
+export const SUMMARY_APPS = ["mail", "calendar", "community", "asset", "survey", "report", "task", "approval", "approval2"];
+/** Web gadget labels (ko), used when the server omits gadgetName. */
+export const SUMMARY_LABELS: Record<string, string> = {
+  mail: "오늘 온 메일", community: "내 커뮤니티 새글", calendar: "오늘의 일정", asset: "내 예약/대여 현황", survey: "참여할 설문",
+  report: "작성할 보고", task: "담당 업무", approval: "결재할 문서", approval2: "결재 수신 문서",
+};
+
 export function parseSummary(body: any): PortalSummary {
-  const chips = arr(body?.data?.summaries).map((s) => ({
-    appName: str(s.appName), gadgetName: str(s.gadgetName), count: num(s.count),
-  }));
+  const chips = arr(body?.data?.summaries)
+    .filter((s) => SUMMARY_APPS.includes(str(s?.appName)))
+    .map((s) => ({ appName: str(s.appName), gadgetName: str(s.gadgetName) || SUMMARY_LABELS[str(s.appName)], count: num(s.count) }));
   return { chips };
+}
+
+/** Web overrides the mail chip with /api/mail/message/count?today=on (user/today's own mail count is stale/0). */
+export function withMailToday(s: PortalSummary, today: number | undefined): PortalSummary {
+  if (today == null) return s;
+  return { chips: s.chips.map((c) => (c.appName === "mail" ? { ...c, count: today } : c)) };
 }
 
 export function parsePosts(body: any): PortalList<BoardPost> {
@@ -166,6 +188,7 @@ export function parseMails(body: any): PortalList<MailItem> {
   return { items, total: num(body?.data?.pageInfo?.total ?? body?.data?.pageInfo?.totalElements, items.length) };
 }
 
+/** Plain `{data: <number>}` count responses (mail/message/count, home/noti/count). */
 export function parseMailCount(body: any): number {
   const d = body?.data;
   if (typeof d === "number" || typeof d === "string") return num(d);
@@ -234,9 +257,11 @@ export class PortalService {
   async approvals(type: "todo" | "upcoming", n = 5) { return parseApprovals(await this.get(`/api/approval/${type}?page=0&offset=${n}`)); }
   async approvalCount() { return parseApprovalCount(await this.get("/api/approval/todo/count")); }
   async notis(n = 10) { return parseNotis(await this.get(`/api/my/noti?page=0&offset=${n}`)); }
-  async unreadNotiCount() { return parseNotis(await this.get("/api/my/noti/unread?page=0&offset=1")).total; }
+  /** Web top-bar unread noti count. (/api/my/noti/unread page.total is always 0 — do not use.) */
+  async unreadNotiCount() { return parseMailCount(await this.get("/api/home/noti/count")); }
   async mails(n = 5) { return parseMails(await this.get(`/api/mail/message/gadget?count=${n}`)); }
-  async mailCount() { return parseMailCount(await this.get("/api/mail/message/count")); }
+  /** "오늘 온 메일" — web POSTs {today:on}; the GET query form returns the same number. Without it = mailbox total. */
+  async mailTodayCount() { return parseMailCount(await this.get("/api/mail/message/count?today=on")); }
 
   snapshot() {
     return { summary: this.summary, badge: this.badge, widgets: Object.fromEntries(this.widgets) as Partial<Record<PortalWidgetId, PortalWidgetState>> };
@@ -268,26 +293,30 @@ export class PortalService {
 
   /** Light set: summary + badge counts + company posts (new-post detection). */
   async refreshLight(): Promise<boolean> {
+    const mailToday = this.mailTodayCount().catch(() => undefined);
     const results = await Promise.allSettled([
-      this.fetchSummary().then((s) => { this.summary = s; this.emit("portalSummary", s); }),
+      Promise.all([this.fetchSummary(), mailToday]).then(([s, t]) => { this.summary = withMailToday(s, t); this.emit("portalSummary", this.summary); }),
       this.approvalCount(),
       this.unreadNotiCount(),
+      mailToday,
       this.companyPosts(5).then((l) => {
         this.widgets.set("posts", { id: "posts", data: l, updatedAt: Date.now() });
         this.emit("portalWidget", this.widgets.get("posts")!);
         this.checkPosts(l);
       }),
     ]);
-    const [, a, n] = results;
+    const [, a, n, m] = results;
     const mailChip = this.summary?.chips.find((c) => c.appName === "mail");
+    const mailNow = m.status === "fulfilled" && m.value != null ? (m.value as number) : mailChip?.count;
     const next: PortalBadge = {
       approval: a.status === "fulfilled" ? (a.value as number) : this.badge.approval,
       noti: n.status === "fulfilled" ? (n.value as number) : this.badge.noti,
-      mail: mailChip ? mailChip.count : this.badge.mail,
+      mail: mailNow ?? this.badge.mail,
     };
     this.setBadge(next);
     return results.every((r) => r.status === "fulfilled");
   }
+
 
   /** Full set (Home visible): light + all MVP widgets. */
   async refreshAll(): Promise<boolean> {
@@ -296,10 +325,7 @@ export class PortalService {
       this.widget("approvalTodo", () => this.approvals("todo", 5)),
       this.widget("approvalUpcoming", () => this.approvals("upcoming", 5)),
       this.widget("noti", () => this.notis(10)),
-      this.widget("mail", async () => {
-        const [list, unread] = await Promise.all([this.mails(5), this.mailCount().catch(() => undefined)]);
-        return { ...list, unread };
-      }),
+      this.widget("mail", async () => ({ ...(await this.mails(5)), today: this.badge.mail })),
     ]);
     return okLight && oks.every(Boolean);
   }

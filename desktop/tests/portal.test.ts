@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   PortalService, detectNewPosts, isAllowedPortalPath, maskSecrets, nextDelay, parseApprovalCount, parseApprovals,
-  parseMailCount, parseMails, parseNotis, parsePosts, parseSummary, MAX_BACKOFF_MS,
+  parseMailCount, parseMails, parseNotis, parsePosts, parseSummary, withMailToday, MAX_BACKOFF_MS,
 } from "../electron/core/portal";
 import * as F from "./fixtures/portal";
 
@@ -10,6 +10,7 @@ describe("portal parsing", () => {
     const s = parseSummary(F.today);
     expect(s.chips).toHaveLength(4);
     expect(s.chips[2]).toEqual({ appName: "calendar", gadgetName: "일정", count: 1 });
+    expect(isAllowedPortalPath("/api/home/noti/count")).toBe(true);
     expect(s.chips[3].count).toBe(0);
   });
   it("company posts + deep links", () => {
@@ -38,6 +39,22 @@ describe("portal parsing", () => {
     expect(m.items[1].url).toBe("/app/mail?work=read&folder=Inbox%2F%EC%97%85%EB%AC%B4%20A&uid=1200");
     expect(parseMailCount(F.mailCount)).toBe(4);
     expect(parseMailCount({ data: { unreadCount: 2 } })).toBe(2);
+  });
+  it("live user/today: only web-visible apps, web labels, approval2 kept separate, board dropped", () => {
+    const s = parseSummary(F.todayLive);
+    expect(s.chips.map((c) => c.appName)).toEqual(["mail", "approval", "approval2", "community", "calendar", "asset", "report", "survey"]);
+    expect(s.chips.find((c) => c.appName === "approval2")?.gadgetName).toBe("결재 수신 문서");
+    expect(s.chips.some((c) => c.count === 5)).toBe(false);
+    expect(parseSummary({ data: { summaries: [{ appName: "task", count: 2 }] } }).chips[0].gadgetName).toBe("담당 업무");
+    const m = withMailToday(s, parseMailCount(F.mailCountToday));
+    expect(m.chips[0]).toEqual({ appName: "mail", gadgetName: "오늘 온 메일", count: 37 });
+    expect(withMailToday(s, undefined)).toBe(s);
+  });
+  it("live counts", () => {
+    expect(parseMailCount(F.mailCountTotal)).toBe(11530);
+    expect(parseMailCount(F.homeNotiCount)).toBe(862);
+    expect(parseNotis(F.notiUnreadLive).total).toBe(0); // why /api/my/noti/unread is not used for the count
+    expect(parseApprovalCount(F.approvalCountLive)).toBe(0);
   });
   it("tolerates garbage", () => {
     expect(parsePosts(null).items).toEqual([]);
@@ -80,13 +97,14 @@ describe("PortalService", () => {
   const routes: Record<string, unknown> = {
     "/api/user/today": F.today, "/api/board/posts/company": F.companyPosts, "/api/approval/todo": F.approvalTodo,
     "/api/approval/upcoming": F.approvalUpcoming, "/api/approval/todo/count": F.approvalCount, "/api/my/noti": F.noti,
-    "/api/my/noti/unread": F.noti, "/api/mail/message/gadget": F.mail, "/api/mail/message/count": F.mailCount,
+    "/api/my/noti/unread": F.noti, "/api/mail/message/gadget": F.mail, "/api/mail/message/count": F.mailCountTotal,
+    "/api/mail/message/count?today=on": F.mailCountToday, "/api/home/noti/count": F.homeNotiCount,
   };
   const mk = () => {
     const calls: Array<{ path: string; method?: string }> = [];
     const fetcher = vi.fn(async (path: string, init?: { method?: string }) => {
       calls.push({ path, method: init?.method });
-      const body = routes[path.split("?")[0]];
+      const body = routes[path] ?? routes[path.split("?")[0]];
       return body ? { status: 200, text: JSON.stringify(body) } : { status: 404, text: "" };
     });
     const events: Array<[string, any]> = [];
@@ -102,7 +120,11 @@ describe("PortalService", () => {
     expect(types).toContain("portalSummary");
     expect(types.filter((t) => t === "portalWidget").length).toBe(5);
     expect(types).not.toContain("portalNewPost");
-    expect(svc.snapshot().badge).toEqual({ approval: 3, noti: 15, mail: 2 });
+    expect(svc.snapshot().badge).toEqual({ approval: 3, noti: 862, mail: 37 });
+    expect(calls.map((c) => c.path)).toContain("/api/mail/message/count?today=on");
+    expect(calls.map((c) => c.path)).not.toContain("/api/mail/message/count");
+    expect(svc.snapshot().summary?.chips.find((c) => c.appName === "mail")?.count).toBe(37);
+    expect((svc.snapshot().widgets.mail?.data as any).today).toBe(37);
   });
   it("emits portalNewPost after baseline", async () => {
     const { svc, events } = mk();
