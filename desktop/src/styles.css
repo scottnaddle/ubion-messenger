@@ -373,3 +373,4 @@ kbd { border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
 .empty-todo { line-height: 1.6; padding: 16px; }
 .collect-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border, rgba(0,0,0,.15)); background: transparent; color: var(--muted, #888); cursor: pointer; margin-right: 4px; }
 .collect-chip.on { background: var(--accent-soft, rgba(80,120,255,.12)); color: var(--accent, #3b6cff); border-color: transparent; }
+.web-login-box { display: flex; flex-direction: column; gap: 8px; }

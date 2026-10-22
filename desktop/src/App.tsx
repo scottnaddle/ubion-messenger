@@ -21,6 +21,8 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [booting, setBooting] = useState(true);
+  /** Set when the account needs the web-login window (OTP / 2-step) — at boot or on session expiry. */
+  const [webPrompt, setWebPrompt] = useState("");
   const [rooms, setRooms] = useState<Room[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [conn, setConn] = useState<ConnState>("offline");
@@ -68,10 +70,11 @@ export function App() {
         setRooms(await api().call("rooms:list"));
       } else if (s.autoLogin && s.hasSavedPassword && s.username) {
         try {
-          const u = await api().call<SessionUser>("auth:login", {
+          const u = await api().call<SessionUser | { webLoginRequired: true; message: string }>("auth:login", {
             serverUrl: s.serverUrl, username: s.username, rememberMe: true, autoLogin: true,
           });
-          setUser(u);
+          if ("webLoginRequired" in u) setWebPrompt(u.message.split("\n")[0]);
+          else setUser(u);
         } catch (e) {
           toast(`자동 로그인 실패: ${(e as Error).message}`);
         }
@@ -89,7 +92,13 @@ export function App() {
         else if (type === "presence") setPresence((p) => ({ ...p, [payload.userId]: payload.presence }));
         else if (type === "ready") setUser(payload);
         else if (type === "portalBadge") setPortalBadge(payload);
-        else if (type === "loggedOut") {
+        else if (type === "webLoginRequired") {
+          // Web (OTP) session expired: back to login with the web-login prompt; never loop native logins.
+          setWebPrompt(payload?.message || "이 계정은 추가 인증(OTP)이 필요해요");
+          setUser(null);
+          setRooms([]);
+          setActiveKey(null);
+        } else if (type === "loggedOut") {
           setUser(null);
           setRooms([]);
           setActiveKey(null);
@@ -187,8 +196,11 @@ export function App() {
     return (
       <>
         <Login
+          key={webPrompt}
           settings={settings}
+          webPrompt={webPrompt}
           onLoggedIn={async (u) => {
+            setWebPrompt("");
             setUser(u);
             setSettings(await api().call("settings:get"));
           }}

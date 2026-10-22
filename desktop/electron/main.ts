@@ -28,6 +28,10 @@ import {
   FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY, parseFlexTodoTotal, flexProgressCountFromText,
 } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
+import {
+  accountKey, isWebLoginNavAllowed, isWebLoginSuccessUrl, markWebAccount, planLogin, unmarkWebAccount,
+  webLoginUrl, WEB_LOGIN_MESSAGE,
+} from "./core/web-login";
 import { TodoService } from "./core/todo/service";
 import { WizardService } from "./core/wizard/service";
 import {
@@ -103,6 +107,7 @@ function wireCore() {
     settings = { ...settings, portalLastPostId: id };
     saveSettings(settings);
   };
+  core.client.onAuthLost = () => { core.shutdown(); send("core:event", { type: "webLoginRequired", payload: { reason: "expired", message: "세션이 만료되었어요. 웹에서 다시 인증해 주세요" } }); };
   core.client.onSessionChanged = () => void syncPortalCookies().catch((e) => console.warn("portal cookie sync failed:", (e as Error).name));
   const fwd = <K extends keyof MessengerEventMap>(k: K) =>
     core.on(k, (p) => send("core:event", { type: k, payload: p }));
@@ -335,6 +340,108 @@ async function scrapeFlexPendingFromWindow(): Promise<number | null> {
 }
 
 
+// ---------- web-login fallback (OTP / 2-step accounts) ----------
+/**
+ * Modal window on https://<server>/login in the SAME partition as the portal SSO window (persist:portal),
+ * so the cookies the server sets there are what we adopt into the API client (copied into its jar).
+ * The user types ID/password/OTP into the server's own page — we never see or store them.
+ */
+let webLoginWin: BrowserWindow | null = null;
+let webLoginPending: Promise<any> | null = null;
+
+/** Try the cookies currently in the partition: GET /api/user/session 200 → bootstrap. null if not logged in. */
+async function tryAdoptPartitionSession(serverUrl: string) {
+  const cookies = await portalSession().cookies.get({ url: serverUrl + "/" });
+  if (!cookies.length) return null;
+  const c = new MessengerCore(serverUrl);
+  try {
+    // probe with a throwaway client first so a failed probe does not tear down anything
+    await c.client.adoptWebSession(serverUrl, cookies);
+  } catch {
+    return null;
+  }
+  // Don't call /api/logout here: the old jar may share the new server session; just stop the old core.
+  core.shutdown();
+  core = new MessengerCore(serverUrl);
+  wireCore();
+  return core.loginWithWebSession(serverUrl, cookies);
+}
+
+function finishWebLogin(serverUrl: string, user: { loginId: string }) {
+  const key = accountKey(serverUrl, user.loginId);
+  settings = { ...settings, serverUrl, username: user.loginId || settings.username, webLoginAccounts: markWebAccount(settings.webLoginAccounts, key) };
+  saveSettings(settings);
+  flexAutoLoginTried = false;
+  flexPendingCache = { count: null, at: 0 };
+}
+
+function openWebLogin(serverUrl: string): Promise<any> {
+  if (webLoginPending) {
+    webLoginWin?.focus();
+    return webLoginPending;
+  }
+  webLoginPending = new Promise((resolve, reject) => {
+    let done = false;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    let checking = false;
+    const w = new BrowserWindow({
+      width: 980, height: 760, title: "웹 로그인 — UBION Messenger", parent: win ?? undefined, modal: !!win,
+      autoHideMenuBar: true,
+      webPreferences: { partition: PORTAL_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    });
+    webLoginWin = w;
+    const finish = (err: Error | null, user?: any) => {
+      if (done) return;
+      done = true;
+      if (poll) clearInterval(poll);
+      if (!w.isDestroyed()) w.close();
+      if (err) reject(err);
+      else resolve(user ?? null);
+    };
+    const check = async () => {
+      if (done || checking) return;
+      checking = true;
+      try {
+        const u = await tryAdoptPartitionSession(serverUrl);
+        if (u) {
+          finishWebLogin(serverUrl, u);
+          console.log("[auth] web login completed");
+          finish(null, u);
+        }
+      } catch (e) {
+        console.log("[auth] web login bootstrap failed:", (e as Error).name);
+      } finally {
+        checking = false;
+      }
+    };
+    const allowed = (u: string) => isWebLoginNavAllowed(u, serverUrl);
+    w.webContents.setWindowOpenHandler(({ url: u }) => {
+      if (allowed(u)) void w.loadURL(u);
+      return { action: "deny" };
+    });
+    const guard = (e: Electron.Event, u: string) => {
+      if (!allowed(u)) {
+        e.preventDefault();
+        console.log("[auth] web login blocked navigation to", (() => { try { return new URL(u).host; } catch { return "?"; } })());
+      }
+    };
+    w.webContents.on("will-navigate", guard);
+    w.webContents.on("will-redirect", guard);
+    w.webContents.on("will-attach-webview", (e) => e.preventDefault());
+    const onNav = (_e: unknown, u: string) => { if (isWebLoginSuccessUrl(u, serverUrl)) void check(); };
+    w.webContents.on("did-navigate", onNav);
+    w.webContents.on("did-navigate-in-page", onNav);
+    // SPA logins may not navigate: also poll the session (GET only, harmless for lockout).
+    poll = setInterval(() => void check(), 3000);
+    w.on("closed", () => {
+      webLoginWin = null;
+      finish(null, null); // user closed the window → cancelled
+    });
+    void w.loadURL(webLoginUrl(serverUrl)).catch(() => undefined);
+  }).finally(() => { webLoginPending = null; });
+  return webLoginPending;
+}
+
 async function openPortalWindow(url: string) {
   await syncPortalCookies();
   if (portalWin && !portalWin.isDestroyed()) {
@@ -513,9 +620,20 @@ function registerIpc() {
       // Saved password belongs to settings.username only; never reuse it for a different account.
       const sameUser = o.username.trim() === (settings.username || "").trim();
       const password = o.password || (o.rememberMe && sameUser ? loadPassword() : null);
-      if (!password) throw new Error("비밀번호를 입력하세요");
       const serverUrl = (o.serverUrl || settings.serverUrl).trim().replace(/\/$/, "");
       if (!/^https?:\/\//.test(serverUrl)) throw new Error("서버 주소는 https:// 로 시작해야 합니다");
+      const key = accountKey(serverUrl, o.username);
+      const flagged = !!settings.webLoginAccounts?.includes(key);
+      // OTP accounts: never re-POST /api/login with the saved password (lockout risk) — reuse web cookies or ask for web login.
+      if (planLogin({ flagged, typedPassword: !!o.password }) === "web-silent") {
+        const u = await tryAdoptPartitionSession(serverUrl).catch(() => null);
+        if (u) {
+          finishWebLogin(serverUrl, u);
+          return u;
+        }
+        return { webLoginRequired: true, message: WEB_LOGIN_MESSAGE };
+      }
+      if (!password) throw new Error("비밀번호를 입력하세요");
       if (core.user) await core.logout();
       core = new MessengerCore(serverUrl);
       wireCore();
@@ -525,8 +643,16 @@ function registerIpc() {
       } catch (e) {
         // Safe diagnostic: status + server code/message/redirect only (no id/password/cookies).
         if (e instanceof HttpError && e.diag) console.log("[auth] login failed:", e.diag);
+        if (e instanceof HttpError && e.webLogin) {
+          // Password was accepted (200) but a further step is needed: remember account, keep saved password.
+          settings = { ...settings, serverUrl, username: o.username.trim(), rememberMe: o.rememberMe, autoLogin: o.rememberMe && o.autoLogin, webLoginAccounts: markWebAccount(settings.webLoginAccounts, key) };
+          saveSettings(settings);
+          if (o.rememberMe && o.password) savePassword(password);
+          return { webLoginRequired: true, message: e.message };
+        }
         throw e;
       }
+      if (flagged) settings = { ...settings, webLoginAccounts: unmarkWebAccount(settings.webLoginAccounts, key) };
       settings = { ...settings, serverUrl, username: o.username.trim(), rememberMe: o.rememberMe, autoLogin: o.rememberMe && o.autoLogin };
       saveSettings(settings);
       if (o.rememberMe) savePassword(password);
@@ -536,6 +662,11 @@ function registerIpc() {
       return user;
     }
   );
+  handle("auth:webLogin", async (o?: { serverUrl?: string }) => {
+    const serverUrl = (o?.serverUrl || settings.serverUrl).trim().replace(/\/$/, "");
+    if (!/^https?:\/\//.test(serverUrl)) throw new Error("서버 주소는 https:// 로 시작해야 합니다");
+    return openWebLogin(serverUrl); // SessionUser, or null if the user closed the window
+  });
   handle("auth:logout", async () => {
     await core.logout("user");
     await clearPortalSession();

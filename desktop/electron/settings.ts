@@ -28,6 +28,8 @@ export type Settings = {
   flexAutoLogin: boolean;
   /** Highest 전사게시판 post id seen (number only) — lets posts made while the app was closed notify on next start. */
   portalLastPostId?: number;
+  /** accountKey()s (host|loginid, no secrets) that need the web-login window (OTP / 2-step). */
+  webLoginAccounts?: string[];
 };
 
 export const DEFAULTS: Settings = {

@@ -150,16 +150,32 @@ export class MessengerCore {
     this.setConn("connecting");
     try {
       const u = await this.client.login(opts);
-      this.startXmpp(new URL(opts.serverUrl).hostname);
-      this.emit("ready", u);
-      void this.refreshRooms().catch(() => undefined);
-      this.startPolling();
-      this.portal.start();
-      return u;
+      return this.afterLogin(u, opts.serverUrl);
     } catch (e) {
       this.setConn("offline");
       throw e;
     }
+  }
+
+  /** Continue normal bootstrap with a cookie session completed in the web-login window. */
+  async loginWithWebSession(serverUrl: string, cookies: import("./web-login").ElectronCookieIn[]): Promise<SessionUser> {
+    this.setConn("connecting");
+    try {
+      const u = await this.client.adoptWebSession(serverUrl, cookies);
+      return this.afterLogin(u, serverUrl);
+    } catch (e) {
+      this.setConn("offline");
+      throw e;
+    }
+  }
+
+  private afterLogin(u: SessionUser, serverUrl: string): SessionUser {
+    this.startXmpp(new URL(serverUrl).hostname);
+    this.emit("ready", u);
+    void this.refreshRooms().catch(() => undefined);
+    this.startPolling();
+    this.portal.start();
+    return u;
   }
 
   /** Stop realtime without invalidating the server session (app quit). */
