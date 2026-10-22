@@ -91,6 +91,21 @@ describe("DaouClient web-login integration", () => {
     const e = await new DaouClient(S).login({ serverUrl: S, username: "u", password: "p" }).catch((x) => x);
     expect(e.webLogin).toBe(true);
   });
+  it("live OTP account: /api/login 200 code=200 redirect=/otpLogin → web-login fallback, never success", async () => {
+    for (const body of [{ code: "200", data: { redirect: "/otpLogin" } }, { code: 200, redirect: "/otpLogin" }, { code: "200", message: "OK", data: { redirect: "/otpLogin?returnUrl=%2Fapp%2Fhome" } }]) {
+      const calls: string[] = [];
+      vi.stubGlobal("fetch", vi.fn(async (url: string) => (calls.push(String(url)), res(200, body))));
+      const c = new DaouClient(S);
+      const e = await c.login({ serverUrl: S, username: "u", password: "p" }).catch((x) => x);
+      expect(e).toBeInstanceOf(HttpError);
+      expect(e.webLogin).toBe(true);
+      expect(e.message).not.toContain("p\n");
+      expect(calls.some((u) => u.includes("/api/user/session"))).toBe(false); // did not proceed as success
+    }
+    expect(isWebLoginSuccessUrl(S + "/otpLogin", S)).toBe(false);
+    expect(isWebLoginSuccessUrl(S + "/app/otpLogin", S)).toBe(false);
+    expect(isWebLoginSuccessUrl(S + "/app/home", S)).toBe(true);
+  });
   it("wrong password is not a web-login case", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => res(401, { code: "401", message: "Invalid password" })));
     const e = await new DaouClient(S).login({ serverUrl: S, username: "u", password: "bad" }).catch((x) => x);
