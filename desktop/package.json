@@ -1,8 +1,8 @@
 {
   "name": "ubion-messenger",
   "productName": "UBION Messenger",
-  "version": "1.0.4",
-  "description": "UBION Messenger \u2014 DaouOffice desktop client",
+  "version": "1.0.5",
+  "description": "UBION Messenger — DaouOffice desktop client",
   "main": "out/main/index.js",
   "author": "UBION",
   "license": "UNLICENSED",
@@ -78,7 +78,7 @@
       ],
       "identity": null,
       "hardenedRuntime": false,
-      "icon": "resources/icon.png",
+      "icon": "resources/icon.icns",
       "artifactName": "UBION-Messenger-${version}-${arch}-mac.${ext}",
       "extendInfo": {
         "NSUserNotificationAlertStyle": "alert"
@@ -93,7 +93,7 @@
           ]
         }
       ],
-      "icon": "resources/icon.png"
+      "icon": "resources/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -117,7 +117,9 @@
         "from": "resources",
         "to": "resources",
         "filter": [
-          "*.png"
+          "*.png",
+          "*.ico",
+          "*.icns"
         ]
       }
     ],
@@ -128,7 +130,7 @@
       "target": [
         "AppImage"
       ],
-      "icon": "resources/icon.png",
+      "icon": "resources/icon-1024.png",
       "category": "Network"
     },
     "compression": "normal"

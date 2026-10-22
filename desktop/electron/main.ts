@@ -424,7 +424,7 @@ app.on("window-all-closed", () => {
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = settings.theme;
-  if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath("icon.png")));
+  if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath("icon-mac.png")));
   Menu.setApplicationMenu(
     process.platform === "darwin"
       ? Menu.buildFromTemplate([
