@@ -408,7 +408,15 @@ export class DaouClient {
     const timer = setTimeout(() => ctrl.abort(), 60_000);
     try {
       const res = await fetch(url, { headers, redirect: "manual", signal: ctrl.signal });
-      if ((res.status === 401 || (res.status >= 300 && res.status < 400)) && !retried) {
+      for (const c of res.headers.getSetCookie?.() || []) { try { await this.jar.setCookie(c, url); } catch { /* ignore */ } }
+      const loc = res.headers.get("location") || "";
+      if (res.status >= 300 && res.status < 400 && loc && !/login/i.test(loc)) {
+        ctrl.abort();
+        const next = new URL(loc, url);
+        if (next.origin !== new URL(url).origin || retried) throw new HttpError(res.status, `GET ${res.status}`);
+        clearTimeout(timer); return this.fetchCapped(next.pathname + next.search, maxBytes, true);
+      }
+      if ((res.status === 401 || (res.status >= 300 && res.status < 400)) && !retried && this.creds) {
         ctrl.abort(); clearTimeout(timer); await this.refreshSession(); return this.fetchCapped(path, maxBytes, true);
       }
       if (res.status !== 200 || !res.body) { ctrl.abort(); throw new HttpError(res.status, `GET ${res.status}`); }

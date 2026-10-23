@@ -106,6 +106,7 @@ export class MemoryContextStore implements ContextStore {
     if (!room) return 0;
     const n = room.size;
     this.byRoom.delete(room_id);
+    for (const [k, v] of this.delivered) if (v.room_id === room_id) this.delivered.delete(k);
     return n;
   }
 
@@ -154,9 +155,9 @@ export class MemoryContextStore implements ContextStore {
   }
 
   private delivered = new Map<number, { room_id: string; at: number }>();
-  markDelivered(room_id: string, message_id: number): void { this.delivered.set(message_id, { room_id, at: Date.now() }); }
+  markDelivered(room_id: string, message_id: number): void { this.delivered.set(message_id, { room_id, at: this.now() }); }
   deliveredRoom(message_id: number): string | null { return this.delivered.get(message_id)?.room_id ?? null; }
-  hasMessage(room_id: string, message_id: number): boolean { return this.list(room_id, { since: String(message_id - 1), limit: 1 }).some((m) => m.message_id === message_id); }
+  hasMessage(room_id: string, message_id: number): boolean { return this.byRoom.get(room_id)?.has(message_id) ?? false; }
   close(): void {}
 }
 
@@ -190,6 +191,7 @@ export class SqliteContextStore implements ContextStore {
     }
     this.db.exec(`
       PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS messages (
         room_id TEXT NOT NULL,
         message_id INTEGER NOT NULL,
@@ -237,12 +239,13 @@ export class SqliteContextStore implements ContextStore {
   }
 
   purgeRoom(room_id: string): number {
+    this.db.prepare("DELETE FROM delivered WHERE room_id = ?").run(room_id);
     return Number(this.db.prepare("DELETE FROM messages WHERE room_id = ?").run(room_id).changes);
   }
 
   prune(olderThanMs: number): number {
     const cutoff = new Date(this.now() - olderThanMs).toISOString();
-    this.db.prepare("DELETE FROM delivered WHERE at < ?").run(Date.now() - olderThanMs);
+    this.db.prepare("DELETE FROM delivered WHERE at < ?").run(this.now() - olderThanMs);
     return Number(this.db.prepare("DELETE FROM messages WHERE ts < ?").run(cutoff).changes);
   }
 
@@ -281,7 +284,7 @@ export class SqliteContextStore implements ContextStore {
   }
 
   markDelivered(room_id: string, message_id: number): void {
-    this.db.prepare("INSERT OR REPLACE INTO delivered (message_id, room_id, at) VALUES (?, ?, ?)").run(message_id, room_id, Date.now());
+    this.db.prepare("INSERT OR REPLACE INTO delivered (message_id, room_id, at) VALUES (?, ?, ?)").run(message_id, room_id, this.now());
   }
   deliveredRoom(message_id: number): string | null {
     const r = this.db.prepare("SELECT room_id FROM delivered WHERE message_id = ?").get(message_id) as any;

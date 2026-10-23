@@ -79,6 +79,7 @@ function connect(t: string, after?: string) {
   const got: any[] = []; ws.on("message", (d: any) => got.push(JSON.parse(String(d))));
   return new Promise<{ ws: WebSocket; got: any[] }>((res, rej) => { ws.on("open", () => res({ ws, got })); ws.on("error", rej); ws.on("unexpected-response", (_q: any, r: any) => rej(new Error(String(r.statusCode)))); });
 }
+const asMember = () => { daou.sessions.set("ck", { user_id: "5", name: "kim" }); for (const r of ["room:1", "room:2", "room:9"]) daou.roomMembers.set(r, ["5"]); };
 const tick = (ms = 50) => new Promise((r) => setTimeout(r, ms));
 
 describe("auth", () => {
@@ -277,39 +278,45 @@ describe("context server", () => {
     expect(s.status).toBe(404); expect((await s.json()).error.code).toBe("context_disabled");
   });
 
-  it("settings GET/PUT with a Bearer settings:write token, notices only on change", async () => {
+  it("settings: GET with Bearer, PUT only by a member session; notices on change with per-room cooldown", async () => {
     const store = new MemoryContextStore();
-    await setup({ context: { store } });
+    let clock = 1_000_000;
+    await setup({ context: { store }, now: () => clock });
+    asMember();
     const url = `${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`;
     const auth = { authorization: `Bearer ${SET}`, "content-type": "application/json" };
+    const human = { "x-daou-session": "ck", "content-type": "application/json" };
     let r = await fetch(url, { headers: auth });
+    const tokPut = await fetch(url, { method: "PUT", headers: auth, body: JSON.stringify({ autonomy: true }) });
+    expect(tokPut.status).toBe(403); expect((await tokPut.json()).error.code).toBe("human_session_required");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ room_id: "room:9", autonomy: false, enabled_by: null, enabled_at: null, updated_by: null, updated_at: null, can_edit: true });
 
-    r = await fetch(url, { method: "PUT", headers: auth, body: JSON.stringify({ autonomy: true }) });
+    r = await fetch(url, { method: "PUT", headers: human, body: JSON.stringify({ autonomy: true }) });
     const on = await r.json();
     expect(r.status).toBe(200);
     expect(on.notice_sent).toBe(true);
-    expect(on.settings).toMatchObject({ room_id: "room:9", autonomy: true, enabled_by: "set", updated_by: "set", can_edit: true });
+    expect(on.settings).toMatchObject({ room_id: "room:9", autonomy: true, enabled_by: "5", updated_by: "5", can_edit: true });
     expect(on.settings.enabled_at).toBeTruthy();
     expect(daou.sends).toEqual([{ room_id: "room:9", text: "유비온봇 자율활동이 켜졌습니다. 이 방의 대화를 기록하고, 대화가 끝나면 정리해 드립니다. (끄기: 방 설정 > 유비온봇 자율활동)" }]);
 
-    r = await fetch(url, { method: "PUT", headers: auth, body: JSON.stringify({ autonomy: true }) });
+    r = await fetch(url, { method: "PUT", headers: human, body: JSON.stringify({ autonomy: true }) });
     expect((await r.json()).notice_sent).toBe(false);
     expect(daou.sends).toHaveLength(1);
 
-    r = await fetch(url, { method: "PUT", headers: auth, body: JSON.stringify({ autonomy: false }) });
+    clock += 31_000;
+    r = await fetch(url, { method: "PUT", headers: human, body: JSON.stringify({ autonomy: false }) });
     const off = await r.json();
     expect(off.notice_sent).toBe(true);
-    expect(off.settings).toMatchObject({ room_id: "room:9", autonomy: false, enabled_by: "set", updated_by: "set" });
+    expect(off.settings).toMatchObject({ room_id: "room:9", autonomy: false, enabled_by: "5", updated_by: "5" });
     expect(daou.sends).toHaveLength(2);
     expect(daou.sends[1].text).toBe("유비온봇 자율활동이 꺼졌습니다. 이제 이 방의 대화를 기록하지 않습니다. (멘션하면 계속 답합니다)");
-    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "settings_update", room_id: "room:9", actor: "set", autonomy: true, status: "ok" }));
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "settings_update", room_id: "room:9", actor: "5", autonomy: true, status: "ok" }));
 
     const ctxGet = await fetch(url, { headers: { authorization: `Bearer ${CTX}` } });
     expect(ctxGet.status).toBe(200);
     const ctxPut = await fetch(url, { method: "PUT", headers: { authorization: `Bearer ${CTX}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }) });
-    expect(ctxPut.status).toBe(403); expect((await ctxPut.json()).error.code).toBe("forbidden_scope");
+    expect(ctxPut.status).toBe(403); expect((await ctxPut.json()).error.code).toBe("human_session_required");
     const restricted = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/settings`, { headers: { authorization: `Bearer ${SET_ROOM}` } });
     expect(restricted.status).toBe(403);
     const allowed = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:1")}/settings`, { headers: { authorization: `Bearer ${SET_ROOM}` } });
@@ -369,12 +376,13 @@ describe("context server", () => {
   it("stores context only while autonomy is on", async () => {
     const store = new MemoryContextStore();
     await setup({ context: { store } });
+    asMember();
     daou.msg("room:2", "before", { message_id: 1, ts: "2024-01-01T00:00:01.000Z" });
     await tick();
     expect(store.list("room:2")).toEqual([]);
 
     const r = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/settings`, {
-      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
+      method: "PUT", headers: { "x-daou-session": "ck", "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
     });
     expect(r.status).toBe(200);
     daou.msg("room:2", "after", { message_id: 2, ts: "2024-01-01T00:00:02.000Z" });
@@ -382,7 +390,7 @@ describe("context server", () => {
     expect(store.list("room:2").map((m) => m.text)).toEqual(["after"]);
 
     const off = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/settings`, {
-      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: false }),
+      method: "PUT", headers: { "x-daou-session": "ck", "content-type": "application/json" }, body: JSON.stringify({ autonomy: false }),
     });
     expect(off.status).toBe(200);
     daou.msg("room:2", "after-off", { message_id: 3, ts: "2024-01-01T00:00:03.000Z" });
@@ -393,8 +401,9 @@ describe("context server", () => {
   it("does not post autonomy notices when disabled by option", async () => {
     const store = new MemoryContextStore();
     await setup({ context: { store, autonomyNotices: false } });
+    asMember();
     const r = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`, {
-      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
+      method: "PUT", headers: { "x-daou-session": "ck", "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
     });
     expect((await r.json()).notice_sent).toBe(false);
     expect(daou.sends).toEqual([]);
@@ -403,9 +412,10 @@ describe("context server", () => {
   it("still returns 200 when the autonomy notice fails", async () => {
     const store = new MemoryContextStore();
     await setup({ context: { store }, logger: () => {} });
+    asMember();
     daou.failNext = true;
     const r = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`, {
-      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
+      method: "PUT", headers: { "x-daou-session": "ck", "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
     });
     expect(r.status).toBe(200);
     const body = await r.json();
@@ -724,7 +734,8 @@ describe("inbound attachments and downloads", () => {
     daou.binary.set("f51", { data: Buffer.from("b") });
     daou.msg("room:9", "b.txt", { message_id: 51, messageType: "SENDFILE" });
     await tick();
-    expect((await fileReq("/bot/files/51?room_id=room:9", FULL)).status).toBe(200);
+    expect((await fileReq("/bot/files/51?room_id=room:9", FULL)).status).toBe(404); // no context:read
+    expect((await fileReq("/bot/files/51?room_id=room:9", CTX)).status).toBe(200);
     expect((await fileReq("/bot/files/51?room_id=room:2", FULL)).status).toBe(404);
   });
   it("does not remember ids filtered out by mention-only", async () => {

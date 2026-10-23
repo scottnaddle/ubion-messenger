@@ -53,6 +53,7 @@ export class BotServer {
   private clients = new Set<{ ws: WebSocket; tok: TokenRecord }>();
   private sent = new Map<string, { at: number; body: unknown; status: number }>();
   private inflight = new Map<string, Promise<{ status: number; body: unknown }>>();
+  private noticeAt = new Map<string, number>();
   private sendRl: RateLimiter; private roomRl: RateLimiter; private fileRl: RateLimiter; private humanRl: RateLimiter;
   private roomNames = new Map<string, string>();
   private ph = new Map<string, { id: number; timer: NodeJS.Timeout }>();
@@ -150,7 +151,7 @@ export class BotServer {
       c.store.add({
         room_id: m.room_id, message_id: m.message_id,
         sender_id: m.sender?.id ?? "", sender_name: m.sender?.name ?? "",
-        ts: m.ts, text: m.text ?? "", attachments, is_mine: !!m.is_mine,
+        ts: Number.isFinite(Date.parse(m.ts)) ? new Date(Date.parse(m.ts)).toISOString() : new Date(this.now()).toISOString(), text: m.text ?? "", attachments, is_mine: !!m.is_mine,
       });
     } catch { /* context must never break the message path */ }
   }
@@ -315,7 +316,7 @@ export class BotServer {
         if (!hasScope(tok, "context:read")) return this.fail(s, E(403, "forbidden_scope", "context:read required"));
       } else if (!hasScope(tok, "rooms:read")) return this.fail(s, E(403, "forbidden_scope", "rooms:read required"));
       const rooms = (await this.o.port.listRooms())
-        .filter((r) => { this.roomNames.set(r.room_id, r.room_name); return all || this.o.allowlist.allows(r.room_id, tok); })
+        .filter((r) => { this.roomNames.set(r.room_id, r.room_name); return all ? (!tok.rooms || tok.rooms.includes(r.room_id)) : this.o.allowlist.allows(r.room_id, tok); })
         .map((r) => ({ room_id: r.room_id, room_name: r.room_name, kind: r.kind ?? "unknown", member_count: r.member_count ?? null, autonomy: this.isContextRoom(r.room_id) }));
       return this.json(s, 200, { rooms });
     }
@@ -367,8 +368,9 @@ export class BotServer {
       if (isGet) {
         if (!hasScope(tok, "context:read") && !hasScope(tok, "settings:write"))
           return this.fail(s, E(403, "forbidden_scope", "context:read or settings:write required"));
-      } else if (!hasScope(tok, "settings:write")) {
-        return this.fail(s, E(403, "forbidden_scope", "settings:write required"));
+      } else {
+        // Turning autonomy on/off is a human decision: PUT only via a verified member session (X-Daou-Session).
+        return this.fail(s, E(403, "human_session_required", "settings can only be changed by a room member session"));
       }
       if (tok.rooms && !tok.rooms.includes(room_id))
         return this.fail(s, E(403, "room_not_allowed", "token is not allowed for this room"));
@@ -381,7 +383,7 @@ export class BotServer {
       if (cookie.length > 4096 || /[\r\n]/.test(cookie))
         return this.fail(s, E(401, "invalid_session", "invalid session"));
       // throttle before the upstream coco call so random cookies cannot hammer it
-      const ipKey = `ip:${q.socket.remoteAddress ?? "?"}:${String(q.headers["x-forwarded-for"] ?? "").split(",")[0].trim()}`;
+      const ipKey = `ip:${q.socket.remoteAddress ?? "?"}`;
       const irl = this.humanRl.take(ipKey);
       if (!irl.ok) {
         const retry = Math.ceil(irl.retryAfterMs / 1000);
@@ -415,7 +417,9 @@ export class BotServer {
     if (changed) {
       this.audit.log({ action: "settings_update", ...(token_id ? { token_id } : {}), actor, room_id, autonomy: b.autonomy, status: "ok" });
       const notices = this.o.autonomyNotices ?? this.ctx?.autonomyNotices ?? true;
-      if (notices) {
+      const last = this.noticeAt.get(room_id) ?? 0;
+      if (notices && this.now() - last >= 30_000) {
+        this.noticeAt.set(room_id, this.now());
         try { await this.o.port.sendText(room_id, b.autonomy ? AUTONOMY_ON_NOTICE : AUTONOMY_OFF_NOTICE); notice_sent = true; }
         catch (e: any) { this.logf(`autonomy notice failed room=${room_id} err=${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 120)}`); }
       }
@@ -500,7 +504,7 @@ export class BotServer {
         this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
         return this.fail(s, E(403, "room_not_allowed", "room is not allowlisted"));
       }
-    } else if (queryRoom && this.ctx && this.isContextRoom(queryRoom) && this.ctx.store.hasMessage(queryRoom, message_id)) {
+    } else if (queryRoom && hasScope(tok, "context:read") && this.ctx && this.isContextRoom(queryRoom) && this.ctx.store.hasMessage(queryRoom, message_id)) {
       room_id = queryRoom;
       if (tok.rooms && !tok.rooms.includes(room_id)) {
         this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
