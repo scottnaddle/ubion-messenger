@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type LockStatus } from "../api";
 import { Icon } from "./ui";
+import { PubsubModal } from "./PubsubModal";
+import type { ToastFn } from "../App";
 import type { BoardPost, MenuEntry, PortalBadge } from "../../electron/core/portal";
 
 /** appName → icon (lucide-style set in ui.tsx). Custom links get car/link by name/target. */
@@ -26,14 +28,15 @@ export function menuBadge(m: MenuEntry, badge: PortalBadge, boardNew: number): n
 }
 
 type LocalView = "home" | "chats" | "people" | "mail" | "approval";
-type Props = { badge: PortalBadge; unreadChats: number; onLocal: (v: LocalView) => void };
+type Props = { badge: PortalBadge; unreadChats: number; onLocal: (v: LocalView) => void; toast?: ToastFn };
 
-export function Menu({ badge, unreadChats, onLocal }: Props) {
+export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
   const [items, setItems] = useState<MenuEntry[] | null>(null);
   const [source, setSource] = useState<"server" | "static">("server");
   const [boardNew, setBoardNew] = useState(0);
   const [lock, setLock] = useState<LockStatus | null>(null);
   const [err, setErr] = useState("");
+  const [pubsubOpen, setPubsubOpen] = useState(false);
 
   const load = (force = false) =>
     api().portal.menu(force).then((r) => { setItems(r.items); setSource(r.source); }).catch(() => setErr("메뉴를 불러오지 못했습니다"));
@@ -99,6 +102,10 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
             <span className="menu-ic"><Icon name="lock" size={22} /></span>
             <span className="menu-name">메신저 잠금</span>
           </button>
+          <button className="menu-item" title="공지톡 — 여러 사람에게 공지 보내기 / 보낸 공지톡" onClick={() => setPubsubOpen(true)}>
+            <span className="menu-ic"><Icon name="bell" size={22} /></span>
+            <span className="menu-name">공지톡</span>
+          </button>
         </div>
       </section>
       <section className="menu-group">
@@ -115,6 +122,7 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
           </button>
         </div>
       </section>
+      {pubsubOpen && <PubsubModal toast={toast ?? ((t) => setErr(t))} onClose={() => setPubsubOpen(false)} />}
     </div>
   );
 }

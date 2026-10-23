@@ -33,6 +33,14 @@ const api = {
     remove: (key: string, backupId: number) => call<{ ok: true }>("backup:delete", key, backupId),
     clearHistory: (key: string, messageId: number, confirmed: boolean) => call<{ ok: true }>("history:clear", key, messageId, confirmed),
   },
+  pubsub: {
+    caps: () => call<import("./core/pubsub").PubsubCaps>("pubsub:caps"),
+    list: (page = 0) => call<import("./core/pubsub").PubsubPage>("pubsub:list", page),
+    detail: (id: number) => call<import("./core/pubsub").PubsubDetail>("pubsub:detail", id),
+    send: (message: string, targets: import("./core/pubsub").PubsubTarget[]) =>
+      call<{ ok: true; count: number }>("pubsub:send", { message, targets, range: "partial" }),
+    remove: (id: number) => call<{ ok: true }>("pubsub:delete", id),
+  },
   listFavorites: () => call<import("./core/types").Person[]>("favorites:list"),
   addFavorite: (id: number) => call<{ ok: true }>("favorites:add", id),
   removeFavorite: (id: number) => call<{ ok: true }>("favorites:remove", id),

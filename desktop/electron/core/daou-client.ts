@@ -8,6 +8,10 @@ import { favoriteBody, favoritePath, parseFavorites } from "./favorites";
 import { FORWARD_METHOD, forwardMembersPath, forwardRoomPath, normalizeForwardCryptIds } from "./forward";
 import { parseNotice, roomNoticePath, ROOM_NOTICE_METHOD } from "./room-notice";
 import {
+  buildCircleBody, parsePubsubDetail, parsePubsubList, pubsubDeletePath, pubsubDetailPath, pubsubListPath,
+  pubsubSendEnabled, pubsubSendPath, PUBSUB_SEND_DISABLED_TEXT, type PubsubDetail, type PubsubPage,
+} from "./pubsub";
+import {
   backupBodyError, backupDeletePath, backupDownloadPath, backupListPath, backupRequestPath, buildBackupRequest,
   HISTORY_CLEAR_METHOD, historyClearPath, parseBackupList, type BackupItem,
 } from "./backup";
@@ -462,6 +466,41 @@ export class DaouClient {
     if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `${label} (HTTP ${res.status})`);
     const err = backupBodyError(res.text);
     if (err) throw new HttpError(err.status, String(err.message ?? `${label} (code ${err.status})`));
+  }
+
+  // ---------- 공지톡 (pubsub circle) ----------
+  async listPubsubs(page = 0): Promise<PubsubPage> {
+    const uid = this.requireUser().id;
+    return parsePubsubList(await this.getJson(pubsubListPath(page, uid)), page);
+  }
+
+  async getPubsub(id: number): Promise<PubsubDetail> {
+    const uid = this.requireUser().id;
+    const detail = parsePubsubDetail(await this.getJson(pubsubDetailPath(id, uid)));
+    if (!detail) throw new Error("공지톡을 찾을 수 없습니다");
+    return detail;
+  }
+
+  /**
+   * ⚠ MUTATES server state, notifies every target: POST /api/chat/pubsubs/circle?userSeq=, JSON (UNVERIFIED shape).
+   * Refuses unless UBM_PUBSUB_SEND=1; buildCircleBody refuses range "all". Callers must also run checkPubsubSend.
+   */
+  async sendPubsub(message: string, targets: unknown, range = "partial"): Promise<{ ok: true; count: number }> {
+    if (!pubsubSendEnabled(process.env)) throw new Error(PUBSUB_SEND_DISABLED_TEXT);
+    const uid = this.requireUser().id;
+    const body = buildCircleBody({ message, targets, me: uid, range });
+    const res = await this.request(pubsubSendPath(uid), { method: "POST", json: body });
+    this.checkBackupRes(res, "공지톡 발송 실패");
+    return { ok: true, count: body.nodes.length };
+  }
+
+  /** ⚠ MUTATES server state: DELETE /api/chat/pubsubs/circle/{id}?userSeq=. Gated like sendPubsub. */
+  async deletePubsub(id: number): Promise<{ ok: true }> {
+    if (!pubsubSendEnabled(process.env)) throw new Error(PUBSUB_SEND_DISABLED_TEXT);
+    const uid = this.requireUser().id;
+    const res = await this.request(pubsubDeletePath(id, uid), { method: "DELETE" });
+    this.checkBackupRes(res, "공지톡 삭제 실패");
+    return { ok: true };
   }
 
   // ---------- favorites ----------

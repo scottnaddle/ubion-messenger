@@ -2,6 +2,7 @@
 import type { Bridge } from "./api";
 import { captureFileName } from "../electron/core/capture";
 import { isLocalInAppExtension } from "../electron/core/doc-preview";
+import { buildCircleBody, PUBSUB_PAGE_SIZE, PUBSUB_SEND_DISABLED_TEXT, type PubsubDetail } from "../electron/core/pubsub";
 
 export function installMockIfNeeded() {
   if ((window as any).ubion) return;
@@ -44,6 +45,11 @@ export function installMockIfNeeded() {
   const mockDeleted: string[] = [];
   const mockBotAutonomy: Record<string, boolean> = {};
   const mockBackups: import("../electron/core/backup").BackupItem[] = [];
+  const mockPubsubSend = new URLSearchParams(location.search).has("pubsubSend");
+  const mockPubsubs: PubsubDetail[] = [
+    { id: 9001, message: "11월 전사 워크숍 일정 안내드립니다.", createdAt: new Date(Date.now() - 864e5).toISOString(), companyTarget: false,
+      confirmCount: 1, recipientCount: 2, nodes: [{ nodeId: 2, nodeType: "user", nodeValue: "김하늘" }, { nodeId: 3, nodeType: "user", nodeValue: "이서준" }] },
+  ];
   const handlers: Record<string, (...a: any[]) => any> = {
     "bot:roomSettings:get": (key: string) => ({ ok: true, settings: { roomId: key, autonomy: !!mockBotAutonomy[key] } }),
     "bot:roomSettings:set": (key: string, autonomy: boolean) => {
@@ -160,6 +166,31 @@ export function installMockIfNeeded() {
         return { ok: true as const };
       },
       clearHistory: async () => ({ ok: true as const }),
+    },
+    pubsub: {
+      caps: async () => ({ send: mockPubsubSend, delete: mockPubsubSend, selfOnly: false, reason: mockPubsubSend ? undefined : PUBSUB_SEND_DISABLED_TEXT }),
+      list: async (page = 0) => ({
+        items: mockPubsubs.slice(page * PUBSUB_PAGE_SIZE, (page + 1) * PUBSUB_PAGE_SIZE).map(({ nodes: _n, userImage: _u, ...i }) => i),
+        total: mockPubsubs.length, page, hasMore: (page + 1) * PUBSUB_PAGE_SIZE < mockPubsubs.length,
+      }),
+      detail: async (id: number) => {
+        const d = mockPubsubs.find((p) => p.id === id);
+        if (!d) throw new Error("공지톡을 찾을 수 없습니다");
+        return { ...d };
+      },
+      send: async (message: string, targets) => {
+        if (!mockPubsubSend) throw new Error(PUBSUB_SEND_DISABLED_TEXT);
+        const body = buildCircleBody({ message, targets, me: me.id });
+        mockPubsubs.unshift({ id: Date.now(), message: body.message, createdAt: new Date().toISOString(), companyTarget: false,
+          confirmCount: 0, recipientCount: body.nodes.length, nodes: body.nodes });
+        return { ok: true as const, count: body.nodes.length };
+      },
+      remove: async (id: number) => {
+        if (!mockPubsubSend) throw new Error(PUBSUB_SEND_DISABLED_TEXT);
+        const i = mockPubsubs.findIndex((p) => p.id === id);
+        if (i >= 0) mockPubsubs.splice(i, 1);
+        return { ok: true as const };
+      },
     },
     listFavorites: async () => users.slice(0, 2),
     addFavorite: async () => ({ ok: true as const }),

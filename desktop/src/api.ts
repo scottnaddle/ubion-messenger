@@ -8,6 +8,7 @@ import type { BotSettingsResult } from "../electron/core/bot-settings";
 import type { BackupFileType, BackupItem } from "../electron/core/backup";
 import type { CaptureResult } from "../electron/core/capture";
 import type { PreviewMode } from "../electron/core/doc-preview";
+import type { PubsubCaps, PubsubDetail, PubsubPage, PubsubTarget } from "../electron/core/pubsub";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
 
 export type LockStatus = { enabled: boolean; locked: boolean; timeoutMin: number };
@@ -55,6 +56,14 @@ export type Bridge = {
     download(key: string, backupId: number, mode?: "downloads" | "saveAs" | "open"): Promise<string | null>;
     remove(key: string, backupId: number): Promise<{ ok: true }>;
     clearHistory(key: string, messageId: number, confirmed: boolean): Promise<{ ok: true }>;
+  };
+  /** 공지톡: list/detail read-only; send/remove refused by main unless UBM_PUBSUB_SEND=1 (+ self-only guard). */
+  pubsub: {
+    caps(): Promise<PubsubCaps>;
+    list(page?: number): Promise<PubsubPage>;
+    detail(id: number): Promise<PubsubDetail>;
+    send(message: string, targets: PubsubTarget[]): Promise<{ ok: true; count: number }>;
+    remove(id: number): Promise<{ ok: true }>;
   };
   listFavorites(): Promise<Person[]>;
   addFavorite(id: number): Promise<{ ok: true }>;

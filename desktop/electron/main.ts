@@ -36,6 +36,7 @@ import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal
 import { shouldNotify } from "./core/room-push";
 import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { backupFileName, historyClearEnabled, normalizeBackupFileType } from "./core/backup";
+import { checkPubsubDelete, checkPubsubSend, pubsubCaps, pubsubSendEnabled, PUBSUB_SEND_DISABLED_TEXT } from "./core/pubsub";
 import { maskSecrets } from "./core/mask";
 import { buildPreviewUrl, docViewerServerEnabled, docViewerTemplate, planPreview, previewTempName, type PreviewMode } from "./core/doc-preview";
 import {
@@ -1022,6 +1023,28 @@ function registerIpc() {
     if (r.dir !== settings.lastSaveDir) { settings = { ...settings, lastSaveDir: r.dir }; saveSettings(settings); }
     if (mode === "open") await shell.openPath(r.target);
     return r.target;
+  });
+  // 공지톡. List/detail are read-only; send/delete need UBM_PUBSUB_SEND=1 and pass the self-only guard.
+  const PUBSUB_SEND_ENABLED = pubsubSendEnabled(process.env);
+  handle("pubsub:caps", () => pubsubCaps(process.env));
+  handle("pubsub:list", (page?: number) => logged("pubsub list", core.client.listPubsubs(Number(page) || 0)));
+  handle("pubsub:detail", (id: number) => logged("pubsub detail", core.client.getPubsub(id)));
+  handle("pubsub:send", (input: { message?: unknown; targets?: unknown; range?: string } = {}) => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const targets = checkPubsubSend({
+      enabled: PUBSUB_SEND_ENABLED, selfOnly: process.env.UBM_SELF_ONLY === "1", range: input?.range, targets: input?.targets, me,
+    });
+    return logged("pubsub send", core.client.sendPubsub(String(input?.message ?? ""), targets, input?.range));
+  });
+  handle("pubsub:delete", async (id: number) => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const selfOnly = process.env.UBM_SELF_ONLY === "1";
+    if (!PUBSUB_SEND_ENABLED) throw new Error(PUBSUB_SEND_DISABLED_TEXT);
+    const detail = selfOnly ? await logged("pubsub detail", core.client.getPubsub(id)) : null;
+    checkPubsubDelete({ enabled: PUBSUB_SEND_ENABLED, selfOnly, detail, me });
+    return logged("pubsub delete", core.client.deletePubsub(id));
   });
   handle("history:clear", async (key: string, messageId: number, confirmed: unknown) => {
     if (!HISTORY_CLEAR_ENABLED) throw new Error("대화 기록 삭제는 아직 지원되지 않습니다");
