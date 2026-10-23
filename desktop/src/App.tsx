@@ -13,6 +13,7 @@ import { RailButton, RailProfile } from "./components/RailTooltip";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./components/Home";
 import { Menu } from "./components/Menu";
+import { SavedMessages } from "./components/SavedMessages";
 import { Mail } from "./components/Mail";
 import { Approval } from "./components/Approval";
 import { LockScreen } from "./components/LockScreen";
@@ -47,6 +48,7 @@ export function App() {
   const [botStatuses, setBotStatuses] = useState<BotStatusMap>({});
   const [view, setView] = useState<NavView | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
+  const [savedOpen, setSavedOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState<{ keyword: string } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -418,7 +420,7 @@ export function App() {
               {view === "home" ? (
                 <Home onLocal={setView} />
               ) : view === "menu" ? (
-                <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} toast={toast} />
+                <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} toast={toast} onOpenSaved={() => setSavedOpen(true)} />
               ) : view === "chats" ? (
                 <Sidebar
                   rooms={rooms}
@@ -494,6 +496,16 @@ export function App() {
         <CommandPalette items={paletteItems} onPick={pickPalette} onClose={() => setPaletteOpen(false)} />
       )}
       {showShortcuts && <ShortcutsHelp onClose={() => setShowShortcuts(false)} />}
+      {savedOpen && user && (
+        <SavedMessages
+          toast={toast}
+          onOpenRoom={(k) => {
+            setView("chats");
+            setActiveKey(k);
+          }}
+          onClose={() => setSavedOpen(false)}
+        />
+      )}
       <Toasts toasts={toasts} />
       {lockScreen}
     </div>

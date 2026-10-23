@@ -65,6 +65,16 @@ const api = {
   listFavorites: () => call<import("./core/types").Person[]>("favorites:list"),
   addFavorite: (id: number) => call<{ ok: true }>("favorites:add", id),
   removeFavorite: (id: number) => call<{ ok: true }>("favorites:remove", id),
+  saved: {
+    list: () => call<import("./core/saved").SavedMessage[]>("saved:list"),
+    add: (input: import("./core/saved").SavedInput) => call<import("./core/saved").SavedMessage>("saved:add", input),
+    remove: (id: string) => call<{ ok: true }>("saved:remove", id),
+  },
+  reminders: {
+    list: () => call<import("./core/reminders").Reminder[]>("reminder:list"),
+    add: (input: import("./core/reminders").ReminderInput) => call<import("./core/reminders").Reminder>("reminder:add", input),
+    remove: (id: string) => call<{ ok: true }>("reminder:remove", id),
+  },
   openChatBot: (brandName?: string) => call<void>("app:openChatBot", brandName),
   onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
   onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),

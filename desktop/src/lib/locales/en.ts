@@ -491,6 +491,21 @@ const dict: Record<string, string> = {
   "캐시 삭제": "Clear cache",
   "전체 대화 검색 (⌘/Ctrl+Shift+F)": "Search all chats (⌘/Ctrl+Shift+F)",
   "전체 대화에서 \"{q}\" 검색": "Search \"{q}\" in all chats",
+  "나중에 알림": "Remind me later",
+  "저장한 메시지": "Saved Messages",
+  "저장한 메시지 · 나중에 알림": "Saved Messages · Reminders",
+  "저장한 메시지가 없습니다": "No saved messages",
+  "메시지를 저장했습니다": "Message saved",
+  "메시지를 저장하지 못했습니다: {error}": "Couldn't save message: {error}",
+  "알림이 설정되었습니다": "Reminder set",
+  "알림을 설정하지 못했습니다: {error}": "Couldn't set reminder: {error}",
+  "알림을 삭제했습니다": "Reminder removed",
+  "저장한 메시지를 삭제했습니다": "Saved message removed",
+  "20분": "20 min",
+  "1시간": "1 hour",
+  "3시간": "3 hours",
+  "내일 오전 9시": "Tomorrow 9 AM",
+  "사용자 지정": "Custom",
 };
 
 export default dict;

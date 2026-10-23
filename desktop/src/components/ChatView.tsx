@@ -21,6 +21,7 @@ import {
 } from "../../electron/core/room-notice";
 import type { NoticeStatus } from "../../electron/core/types";
 import type { ZoomCaps } from "../../electron/core/zoom";
+import { REMINDER_PRESETS, type ReminderPreset } from "../../electron/core/reminders";
 import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
@@ -82,6 +83,7 @@ export function ChatView({
   const [uploading, setUploading] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
   const [confirmNotice, setConfirmNotice] = useState<ChatMessage | null>(null);
+  const [remindTarget, setRemindTarget] = useState<ChatMessage | null>(null);
   const [noticeStatus, setNoticeStatus] = useState<NoticeStatus>("normal");
   const [roomMenu, setRoomMenu] = useState<{ x: number; y: number } | null>(null);
   const [backupOpen, setBackupOpen] = useState(false);
@@ -319,6 +321,29 @@ export function ChatView({
   const requestNotice = (m: ChatMessage) => {
     if (m.messageId == null || isDeletedMessage(m) || m.pending || m.failed) return;
     setConfirmNotice(m);
+  };
+  const saveMessage = async (m: ChatMessage) => {
+    try {
+      await api().saved.add({
+        roomKey: room.key, roomName: room.name, messageId: m.messageId, message: m.message,
+        sendUserName: m.sendUserName, createdAt: m.createdAt,
+      });
+      toast(t("메시지를 저장했습니다"), "info");
+    } catch (e) {
+      toast(t("메시지를 저장하지 못했습니다: {error}", { error: (e as Error).message }));
+    }
+  };
+  const setReminder = async (m: ChatMessage, preset: ReminderPreset, customAt?: number) => {
+    setRemindTarget(null);
+    try {
+      await api().reminders.add({
+        roomKey: room.key, roomName: room.name, messageId: m.messageId, message: m.message,
+        sendUserName: m.sendUserName, createdAt: m.createdAt, preset, customAt,
+      });
+      toast(t("알림이 설정되었습니다"), "info");
+    } catch (e) {
+      toast(t("알림을 설정하지 못했습니다: {error}", { error: (e as Error).message }));
+    }
   };
   const doRegisterNotice = async () => {
     const target = confirmNotice;
@@ -624,6 +649,8 @@ export function ChatView({
                     onImage={() => setViewer(m)} onRetry={() => retry(m)} toast={toast}
                     onDelete={deletable && canDeleteMessage(m, me.id) ? () => requestDelete(m) : undefined}
                     onNotice={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestNotice(m) : undefined}
+                    onSave={!isDeletedMessage(m) && !m.pending && !m.failed ? () => void saveMessage(m) : undefined}
+                    onRemind={!isDeletedMessage(m) && !m.pending && !m.failed ? () => setRemindTarget(m) : undefined}
                   />
                 </Fragment>
               );
@@ -738,6 +765,9 @@ export function ChatView({
           </div>
         </div>
       )}
+      {remindTarget && (
+        <ReminderModal m={remindTarget} onPick={(p, c) => void setReminder(remindTarget, p, c)} onClose={() => setRemindTarget(null)} />
+      )}
     </section>
   );
 }
@@ -838,8 +868,8 @@ function RoomMenu({
 }
 
 function MessageMenu({
-  x, y, onDelete, onNotice, onClose,
-}: { x: number; y: number; onDelete?: () => void; onNotice?: () => void; onClose: () => void }) {
+  x, y, onDelete, onNotice, onSave, onRemind, onClose,
+}: { x: number; y: number; onDelete?: () => void; onNotice?: () => void; onSave?: () => void; onRemind?: () => void; onClose: () => void }) {
   const t = useT();
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
@@ -848,24 +878,74 @@ function MessageMenu({
   }, [onClose]);
   return (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      {onSave && <button role="menuitem" onClick={() => { onClose(); onSave(); }}><Icon name="star" size={14} /> {t("저장")}</button>}
+      {onRemind && <button role="menuitem" onClick={() => { onClose(); onRemind(); }}><Icon name="clock" size={14} /> {t("나중에 알림")}</button>}
       {onNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> {t("공지로 등록")}</button>}
       {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> {t("삭제")}</button>}
     </div>
   );
 }
 
+function ReminderModal({ m, onPick, onClose }: {
+  m: ChatMessage; onPick: (preset: ReminderPreset, customAt?: number) => void; onClose: () => void;
+}) {
+  const t = useT();
+  const [showCustom, setShowCustom] = useState(false);
+  const [custom, setCustom] = useState("");
+  const now = new Date();
+  const minLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const submitCustom = () => {
+    if (!custom) return;
+    const at = new Date(custom).getTime();
+    if (Number.isNaN(at)) return;
+    onPick("custom", at);
+  };
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-body">
+          <p className="muted small">{t("나중에 알림")}</p>
+          <p className="reminder-snippet">{m.message || t("(내용 없음)")}</p>
+          {!showCustom ? (
+            <div className="reminder-presets">
+              {REMINDER_PRESETS.filter((p) => p.id !== "custom").map((p) => (
+                <button key={p.id} className="primary" onClick={() => onPick(p.id)}>{t(p.label)}</button>
+              ))}
+              <button className="link" onClick={() => setShowCustom(true)}>{t("사용자 지정")}</button>
+            </div>
+          ) : (
+            <div className="reminder-custom">
+              <input
+                type="datetime-local"
+                min={minLocal(now)}
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+              />
+              <div className="approval-modal-actions">
+                <button className="link" onClick={() => setShowCustom(false)}>{t("취소")}</button>
+                <button className="primary" disabled={!custom} onClick={submitCustom}>{t("설정")}</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MessageRow({
-  m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice,
+  m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
+  onSave?: () => void; onRemind?: () => void;
 }) {
   const t = useT();
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const openMenu = (e: React.MouseEvent) => {
-    if ((!onDelete && !onNotice) || deleted) return;
+    if ((!onDelete && !onNotice && !onSave && !onRemind) || deleted) return;
     e.preventDefault();
     setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 110) });
   };
@@ -874,8 +954,8 @@ function MessageRow({
     : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || t("삭제된 파일"), expired: true } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
-      {menu && (onDelete || onNotice) && (
-        <MessageMenu x={menu.x} y={menu.y} onDelete={onDelete} onNotice={onNotice} onClose={() => setMenu(null)} />
+      {menu && (onDelete || onNotice || onSave || onRemind) && (
+        <MessageMenu x={menu.x} y={menu.y} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
       )}
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
       <div className="msg-main">

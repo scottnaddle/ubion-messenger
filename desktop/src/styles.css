@@ -612,6 +612,12 @@ input, textarea, select { font: inherit; color: inherit; }
 .pubsub-message { white-space: pre-wrap; word-break: break-word; margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--bg3); max-height: 240px; overflow-y: auto; }
 .pubsub-detail .link { padding: 0; }
 
+/* 나중에 알림 / 저장한 메시지 */
+.reminder-snippet { white-space: pre-wrap; word-break: break-word; padding: 10px 12px; border-radius: 8px; background: var(--bg3); max-height: 120px; overflow-y: auto; }
+.reminder-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+.reminder-custom { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.reminder-custom input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; }
+
 /* 통합 검색 */
 .gsearch-modal { width: 600px; height: 80vh; }
 .gsearch-modal .search-box { margin: 0 12px 8px; }

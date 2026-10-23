@@ -29,9 +29,9 @@ export function menuBadge(m: MenuEntry, badge: PortalBadge, boardNew: number): n
 }
 
 type LocalView = "home" | "chats" | "people" | "mail" | "approval";
-type Props = { badge: PortalBadge; unreadChats: number; onLocal: (v: LocalView) => void; toast?: ToastFn };
+type Props = { badge: PortalBadge; unreadChats: number; onLocal: (v: LocalView) => void; toast?: ToastFn; onOpenSaved?: () => void };
 
-export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
+export function Menu({ badge, unreadChats, onLocal, toast, onOpenSaved }: Props) {
   const t = useT();
   const [items, setItems] = useState<MenuEntry[] | null>(null);
   const [source, setSource] = useState<"server" | "static">("server");
@@ -108,6 +108,12 @@ export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
             <span className="menu-ic"><Icon name="bell" size={22} /></span>
             <span className="menu-name">{t("공지톡")}</span>
           </button>
+          {onOpenSaved && (
+            <button className="menu-item" title={t("저장한 메시지 · 나중에 알림")} onClick={onOpenSaved}>
+              <span className="menu-ic"><Icon name="star" size={22} /></span>
+              <span className="menu-name">{t("저장한 메시지")}</span>
+            </button>
+          )}
         </div>
       </section>
       <section className="menu-group">

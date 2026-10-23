@@ -257,6 +257,21 @@ export function installMockIfNeeded() {
     listFavorites: async () => users.slice(0, 2),
     addFavorite: async () => ({ ok: true as const }),
     removeFavorite: async () => ({ ok: true as const }),
+    saved: {
+      list: async () => [] as import("../electron/core/saved").SavedMessage[],
+      add: async (input: import("../electron/core/saved").SavedInput) => ({
+        ...input, id: `s${Date.now().toString(36)}`, savedAt: Date.now(),
+      }),
+      remove: async () => ({ ok: true as const }),
+    },
+    reminders: {
+      list: async () => [] as import("../electron/core/reminders").Reminder[],
+      add: async (input: import("../electron/core/reminders").ReminderInput) => {
+        const due = input.preset === "custom" && input.customAt ? input.customAt : Date.now() + 60_000;
+        return { ...input, id: `r${Date.now().toString(36)}`, dueAt: due, created: Date.now() } as import("../electron/core/reminders").Reminder;
+      },
+      remove: async () => ({ ok: true as const }),
+    },
     openChatBot: async () => undefined,
     onEvent: () => () => undefined,
     onOpenRoom: (cb) => {

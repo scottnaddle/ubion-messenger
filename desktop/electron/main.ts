@@ -42,6 +42,8 @@ import {
   createRateLimiter, DEFAULT_CONCURRENCY, DEFAULT_MIN_INTERVAL_MS, globalSearchCaps, runGlobalSearch,
 } from "./core/global-search";
 import { SearchCacheStore } from "./core/search-cache";
+import { normalizeSavedInput, SavedStore } from "./core/saved";
+import { dueReminders, nextDueAt, normalizeReminderInput, ReminderStore, type Reminder } from "./core/reminders";
 import { normalizeGlobalQuery } from "../src/lib/global-search";
 import {
   activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
@@ -116,6 +118,53 @@ const indexMessages = (key: string, list: ChatMessage[]) => {
     console.warn("search index failed:", maskSecrets(String((e as Error)?.message ?? e)));
   }
 };
+// 저장한 메시지 / 나중에 알림: client-local JSON under <userData>/saved|reminders/<userSeq>.json.
+let savedStore: SavedStore | null = null;
+const saved = () => {
+  if (!savedStore) savedStore = new SavedStore(path.join(app.getPath("userData"), "saved"), fs, { join: path.join });
+  return savedStore;
+};
+let reminderStore: ReminderStore | null = null;
+const reminders = () => {
+  if (!reminderStore) reminderStore = new ReminderStore(path.join(app.getPath("userData"), "reminders"), fs, { join: path.join });
+  return reminderStore;
+};
+let reminderTimer: ReturnType<typeof setTimeout> | null = null;
+function fireReminder(r: Reminder) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({
+    title: `나중에 알림${r.roomName ? ` · ${r.roomName}` : ""}`,
+    body: r.message ? r.message.slice(0, 140) : "알림 시간이 되었습니다",
+    silent: !settings.notificationSound,
+  });
+  n.on("click", () => {
+    showWindow();
+    send("nav:openRoom", r.roomKey);
+  });
+  n.show();
+}
+/** Fire past-due reminders (missed while closed), then arm a timer for the next one. */
+function scheduleReminderTimer() {
+  if (reminderTimer) {
+    clearTimeout(reminderTimer);
+    reminderTimer = null;
+  }
+  const store = reminders();
+  store.for(core.user?.id);
+  const list = store.list();
+  const now = Date.now();
+  for (const r of dueReminders(list, now)) {
+    fireReminder(r);
+    store.remove(r.id);
+  }
+  const next = nextDueAt(list, now);
+  if (next == null) return;
+  reminderTimer = setTimeout(() => {
+    reminderTimer = null;
+    scheduleReminderTimer();
+  }, Math.max(1000, next - now));
+  (reminderTimer as any)?.unref?.();
+}
 let locked = false;
 const lockState = createLockState({ now: () => Date.now() });
 const updater = new Updater(() => win);
@@ -219,6 +268,12 @@ function wireCore() {
     core.on("zoomToken", (t) => { if (zoomEnabled(process.env) && zoomTokenWaiters.size) setZoomToken(t.accessToken); }),
     core.on("loggedOut", () => resetZoom()),
     core.on("rooms", () => updateBadge()),
+    core.on("ready", () => scheduleReminderTimer()),
+    core.on("loggedOut", () => {
+      if (reminderTimer) { clearTimeout(reminderTimer); reminderTimer = null; }
+      reminderStore?.for(null);
+      savedStore?.for(null);
+    }),
     core.on("message", (m) => {
       indexMessages(m.roomKey, [m]);
       if (m.attachUpdate) return; // attach fill-in of an already-delivered file message (renderer upserts it)
@@ -1483,6 +1538,32 @@ function registerIpc() {
   handle("favorites:list", () => core.client.listFavorites());
   handle("favorites:add", (id: unknown) => core.client.addFavorite(id));
   handle("favorites:remove", (id: unknown) => core.client.removeFavorite(id));
+  // 저장한 메시지 / 나중에 알림: client-local only (JSON in userData), no server calls.
+  handle("saved:list", () => saved().for(core.user?.id).slice());
+  handle("saved:add", (input: unknown) => {
+    saved().for(core.user?.id);
+    return saved().add(normalizeSavedInput(input));
+  });
+  handle("saved:remove", (id: unknown) => {
+    if (typeof id !== "string" || !id) throw new Error("잘못된 요청입니다");
+    saved().for(core.user?.id);
+    saved().remove(id);
+    return { ok: true as const };
+  });
+  handle("reminder:list", () => reminders().for(core.user?.id).slice());
+  handle("reminder:add", (input: unknown) => {
+    reminders().for(core.user?.id);
+    const item = reminders().add(normalizeReminderInput(input, Date.now()));
+    scheduleReminderTimer();
+    return item;
+  });
+  handle("reminder:remove", (id: unknown) => {
+    if (typeof id !== "string" || !id) throw new Error("잘못된 요청입니다");
+    reminders().for(core.user?.id);
+    reminders().remove(id);
+    scheduleReminderTimer();
+    return { ok: true as const };
+  });
   handle("app:badgeOverlay", (dataUrl: string | null) => {
     if (process.platform !== "win32" || !win) return;
     win.setOverlayIcon(dataUrl ? nativeImage.createFromDataURL(dataUrl) : null, dataUrl ? "읽지 않은 메시지" : "");
@@ -1576,6 +1657,8 @@ app.on("before-quit", () => {
   awayMonitor?.stop();
   core.shutdown();
   searchCache?.flush();
+  savedStore?.flush();
+  reminderStore?.flush();
   clearPreviewTemp();
 });
 app.on("window-all-closed", () => {

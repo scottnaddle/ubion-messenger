@@ -10,6 +10,8 @@ import type { CaptureResult } from "../electron/core/capture";
 import type { PreviewMode } from "../electron/core/doc-preview";
 import type { CustomTheme, ThemePresetId, ThemeState } from "../electron/core/theme";
 import type { PubsubCaps, PubsubDetail, PubsubPage, PubsubTarget } from "../electron/core/pubsub";
+import type { SavedInput, SavedMessage } from "../electron/core/saved";
+import type { Reminder, ReminderInput } from "../electron/core/reminders";
 import type { Language } from "./lib/i18n-core";
 import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
@@ -98,6 +100,18 @@ export type Bridge = {
   listFavorites(): Promise<Person[]>;
   addFavorite(id: number): Promise<{ ok: true }>;
   removeFavorite(id: number): Promise<{ ok: true }>;
+  /** 저장한 메시지: client-local only (JSON in userData), no server calls. */
+  saved: {
+    list(): Promise<SavedMessage[]>;
+    add(input: SavedInput): Promise<SavedMessage>;
+    remove(id: string): Promise<{ ok: true }>;
+  };
+  /** 나중에 알림: client-local reminders; main fires a desktop notification when due. */
+  reminders: {
+    list(): Promise<Reminder[]>;
+    add(input: ReminderInput): Promise<Reminder>;
+    remove(id: string): Promise<{ ok: true }>;
+  };
   openChatBot(brandName?: string): Promise<void>;
   onEvent(cb: (e: { type: string; payload: any }) => void): () => void;
   onOpenRoom(cb: (key: string) => void): () => void;

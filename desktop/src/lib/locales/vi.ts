@@ -491,6 +491,21 @@ const dict: Record<string, string> = {
   "캐시 삭제": "Xóa bộ nhớ đệm",
   "전체 대화 검색 (⌘/Ctrl+Shift+F)": "Tìm trong tất cả trò chuyện (⌘/Ctrl+Shift+F)",
   "전체 대화에서 \"{q}\" 검색": "Tìm \"{q}\" trong tất cả trò chuyện",
+  "나중에 알림": "Nhắc sau",
+  "저장한 메시지": "Tin nhắn đã lưu",
+  "저장한 메시지 · 나중에 알림": "Tin nhắn đã lưu · Nhắc sau",
+  "저장한 메시지가 없습니다": "Không có tin nhắn đã lưu",
+  "메시지를 저장했습니다": "Đã lưu tin nhắn",
+  "메시지를 저장하지 못했습니다: {error}": "Không thể lưu tin nhắn: {error}",
+  "알림이 설정되었습니다": "Đã đặt lời nhắc",
+  "알림을 설정하지 못했습니다: {error}": "Không thể đặt lời nhắc: {error}",
+  "알림을 삭제했습니다": "Đã xóa lời nhắc",
+  "저장한 메시지를 삭제했습니다": "Đã xóa tin nhắn đã lưu",
+  "20분": "20 phút",
+  "1시간": "1 giờ",
+  "3시간": "3 giờ",
+  "내일 오전 9시": "9 giờ sáng mai",
+  "사용자 지정": "Tùy chỉnh",
 };
 
 export default dict;
