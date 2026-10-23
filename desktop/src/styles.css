@@ -688,3 +688,4 @@ input, textarea, select { font: inherit; color: inherit; }
 .ctx-menu button.ctx-disabled:hover { background: none; }
 
 .reaction-pop.floating, .emoji-pop.floating { position: static; inset: auto; z-index: auto; }
+.reaction-add.disabled { cursor: not-allowed; opacity: .25; }

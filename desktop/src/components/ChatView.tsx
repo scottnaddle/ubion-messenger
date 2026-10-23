@@ -29,7 +29,7 @@ import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
 import {
-  applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionDisabledReason, reactionPollIds, reactionUiVisibility,
+  applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionPollIds, REACTION_ROOM_INITIAL, reactionRoomFailed, reactionRoomOk, reactionRoomReason, type ReactionRoomState,
   REACTION_POLL_MS,
 } from "../lib/reactions";
 import { composeQuoteText, decodePollId, isBotAuthDm, parseMessage, truncateQuote } from "../lib/markers";
@@ -40,8 +40,8 @@ import {
   DAOU_STICKERS_ENABLED, insertAtSelection, loadRecentEmoji, parseEmoticonCodes, pushRecentEmoji, saveRecentEmoji,
 } from "../lib/emoticon";
 import { LinkPreview } from "./LinkPreview";
-import { ReactionBar } from "./Reactions";
-import { REACTION_EMOJI } from "../../electron/core/reactions";
+import { ReactionBar, ReactionPopup, type ReactionPickerState } from "./Reactions";
+import { REACTION_EMOJI, REACTION_ROOM_FORBIDDEN } from "../../electron/core/reactions";
 import { PollCard, PollCreateModal } from "./PollCard";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
@@ -112,7 +112,8 @@ export function ChatView({
   const [botDisabled, setBotDisabled] = useState(false);
   const [reactions, setReactions] = useState<ReactionMap | undefined>(undefined);
   const [reactionsOn, setReactionsOn] = useState(false);
-  const [reactionsFailed, setReactionsFailed] = useState(false);
+  const [reactionRoom, setReactionRoom] = useState<ReactionRoomState>(REACTION_ROOM_INITIAL);
+  const [picker, setPicker] = useState<ReactionPickerState>(null);
   const [editOn, setEditOn] = useState(true);
   const [summaryOn, setSummaryOn] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
@@ -230,7 +231,8 @@ export function ChatView({
   useEffect(() => {
     reactionsRef.current = {};
     setReactions(undefined);
-    setReactionsFailed(false);
+    setReactionRoom(REACTION_ROOM_INITIAL);
+    setPicker(null);
   }, [reactionsRoomSeq, reactionsOn]);
   // While the room is open and the window is visible: immediate fetch, then every 5 s. Failed calls hide the
   // chips and retry quietly with backoff (30 s → … → 5 min) so they reappear when the server recovers.
@@ -268,14 +270,14 @@ export function ChatView({
         failures = 0;
         reactionsRef.current = map;
         setReactions(map);
-        setReactionsFailed(false);
+        setReactionRoom(reactionRoomOk());
         schedule(REACTION_POLL_MS);
-      } catch {
+      } catch (err) {
         if (cancelled) return;
         failures += 1;
-        reactionsRef.current = {};
-        setReactions(undefined);
-        setReactionsFailed(true);
+        // Keep the last reactions and the UI; just retry quietly with backoff.
+        const msg = err instanceof Error ? err.message : String(err);
+        setReactionRoom((prev) => reactionRoomFailed(prev, msg, REACTION_ROOM_FORBIDDEN));
         schedule(nextReactionPollDelay(failures));
       } finally {
         inFlight = false;
@@ -300,7 +302,7 @@ export function ChatView({
     };
   }, [reactionsOn, reactionsRoomSeq, reactionPollKey]);
   const toggleReaction = useCallback((messageId: number, emoji: string) => {
-    if (!reactionsOn || reactionsFailed || reactionsRoomSeq == null) return;
+    if (!reactionsOn || reactionsRoomSeq == null || reactionRoom.blocked === "forbidden") return;
     const roomSeq = reactionsRoomSeq;
     const previous = reactionsRef.current ?? {};
     const optimistic = applyToggle(previous, messageId, emoji, me.id);
@@ -319,9 +321,11 @@ export function ChatView({
         reactionsRef.current = previous;
         setReactions(previous);
       });
-  }, [reactionsOn, reactionsFailed, reactionsRoomSeq, me.id]);
-  const showReactions = reactionUiVisibility(reactionsOn, reactionsFailed).show && reactionsRoomSeq != null;
-  const reactionBlocked = reactionDisabledReason(reactionsOn, reactionsFailed, reactionsRoomSeq != null);
+  }, [reactionsOn, reactionRoom.blocked, reactionsRoomSeq, me.id]);
+  // Shown whenever caps are on in a supported room; problems disable it with a reason instead of hiding it.
+  const showReactions = reactionsOn && reactionsRoomSeq != null;
+  const reactionBlocked = reactionRoomReason(reactionsOn, reactionsRoomSeq != null, reactionRoom);
+  const closePicker = useCallback(() => setPicker(null), []);
 
   // group room members (mentions + popup), cached per room
   useEffect(() => {
@@ -871,6 +875,8 @@ export function ChatView({
                     onReply={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestReply(m) : undefined}
                     reactions={reactions} onToggleReaction={toggleReaction}
                     reactionNames={reactionNames} showReactions={showReactions} reactionBlocked={reactionBlocked}
+                    pickerMode={picker && picker.messageId === m.messageId ? picker.mode : null}
+                    onOpenPicker={(mode) => setPicker(mode && m.messageId != null ? { messageId: m.messageId, mode } : null)}
                     pollsOn={pollsOn}
                   />
                 </Fragment>
@@ -894,6 +900,11 @@ export function ChatView({
           )}
           </div>
         </div>
+        {picker && showReactions && !reactionBlocked && (
+          <ReactionPopup key={`rp-${picker.messageId}`} state={picker} onClose={closePicker}
+            onMode={(mode) => setPicker((p) => (p ? { ...p, mode } : p))}
+            onPick={(emoji) => { toggleReaction(picker.messageId, emoji); setPicker(null); }} />
+        )}
         {searchOpen && <SearchPanel room={room} onClose={() => setSearchOpen(false)} />}
       </div>
       {uploading > 0 && <div className="upload-bar">{t("파일 {n}개 업로드 중…", { n: uploading })}</div>}
@@ -1274,7 +1285,7 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
-  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, reactionBlocked, pollsOn,
+  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, reactionBlocked, pickerMode, onOpenPicker, pollsOn,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
@@ -1282,18 +1293,18 @@ function MessageRow({
   onSave?: () => void; onRemind?: () => void; onEdit?: () => void; onReply?: () => void;
   reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
   reactionNames: ReadonlyMap<number, string>; showReactions: boolean; reactionBlocked: string | null;
+  pickerMode: "palette" | "full" | null; onOpenPicker: (mode: "palette" | "full" | null) => void;
   pollsOn: boolean;
 }) {
   const t = useT();
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [pickerRequest, setPickerRequest] = useState(0);
   // 리액션 달기 is offered for every sent message; when the bot server is unusable it is shown disabled with a reason.
   const canReact = !deleted && !m.pending && !m.failed && m.messageId != null;
   const reaction = canReact ? {
-    disabledReason: reactionBlocked ?? (showReactions ? null : "봇 서버 연결 안 됨"),
+    disabledReason: showReactions ? reactionBlocked : (reactionBlocked ?? "봇 서버 연결 안 됨"),
     onPick: (emoji: string) => onToggleReaction(m.messageId!, emoji),
-    onMore: () => setPickerRequest((n) => n + 1),
+    onMore: () => onOpenPicker("full"),
   } : undefined;
   const hasMenu = !!(onDelete || onNotice || onSave || onRemind || onEdit || onReply || reaction);
   const openMenu = (e: React.MouseEvent) => {
@@ -1344,7 +1355,8 @@ function MessageRow({
           )}
           {showReactions && !deleted && !m.pending && !m.failed && m.messageId != null && (
             <ReactionBar map={reactions} messageId={m.messageId} me={meId} names={reactionNames}
-              onToggle={(e) => onToggleReaction(m.messageId!, e)} pickerRequest={pickerRequest} />
+              onToggle={(e) => onToggleReaction(m.messageId!, e)}
+              open={pickerMode != null} onOpenPicker={onOpenPicker} disabledReason={reactionBlocked} />
           )}
           <div className="msg-meta">
             {m.failed ? (

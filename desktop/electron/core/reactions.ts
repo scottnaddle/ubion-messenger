@@ -34,6 +34,9 @@ export type ReactionsOptions = {
 
 export type ReactionsResult<T = ReactionMap> = { ok: true; data: T } | { ok: false; message: string };
 
+/** 403 from /v1/reactions: the bot is not in this room (membership check), not a transient failure. */
+export const REACTION_ROOM_FORBIDDEN = "봇이 참여하지 않은 대화방입니다.";
+
 export function reactionsEnabled(env: Record<string, string | undefined> | undefined): boolean {
   return env?.[REACTIONS_ENV] !== "0";
 }
@@ -183,6 +186,7 @@ export function createReactionsClient({
       return { ok: false, message: "리액션 서버에 연결할 수 없습니다." };
     }
     if (res.status === 401) return { ok: false, message: "세션이 만료되었습니다. 다시 로그인하세요." };
+    if (res.status === 403) return { ok: false, message: REACTION_ROOM_FORBIDDEN };
     if (res.status < 200 || res.status >= 300) return { ok: false, message: "리액션 서버에서 처리하지 못했습니다." };
 
     let data: unknown = null;

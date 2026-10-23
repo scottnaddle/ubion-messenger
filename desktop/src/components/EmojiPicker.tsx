@@ -33,13 +33,13 @@ export function EmojiPicker({
     };
     window.addEventListener("mousedown", down);
     window.addEventListener("keydown", key, true);
-    window.addEventListener("blur", onClose);
+    if (!floating) window.addEventListener("blur", onClose);
     return () => {
       window.removeEventListener("mousedown", down);
       window.removeEventListener("keydown", key, true);
       window.removeEventListener("blur", onClose);
     };
-  }, [onClose, anchor]);
+  }, [onClose, anchor, floating]);
 
   return (
     <div className={`emoji-pop${floating ? " floating" : ""}`} ref={ref} role="dialog" aria-label={t("이모티콘")}>

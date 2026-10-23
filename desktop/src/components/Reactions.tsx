@@ -10,59 +10,26 @@ import { Floating } from "./Floating";
  * 이모지 리액션: chips beside the bubble (own reaction highlighted) + a hover "+" button.
  * The compact palette has the 8 quick emoji; "더보기" opens the full composer picker.
  */
+export type ReactionPickerState = { messageId: number; mode: "palette" | "full" } | null;
+
+/** Chips + the "+" button. Presentational: the open palette lives in ChatView (see ReactionPopup). */
 export function ReactionBar({
-  map, messageId, me, names, onToggle, pickerRequest = 0,
+  map, messageId, me, names, onToggle, open = false, onOpenPicker, disabledReason = null,
 }: {
   map: ReactionMap | undefined;
   messageId: number | undefined;
   me: number;
   names?: ReadonlyMap<number, string>;
   onToggle: (emoji: string) => void;
-  /** Bumped by the message context menu's "더보기" to open the full picker anchored at this bar. */
-  pickerRequest?: number;
+  open?: boolean;
+  onOpenPicker?: (mode: "palette" | "full" | null) => void;
+  disabledReason?: string | null;
 }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [recent, setRecent] = useState<string[]>(() => loadRecentEmoji());
-  const addRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLSpanElement>(null);
-  // Palette lives in a body portal now: close it on an outside click / Escape.
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: Event) => {
-      if (e instanceof KeyboardEvent) { if (e.key === "Escape") setOpen(false); return; }
-      const n = e.target as Node | null;
-      if (popRef.current?.contains(n) || addRef.current?.contains(n)) return;
-      setOpen(false);
-    };
-    window.addEventListener("mousedown", h); window.addEventListener("keydown", h);
-    return () => { window.removeEventListener("mousedown", h); window.removeEventListener("keydown", h); };
-  }, [open]);
   const chips = reactionChips(map, messageId, me);
-  useEffect(() => {
-    if (pickerRequest > 0) { setOpen(false); setPickerOpen(true); }
-  }, [pickerRequest]);
   if (messageId == null) return null;
   const byEmoji = map?.[String(messageId)] ?? {};
   const nameFor = (seq: number): string | undefined => (seq === me ? t("나") : names?.get(seq));
-  const remember = (emoji: string) => {
-    setRecent((list) => {
-      const next = pushRecentEmoji(list, emoji);
-      saveRecentEmoji(next);
-      return next;
-    });
-  };
-  const pick = (emoji: string) => {
-    onToggle(emoji);
-    remember(emoji);
-    setOpen(false);
-    setPickerOpen(false);
-  };
-  const togglePalette = () => {
-    setPickerOpen(false);
-    setOpen((v) => !v);
-  };
   return (
     <div className="reactions">
       {chips.length > 0 && (
@@ -70,7 +37,7 @@ export function ReactionBar({
           {chips.map((c) => {
             const label = formatReactionTooltip(c.emoji, byEmoji[c.emoji] ?? [], nameFor);
             return (
-              <button key={c.emoji} type="button" title={label} aria-label={label}
+              <button key={c.emoji} type="button" title={label} aria-label={label} disabled={!!disabledReason}
                 className={`reaction-chip${c.mine ? " mine" : ""}`} onClick={() => onToggle(c.emoji)}>
                 <span className="reaction-emoji">{c.emoji}</span>
                 <span className="reaction-count">{c.count}</span>
@@ -79,28 +46,68 @@ export function ReactionBar({
           })}
         </span>
       )}
-      <button ref={addRef} type="button" className="reaction-add" aria-label={t("리액션")} title={t("리액션")}
-        aria-expanded={open || pickerOpen} onClick={togglePalette}>
+      <button type="button" className={`reaction-add${disabledReason ? " disabled" : ""}`} data-reaction-add={messageId}
+        aria-label={t("리액션")} title={disabledReason ? t(disabledReason) : t("리액션")}
+        aria-disabled={!!disabledReason} aria-expanded={open}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={() => { if (!disabledReason) onOpenPicker?.(open ? null : "palette"); }}>
         <span aria-hidden="true">☺+</span>
       </button>
-      {open && (
-        <Floating anchor={addRef}>
-        <span ref={popRef} className="reaction-pop floating" role="menu" aria-label={t("리액션")}>
-          {REACTION_EMOJI.map((e) => (
-            <button key={e} type="button" className="reaction-cell" title={e} aria-label={e}
-              onClick={() => pick(e)}>{e}</button>
-          ))}
-          <button type="button" className="reaction-more" onClick={() => { setOpen(false); setPickerOpen(true); }}>
-            {t("더보기")}
-          </button>
-        </span>
-        </Floating>
-      )}
-      {pickerOpen && (
-        <Floating anchor={addRef}>
-          <EmojiPicker recent={recent} onPick={pick} onClose={() => setPickerOpen(false)} anchor={addRef} floating />
-        </Floating>
-      )}
     </div>
   );
+}
+
+/**
+ * The single reaction palette / full picker for the chat, owned by ChatView so message-list re-renders,
+ * reaction polls and row remounts never close it. Closes only on an outside click, Esc, or a pick.
+ */
+export function ReactionPopup({ state, onPick, onMode, onClose }: {
+  state: NonNullable<ReactionPickerState>;
+  onPick: (emoji: string) => void;
+  onMode: (mode: "palette" | "full") => void;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const [recent, setRecent] = useState<string[]>(() => loadRecentEmoji());
+  const popRef = useRef<HTMLSpanElement>(null);
+  const anchorEl = () => document.querySelector<HTMLElement>(`[data-reaction-add="${state.messageId}"]`);
+  const anchor = useRef<HTMLElement | null>(null);
+  anchor.current = anchorEl();
+  const pick = (emoji: string) => {
+    setRecent((list) => {
+      const next = pushRecentEmoji(list, emoji);
+      saveRecentEmoji(next);
+      return next;
+    });
+    onPick(emoji);
+  };
+  useEffect(() => {
+    if (state.mode !== "palette") return;
+    const down = (e: MouseEvent) => {
+      if (isInsideReactionUi(e.target as Node | null, popRef.current, anchorEl())) return;
+      onClose();
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("mousedown", down);
+    window.addEventListener("keydown", key);
+    return () => { window.removeEventListener("mousedown", down); window.removeEventListener("keydown", key); };
+  }, [state.mode, state.messageId, onClose]);
+  return (
+    <Floating getAnchor={anchorEl}>
+      {state.mode === "palette" ? (
+        <span ref={popRef} className="reaction-pop floating" role="menu" aria-label={t("리액션")}>
+          {REACTION_EMOJI.map((e) => (
+            <button key={e} type="button" className="reaction-cell" title={e} aria-label={e} onClick={() => pick(e)}>{e}</button>
+          ))}
+          <button type="button" className="reaction-more" onClick={() => onMode("full")}>{t("더보기")}</button>
+        </span>
+      ) : (
+        <EmojiPicker recent={recent} onPick={pick} onClose={onClose} anchor={anchor} floating />
+      )}
+    </Floating>
+  );
+}
+
+export function isInsideReactionUi(node: Node | null, ...roots: (Node | null | undefined)[]): boolean {
+  return !!node && roots.some((r) => !!r && r.contains(node));
 }

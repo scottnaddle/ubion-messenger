@@ -112,10 +112,30 @@ export function reactionUiVisibility(capsEnabled: boolean, listFailed: boolean):
   return { show: true, retry: false };
 }
 
-/** Why the reaction entry in the message menu is disabled (null = usable). */
-export function reactionDisabledReason(capsEnabled: boolean, listFailed: boolean, roomSupported: boolean): string | null {
+
+/**
+ * Room-level reaction availability. Once a room's list call has worked, transient errors keep the last
+ * state (UI stays, quiet retry). A 403 means the bot isn't in the room: shown disabled, never hidden.
+ */
+export type ReactionRoomState = { everOk: boolean; failures: number; blocked: null | "forbidden" | "offline" };
+export const REACTION_ROOM_INITIAL: ReactionRoomState = { everOk: false, failures: 0, blocked: null };
+
+export function reactionRoomOk(): ReactionRoomState {
+  return { everOk: true, failures: 0, blocked: null };
+}
+
+export function reactionRoomFailed(prev: ReactionRoomState, message: string, forbiddenMessage: string): ReactionRoomState {
+  const failures = prev.failures + 1;
+  if (message.includes(forbiddenMessage)) return { everOk: prev.everOk, failures, blocked: "forbidden" };
+  if (prev.everOk) return { everOk: true, failures, blocked: null };
+  // Never worked yet: allow a slow first sign-in a couple of tries before saying the server is down.
+  return { everOk: false, failures, blocked: failures >= 2 ? "offline" : null };
+}
+
+export function reactionRoomReason(capsEnabled: boolean, roomSupported: boolean, st: ReactionRoomState): string | null {
   if (!capsEnabled) return "리액션 기능 꺼짐";
   if (!roomSupported) return "이 대화방은 리액션 미지원";
-  if (listFailed) return "봇 서버 연결 안 됨";
+  if (st.blocked === "forbidden") return "봇이 이 대화방에 없음";
+  if (st.blocked === "offline") return "봇 서버 연결 안 됨";
   return null;
 }
