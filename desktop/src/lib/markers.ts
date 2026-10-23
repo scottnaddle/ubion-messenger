@@ -16,6 +16,13 @@ const EDIT_MARKERS = /\[\[ubm:edit:\d+\]\]/g;
 const REPLY_MARKERS = /\[\[re:\d+\]\]/g;
 const POLL_MARKERS = /\[\[ubm:poll:\d+\]\]/g;
 
+/** Bot auth DM marker: `[[ubm:auth:<challengeId>:<code>]]` (hidden from the chat UI). */
+export const AUTH_MARKER_RE = /\[\[ubm:auth:([A-Za-z0-9_-]{16,32}):([A-Za-z0-9_-]{20,64})\]\]/;
+
+export function isAuthMarkerText(text: unknown): boolean {
+  return typeof text === "string" && text.includes("[[ubm:auth:");
+}
+
 export const EDIT_TAG = "(수정됨)";
 export const QUOTE_TRUNCATE = 80;
 
