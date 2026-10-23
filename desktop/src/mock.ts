@@ -95,6 +95,19 @@ export function installMockIfNeeded() {
       for (const m of msgs) if (m.messageId != null && ids.includes(m.messageId)) (m as any).deleted = true;
       return { ok: true as const, count: ids.length };
     },
+    forwardToRoom: async () => ({ ok: true as const, count: 1 }),
+    forwardToMembers: async () => ({ ok: true as const, count: 1 }),
+    registerNotice: async (key: string, messageId: number) => {
+      const room = rooms.find((r) => r.key === key);
+      const msg = msgs.find((m) => m.messageId === messageId);
+      if (room) {
+        (room as any).notice = {
+          messageId, message: msg?.message || "", sendUserName: msg?.sendUserName || "",
+          userImage: msg?.userImage || "", createdAt: msg?.createdAt, attach: (msg as any)?.attach,
+        };
+      }
+      return room as any;
+    },
     setRoomPush: async (key: string, usePush: boolean) => {
       const room = rooms.find((r) => r.key === key);
       if (room) room.usePush = usePush;

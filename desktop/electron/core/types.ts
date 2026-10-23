@@ -1,6 +1,20 @@
 import type { PortalEvents } from "./portal";
 export type RoomKind = "buddy" | "room" | "pubsub" | "unknown";
 
+export type NoticeStatus = "normal" | "summary" | "folded" | "closed";
+
+export type RoomNotice = {
+  messageId?: number;
+  message: string;
+  sendUserName: string;
+  userImage: string;
+  companyId?: number;
+  createdAt?: string;
+  attach?: AttachModel;
+  deletedType?: string;
+  messageType?: string;
+};
+
 export type Room = {
   key: string; // `${kind}:${seq}`
   kind: RoomKind;
@@ -15,8 +29,12 @@ export type Room = {
   avatar: string;
   memberCount?: number;
   isSelf: boolean;
+  /** Buddy rooms only: the server's buddyRoomSeq (the room id used by forward/notice APIs; seq is the user id). */
+  buddyRoomSeq?: number;
   peerUserId?: number; // buddy rooms
   position?: string;
+  notice?: RoomNotice;
+  noticeUpdatedAt?: string;
 };
 
 export type AttachModel = {
@@ -106,6 +124,7 @@ export type MessengerEventMap = {
   ready: SessionUser;
   loggedOut: { reason?: string };
   rooms: Room[];
+  roomNotice: { roomKey: string; notice: RoomNotice };
   message: ChatMessage & { roomKey: string; roomKind: RoomKind; roomSeq: number; isMine: boolean; usePush: boolean };
   /** Someone (readerSeq) read messages of a room up to endId (XMPP type "confirm" or local mark-read). */
   confirm: ReadReceipt;

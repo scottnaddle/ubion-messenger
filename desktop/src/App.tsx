@@ -12,6 +12,9 @@ import { Home } from "./components/Home";
 import { Menu } from "./components/Menu";
 import { Mail } from "./components/Mail";
 import { Approval } from "./components/Approval";
+import { Flex } from "./components/Flex";
+import { noticeStoreKey } from "../electron/core/room-notice";
+import { navForDigit, type NavView } from "./nav";
 
 export type ToastAction = { label: string; run: () => void };
 export type Toast = { id: number; text: string; kind?: "error" | "info"; action?: ToastAction };
@@ -28,11 +31,12 @@ export function App() {
   const [conn, setConn] = useState<ConnState>("offline");
   const [netOnline, setNetOnline] = useState(navigator.onLine);
   const [presence, setPresence] = useState<Record<number, Presence>>({});
-  const [view, setView] = useState<"home" | "menu" | "chats" | "people" | "mail" | "approval">("chats");
+  const [view, setView] = useState<NavView | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [portalBadge, setPortalBadge] = useState({ approval: 0, noti: 0, mail: 0 });
+  const [flexPending, setFlexPending] = useState<number | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeKey;
 
@@ -86,7 +90,10 @@ export function App() {
   useEffect(() => {
     const offs = [
       api().onEvent(({ type, payload }) => {
-        if (type === "rooms") setRooms(payload);
+        if (type === "roomNotice") {
+          const key = payload?.notice?.messageId != null ? noticeStoreKey(payload.notice.messageId) : "";
+          if (key) localStorage.setItem(key, "normal");
+        } else if (type === "rooms") setRooms(payload);
         else if (type === "connection") setConn(payload.state);
         else if (type === "presence") setPresence((p) => ({ ...p, [payload.userId]: payload.presence }));
         else if (type === "ready") setUser(payload);
@@ -136,6 +143,10 @@ export function App() {
   useEffect(() => {
     if (user) api().portal.get().then((s: any) => s?.badge && setPortalBadge(s.badge)).catch(() => undefined);
   }, [user]);
+  useEffect(() => {
+    if (!user) return;
+    api().portal.flexPending(view === "flex").then((r) => setFlexPending(r.count)).catch(() => setFlexPending(null));
+  }, [user, view]);
 
   useEffect(() => {
     api().call("rooms:setActive", activeKey).catch(() => undefined);
@@ -155,6 +166,12 @@ export function App() {
       } else if (mod && e.key.toLowerCase() === "n") {
         e.preventDefault();
         setView("people");
+      } else if (mod && /^[1-6]$/.test(e.key)) {
+        const v = navForDigit(e.key);
+        if (v) {
+          e.preventDefault();
+          setView(v);
+        }
       } else if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
         e.preventDefault();
         const idx = rooms.findIndex((r) => r.key === activeRef.current);
@@ -200,26 +217,30 @@ export function App() {
       <nav className="rail">
         <div className="rail-drag" />
         <div className="logo-mark" title="UBION Messenger">U</div>
-        <button className={`rail-btn ${view === "home" ? "on" : ""}`} title="홈" onClick={() => setView("home")}>
+        <button className={`rail-btn ${view === "home" ? "on" : ""}`} title="홈 (⌘1)" onClick={() => setView("home")}>
           <Icon name="home" />
           {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
         </button>
-        <button className={`rail-btn ${view === "mail" ? "on" : ""}`} title="메일" onClick={() => setView("mail")}>
+        <button className={`rail-btn ${view === "chats" ? "on" : ""}`} title="메시지 (⌘K)" onClick={() => setView("chats")}>
+          <Icon name="chat" />
+          {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
+        </button>
+        <button className={`rail-btn ${view === "mail" ? "on" : ""}`} title="메일 (⌘3)" onClick={() => setView("mail")}>
           <Icon name="mail" />
+        </button>
+        <button className={`rail-btn ${view === "flex" ? "on" : ""}`} title="플렉스 (⌘4)" onClick={() => setView("flex")}>
+          <Icon name="flex" />
+          {flexPending != null && flexPending > 0 && <span className="rail-badge">{flexPending > 99 ? "99+" : flexPending}</span>}
+        </button>
+        <button className={`rail-btn ${view === "people" ? "on" : ""}`} title="조직도 (⌘N · ⌘5)" onClick={() => setView("people")}>
+          <Icon name="people" />
+        </button>
+        <button className={`rail-btn ${view === "menu" ? "on" : ""}`} title="앱 (⌘6)" onClick={() => setView("menu")}>
+          <Icon name="grid" />
         </button>
         <button className={`rail-btn ${view === "approval" ? "on" : ""}`} title="전자결재" onClick={() => setView("approval")}>
           <Icon name="approval" />
           {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
-        </button>
-        <button className={`rail-btn ${view === "menu" ? "on" : ""}`} title="메뉴 (DaouOffice 전체 기능)" onClick={() => setView("menu")}>
-          <Icon name="grid" />
-        </button>
-        <button className={`rail-btn ${view === "chats" ? "on" : ""}`} title="대화 (⌘K)" onClick={() => setView("chats")}>
-          <Icon name="chat" />
-          {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
-        </button>
-        <button className={`rail-btn ${view === "people" ? "on" : ""}`} title="조직도 (⌘N)" onClick={() => setView("people")}>
-          <Icon name="people" />
         </button>
         <div className="rail-spacer" />
         <button className="rail-btn" title="설정 (⌘,)" onClick={() => setShowSettings(true)}>
@@ -245,6 +266,8 @@ export function App() {
             <Mail />
           ) : view === "approval" ? (
             <Approval />
+          ) : view === "flex" ? (
+            <Flex />
           ) : (
             <>
               {view === "home" ? (
@@ -278,7 +301,7 @@ export function App() {
                   <div className="logo-mark big">U</div>
                   <h2>UBION Messenger</h2>
                   <p>왼쪽에서 대화를 선택하거나 조직도에서 동료를 찾아 대화를 시작하세요.</p>
-                  <p className="muted small">⌘/Ctrl+K 대화 검색 · ⌘/Ctrl+N 조직도 · Alt+↑↓ 대화 이동</p>
+                  <p className="muted small">⌘/Ctrl+K 대화 검색 · ⌘/Ctrl+N 조직도 · ⌘/Ctrl+1..6 탭 이동 · Alt+↑↓ 대화 이동</p>
                 </div>
               )}
             </>

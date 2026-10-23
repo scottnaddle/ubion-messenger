@@ -8,6 +8,11 @@ import { applyReadReceipt, dedupeByMessageId, mergeReceipts, upsertMessage } fro
 import {
   applyChatDelete, canDeleteMessage, CHAT_DELETE_CONFIRM, CHAT_DELETED_PLACEHOLDER, isDeletedMessage,
 } from "../../electron/core/chat-delete";
+import {
+  isNoticeVisible, normalizeNoticeStatus, noticeStoreKey, noticeText,
+  ROOM_NOTICE_CLOSE_CONFIRM, ROOM_NOTICE_REGISTER_CONFIRM,
+} from "../../electron/core/room-notice";
+import type { NoticeStatus } from "../../electron/core/types";
 import { isSendEnter } from "../lib/composer";
 import { FileCard, MediaViewer } from "./FileCard";
 import { LinkPreview } from "./LinkPreview";
@@ -59,6 +64,8 @@ export function ChatView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
+  const [confirmNotice, setConfirmNotice] = useState<ChatMessage | null>(null);
+  const [noticeStatus, setNoticeStatus] = useState<NoticeStatus>("normal");
   const [roomMenu, setRoomMenu] = useState<{ x: number; y: number } | null>(null);
   const [roomMembers, setRoomMembers] = useState<MentionCandidate[]>([]);
   const isGroupRoom = room.kind === "room" && !room.isSelf;
@@ -96,6 +103,16 @@ export function ChatView({
     return () => { alive = false; };
   }, [room.key, isGroupRoom]);
 
+  const notice = room.notice;
+  const noticeKey = notice?.messageId != null ? noticeStoreKey(notice.messageId) : "";
+  useEffect(() => {
+    setNoticeStatus(noticeKey ? normalizeNoticeStatus(localStorage.getItem(noticeKey)) : "normal");
+  }, [noticeKey, room.noticeUpdatedAt]);
+  const changeNoticeStatus = useCallback((status: NoticeStatus) => {
+    if (noticeKey) localStorage.setItem(noticeKey, status);
+    setNoticeStatus(status);
+  }, [noticeKey]);
+
   // realtime
   useEffect(() => {
     const h = (ev: Event) => {
@@ -114,6 +131,10 @@ export function ChatView({
         setMsgs((l) => applyReadReceipt(l, payload));
       } else if (type === "receipts" && payload.roomKey === room.key) {
         setMsgs((l) => mergeReceipts(l, payload.updates));
+      } else if (type === "roomNotice" && payload.roomKey === room.key) {
+        const key = payload.notice?.messageId != null ? noticeStoreKey(payload.notice.messageId) : "";
+        if (key) localStorage.setItem(key, "normal");
+        setNoticeStatus("normal");
       }
     };
     window.addEventListener("ubion:event", h);
@@ -194,15 +215,32 @@ export function ChatView({
     if (!deletable || !canDeleteMessage(m, me.id)) return;
     setConfirmDelete(m);
   };
+  const requestNotice = (m: ChatMessage) => {
+    if (m.messageId == null || isDeletedMessage(m) || m.pending || m.failed) return;
+    setConfirmNotice(m);
+  };
+  const doRegisterNotice = async () => {
+    const target = confirmNotice;
+    if (!target?.messageId) return;
+    setConfirmNotice(null);
+    try {
+      await api().registerNotice(room.key, target.messageId);
+      toast("공지를 등록했습니다", "info");
+    } catch (e) {
+      toast(`공지를 등록하지 못했습니다: ${(e as Error).message}`);
+    }
+  };
   const doDelete = async () => {
     const target = confirmDelete;
     if (!target?.messageId) return;
     setConfirmDelete(null);
     const ids = [target.messageId];
+    const wasNotice = room.notice?.messageId === target.messageId;
     const snapshot = msgs.find((m) => m.messageId === target.messageId);
     setMsgs((l) => applyChatDelete(l, ids));
     try {
       await api().deleteChatMessages(ids);
+      if (wasNotice) void api().registerNotice(room.key, target.messageId).catch(() => undefined);
       toast("메시지를 삭제했습니다", "info");
     } catch (e) {
       if (snapshot) setMsgs((l) => l.map((m) => (m.messageId === target.messageId ? snapshot : m)));
@@ -290,6 +328,33 @@ export function ChatView({
           <Icon name="more" size={18} />
         </button>
       </header>
+      {notice && isNoticeVisible(notice, noticeStatus) && (
+        <div className="banner info" style={{ justifyContent: "flex-start", gap: 8 }}>
+          <span aria-hidden>📢</span>
+          <button
+            className="link"
+            style={{
+              flex: 1, minWidth: 0, textAlign: "left", overflow: "hidden",
+              textOverflow: "ellipsis", whiteSpace: noticeStatus === "folded" ? "nowrap" : "normal",
+            }}
+            title={noticeText(notice)}
+            onClick={() => changeNoticeStatus("normal")}
+          >
+            <b>{notice.sendUserName || "공지"}</b> {noticeText(notice)}
+          </button>
+          {noticeStatus === "folded" ? (
+            <button className="link tiny" onClick={() => changeNoticeStatus("normal")}>펼치기</button>
+          ) : (
+            <button className="link tiny" onClick={() => changeNoticeStatus("folded")}>접어두기</button>
+          )}
+          <button
+            className="link tiny"
+            onClick={() => { if (window.confirm(ROOM_NOTICE_CLOSE_CONFIRM)) changeNoticeStatus("closed"); }}
+          >
+            다시 보지 않음
+          </button>
+        </div>
+      )}
       <div className="chat-body">
         <div className="msg-list" ref={listRef} onScroll={onScroll}>
           {loadingOlder && <div className="loader-line">이전 메시지 불러오는 중…</div>}
@@ -314,6 +379,7 @@ export function ChatView({
                     isLastMine={m === lastMine} memberNames={memberNames} myName={me.name}
                     onImage={() => setViewer(m)} onRetry={() => retry(m)} toast={toast}
                     onDelete={deletable && canDeleteMessage(m, me.id) ? () => requestDelete(m) : undefined}
+                    onNotice={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestNotice(m) : undefined}
                   />
                 </Fragment>
               );
@@ -349,6 +415,19 @@ export function ChatView({
               <div className="approval-modal-actions">
                 <button className="link" onClick={() => setConfirmDelete(null)}>취소</button>
                 <button className="danger-btn" autoFocus onClick={() => void doDelete()}>삭제</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {confirmNotice && (
+        <div className="modal-back" onClick={() => setConfirmNotice(null)}>
+          <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-body">
+              <p>{ROOM_NOTICE_REGISTER_CONFIRM}</p>
+              <div className="approval-modal-actions">
+                <button className="link" onClick={() => setConfirmNotice(null)}>취소</button>
+                <button className="primary" autoFocus onClick={() => void doRegisterNotice()}>공지로 등록</button>
               </div>
             </div>
           </div>
@@ -405,7 +484,9 @@ function RoomMenu({
   );
 }
 
-function DeleteMenu({ x, y, onDelete, onClose }: { x: number; y: number; onDelete: () => void; onClose: () => void }) {
+function MessageMenu({
+  x, y, onDelete, onNotice, onClose,
+}: { x: number; y: number; onDelete?: () => void; onNotice?: () => void; onClose: () => void }) {
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
@@ -413,31 +494,34 @@ function DeleteMenu({ x, y, onDelete, onClose }: { x: number; y: number; onDelet
   }, [onClose]);
   return (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
-      <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> 삭제</button>
+      {onNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> 공지로 등록</button>}
+      {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> 삭제</button>}
     </div>
   );
 }
 
 function MessageRow({
-  m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete,
+  m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
-  onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void;
+  onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
 }) {
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const openMenu = (e: React.MouseEvent) => {
-    if (!onDelete || deleted) return;
+    if ((!onDelete && !onNotice) || deleted) return;
     e.preventDefault();
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 70) });
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 110) });
   };
   // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.
   const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message }
     : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || "삭제된 파일", expired: true } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
-      {menu && onDelete && <DeleteMenu x={menu.x} y={menu.y} onDelete={onDelete} onClose={() => setMenu(null)} />}
+      {menu && (onDelete || onNotice) && (
+        <MessageMenu x={menu.x} y={menu.y} onDelete={onDelete} onNotice={onNotice} onClose={() => setMenu(null)} />
+      )}
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
       <div className="msg-main">
         {!mine && !grouped && <div className="msg-name">{m.sendUserName}</div>}
@@ -446,7 +530,7 @@ function MessageRow({
             <div className="bubble deleted">{CHAT_DELETED_PLACEHOLDER}</div>
           ) : a ? (
             <FileCard m={a === m.attach ? m : { ...m, attach: a }} mine={mine} onOpenMedia={onImage} toast={toast}
-              canDelete={!!onDelete} onDelete={onDelete} />
+              canDelete={!!onDelete} onDelete={onDelete} canNotice={!!onNotice} onNotice={onNotice} />
           ) : (
             <div className="bubble-col">
               <div className="bubble" onContextMenu={openMenu}>

@@ -18,6 +18,9 @@ export type Settings = {
 export type Bridge = {
   call<T = any>(ch: string, ...args: unknown[]): Promise<T>;
   deleteChatMessages(ids: number[]): Promise<{ ok: true; count: number }>;
+  forwardToRoom(roomSeq: number, cryptIds: string[]): Promise<{ ok: true; count: number }>;
+  forwardToMembers(memberSeqs: number[], cryptIds: string[], roomType: "single" | "group"): Promise<{ ok: true; count: number }>;
+  registerNotice(key: string, messageId: number): Promise<Room>;
   setRoomPush(key: string, usePush: boolean): Promise<void>;
   listFavorites(): Promise<Person[]>;
   addFavorite(id: number): Promise<{ ok: true }>;

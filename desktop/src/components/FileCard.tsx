@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, media, type ChatMessage } from "../api";
 import { attachKind, durationLabel, expiryLabel, fileIcon, isExpired, sizeLabel } from "../../electron/core/attach";
 import { Icon } from "./ui";
+import { ForwardModal } from "./ForwardModal";
 
 export const fileUrl = (cryptId: string, messageId?: number) =>
   messageId != null ? media(`/api/chat/files/${encodeURIComponent(cryptId)}?messageId=${messageId}`) : "";
@@ -29,8 +30,11 @@ export async function saveChatFile(m: ChatMessage, mode: SaveMode, toast: ToastF
 
 /** Right-click menu for a file card: 저장 / 다른 이름으로 저장 / 삭제. */
 function SaveMenu({
-  x, y, onPick, onDelete, canSave = true, onClose,
-}: { x: number; y: number; onPick: (m: SaveMode) => void; onDelete?: () => void; canSave?: boolean; onClose: () => void }) {
+  x, y, onPick, onDelete, onForward, onNotice, canSave = true, canForward = false, canNotice = false, onClose,
+}: {
+  x: number; y: number; onPick: (m: SaveMode) => void; onDelete?: () => void;
+  onForward?: () => void; onNotice?: () => void; canSave?: boolean; canForward?: boolean; canNotice?: boolean; onClose: () => void;
+}) {
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
@@ -43,6 +47,8 @@ function SaveMenu({
         <button role="menuitem" onClick={() => { onClose(); onPick("saveAs"); }}>다른 이름으로 저장…</button>
         <button role="menuitem" onClick={() => { onClose(); onPick("open"); }}><Icon name="external" size={14} /> 기본 앱으로 열기</button>
       </>}
+      {onForward && canForward && <button role="menuitem" onClick={() => { onClose(); onForward(); }}><Icon name="send" size={14} /> 전달</button>}
+      {onNotice && canNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> 공지로 등록</button>}
       {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> 삭제</button>}
     </div>
   );
@@ -50,22 +56,35 @@ function SaveMenu({
 
 /** DaouOffice-style attachment bubble: image/video thumbnails or a file card with 저장 / 다른 이름으로 저장. */
 export function FileCard({
-  m, mine, onOpenMedia, toast, canDelete, onDelete,
-}: { m: ChatMessage; mine: boolean; onOpenMedia: () => void; toast: ToastFn; canDelete?: boolean; onDelete?: () => void }) {
+  m, mine, onOpenMedia, toast, canDelete, onDelete, canNotice, onNotice,
+}: {
+  m: ChatMessage; mine: boolean; onOpenMedia: () => void; toast: ToastFn;
+  canDelete?: boolean; onDelete?: () => void; canNotice?: boolean; onNotice?: () => void;
+}) {
   const a = m.attach!;
   const missing = !a.cryptId && !a.expired;
   const expired = missing || isExpired(a);
   const kind = attachKind(a);
   const exp = expiryLabel(a);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [forwardOpen, setForwardOpen] = useState(false);
   const save = async (mode: SaveMode) => { if (!expired) await saveChatFile(m, mode, toast); };
   const ctxDelete = canDelete && onDelete ? onDelete : undefined;
+  const ctxNotice = canNotice && onNotice ? onNotice : undefined;
+  const canForward = !expired && !!a.cryptId;
   const onCtx = (e: React.MouseEvent) => {
-    if (expired && !ctxDelete) return;
+    if (expired && !ctxDelete && !ctxNotice) return;
     e.preventDefault();
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 140) });
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 190) });
   };
-  const ctx = menu && <SaveMenu x={menu.x} y={menu.y} onPick={(md) => void save(md)} onDelete={ctxDelete} canSave={!expired} onClose={() => setMenu(null)} />;
+  const forwardModal = forwardOpen ? <ForwardModal m={m} toast={toast} onClose={() => setForwardOpen(false)} /> : null;
+  const ctx = menu && (
+    <SaveMenu
+      x={menu.x} y={menu.y} onPick={(md) => void save(md)} onDelete={ctxDelete}
+      canSave={!expired} canForward={canForward} onForward={() => setForwardOpen(true)}
+      canNotice={!!ctxNotice} onNotice={ctxNotice} onClose={() => setMenu(null)}
+    />
+  );
   const actions = (
     <div className="fc-actions">
       <button className="link tiny" disabled={expired} onClick={() => save("downloads")}>저장</button>
@@ -83,7 +102,7 @@ export function FileCard({
   if (!expired && kind === "image") {
     return (
       <div className="media-card" onContextMenu={onCtx}>
-        {ctx}
+        {ctx}{forwardModal}
         <button className="img-bubble" onClick={onOpenMedia} title={a.name}>
           <LazyImg src={media(a.thumbMid || a.thumbLarge || a.thumbSmall) || fileUrl(a.cryptId, m.messageId)} alt={a.name} w={a.width} h={a.height} />
         </button>
@@ -96,7 +115,7 @@ export function FileCard({
     const poster = media(a.videoThumb || a.thumbMid || a.thumbLarge || a.thumbSmall);
     return (
       <div className="media-card" onContextMenu={onCtx}>
-        {ctx}
+        {ctx}{forwardModal}
         <button className="img-bubble video-bubble" onClick={onOpenMedia} title={a.name}>
           {poster ? <LazyImg src={poster} alt={a.name} w={a.width} h={a.height} /> : <VideoFrame src={fileUrl(a.cryptId, m.messageId)} size={a.size} />}
           <span className="play-ic" aria-hidden>▶</span>
@@ -111,7 +130,7 @@ export function FileCard({
   const ic = fileIcon(a.name, a.extention);
   return (
     <div className={`file-card ${mine ? "mine" : ""} ${expired ? "expired" : ""}`} aria-disabled={expired} onContextMenu={onCtx}>
-      {ctx}
+      {ctx}{forwardModal}
       <div className="fc-top">
         <button className="fc-dl" disabled={expired} title={expired ? "만료된 파일" : "저장"} onClick={() => save("downloads")}>
           <Icon name="download" size={20} />

@@ -15,6 +15,7 @@ import {
   shell,
   Tray,
 } from "electron";
+import type { WebContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { MessengerCore } from "./core/messenger";
@@ -30,6 +31,7 @@ import {
 } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
 import { shouldNotify } from "./core/room-push";
+import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { chatBotUrl, isChatBotUrl } from "./core/chatbot";
 import { isMentioningMe } from "../src/lib/mention";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
@@ -113,6 +115,7 @@ function wireCore() {
   unsubscribe = [
     fwd("ready"),
     fwd("rooms"),
+    fwd("roomNotice"),
     fwd("message"),
     fwd("confirm"),
     fwd("receipts"),
@@ -268,8 +271,7 @@ async function tryFlexAutoLogin(wc: BrowserWindow["webContents"]) {
   }
 }
 
-function attachFlexWindowHooks(w: BrowserWindow) {
-  const wc = w.webContents;
+function attachFlexWindowHooks(wc: WebContents) {
   const onNav = () => {
     const u = wc.getURL();
     if (isFlexLoginUrl(u)) void tryFlexAutoLogin(wc);
@@ -450,7 +452,7 @@ async function openPortalWindow(url: string) {
     webPreferences: { partition: PORTAL_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   portalWin.setMenu(portalNavMenu());
-  attachFlexWindowHooks(portalWin);
+  attachFlexWindowHooks(portalWin.webContents);
   const base = core.client.baseUrl;
   const inWin = (u: string) => isPortalUrl(u, base) || isFlexUrl(u) || isFlexSsoUrl(u);
   portalWin.webContents.setWindowOpenHandler(({ url: u }) => {
@@ -544,6 +546,7 @@ function createWindow() {
       sandbox: false,
       nodeIntegration: false,
       spellcheck: false,
+      webviewTag: true,
     },
   });
   win.once("ready-to-show", () => {
@@ -695,6 +698,38 @@ function registerIpc() {
   handle("msg:search", (key: string, kw: string) => core.searchInRoom(key, kw));
   handle("msg:send", (key: string, text: string) => core.sendText(key, text));
   handle("msg:delete", (ids: unknown) => core.client.deleteChatMessages(ids));
+  const selfRoomApiSeq = (): number | undefined => {
+    const selfRoom = core.getRooms().find((r) => r.isSelf);
+    if (!selfRoom) return undefined;
+    try {
+      return apiRoomSeq(selfRoom);
+    } catch {
+      return undefined;
+    }
+  };
+  handle("msg:forwardRoom", (roomSeq: number, cryptIds: string[]) => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    checkForwardTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", target: { roomSeq }, me, selfRoomSeq: selfRoomApiSeq() });
+    return core.client.forwardToRoom(roomSeq, cryptIds);
+  });
+  handle("msg:forwardMembers", (memberSeqs: number[], cryptIds: string[], roomType: "single" | "group") => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    checkForwardTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", target: { memberSeqs }, me, selfRoomSeq: selfRoomApiSeq() });
+    return core.client.forwardToMembers(memberSeqs, cryptIds, roomType);
+  });
+  handle("room:notice", async (key: string, messageId: number) => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const room = core.getRooms().find((r) => r.key === key);
+    if (!room) throw new Error("알 수 없는 대화방입니다");
+    const roomSeq = apiRoomSeq(room);
+    checkForwardTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", target: { roomSeq }, me, selfRoomSeq: selfRoomApiSeq() });
+    await core.client.registerRoomNotice(roomSeq, messageId);
+    await core.refreshRooms();
+    return core.getRooms().find((r) => r.key === key) || room;
+  });
   handle("msg:markRead", (key: string, mid?: number) => core.markRead(key, mid));
   handle("files:sendPaths", async (key: string, paths: string[]) => {
     for (const p of paths) {
@@ -852,6 +887,24 @@ function registerMediaProtocol() {
     }
   });
 }
+
+// ---------- embedded <webview> (플렉스 tab) ----------
+app.on("web-contents-created", (_e, contents) => {
+  if (contents.getType() !== "webview") return;
+  attachFlexWindowHooks(contents);
+  contents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) void openPortalWindow(url);
+    else if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  const secureNav = (e: Electron.Event, url: string) => {
+    if (/^https:\/\//i.test(url)) return;
+    e.preventDefault();
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  };
+  contents.on("will-navigate", secureNav);
+  contents.on("will-redirect", secureNav);
+});
 
 // ---------- lifecycle ----------
 app.on("second-instance", showWindow);

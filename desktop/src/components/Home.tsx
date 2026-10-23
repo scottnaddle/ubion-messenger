@@ -51,7 +51,7 @@ function Empty({ show, text }: { show: boolean; text: string }) {
   return show ? <div className="muted small home-empty">{text}</div> : null;
 }
 
-export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }) {
+export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") => void }) {
   const [snap, setSnap] = useState<Snap | null>(null);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState<number | null>(null);
@@ -90,6 +90,7 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }
   const cal = w.calendar?.data as { items: CalendarEvent[]; total: number } | undefined;
   const mail = w.mail?.data as ({ items: MailItem[]; total: number; today?: number }) | undefined;
   const chips = snap?.summary?.chips || [];
+  const openFlex = () => (onLocal ? onLocal("flex") : open("https://flex.team/home/todo/inbox"));
 
   return (
     <div className="home">
@@ -110,7 +111,7 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }
             {c.gadgetName || c.appName} {c.count}
           </button>
         ))}
-        <button className={`chip ${flexCount ? "on" : ""}`} title="flex 승인 대기" onClick={() => open("https://flex.team/home/todo/inbox")}>
+        <button className={`chip ${flexCount ? "on" : ""}`} title="flex 승인 대기" onClick={openFlex}>
           flex 승인 대기 {flexCount == null ? "-" : flexCount}
         </button>
       </div>
@@ -125,7 +126,7 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval") => void }
           <Empty show={!!posts && !posts.items.length} text="최근 글이 없습니다" />
         </Card>
         <Card title="flex 승인 대기" count={flexCount ?? undefined} webUrl="https://flex.team/home/todo/inbox" isStatic>
-          <ul><li><button onClick={() => open("https://flex.team/home/todo/inbox")}>
+          <ul><li><button onClick={openFlex}>
             <span className="tag">flex</span> <span className="ellipsis">휴가·근무 승인 요청 보기</span>
             <span className="muted small"> · {flexCount == null ? "건수 확인 중/불가" : `${flexCount}건`}</span>
           </button></li></ul>

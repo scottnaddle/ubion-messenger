@@ -5,6 +5,8 @@ import { canonMessageId, ensureTimestamp } from "./messages";
 import { chatDeleteBody, isDeletedMessage, normalizeChatDeleteIds, parseIsMessageDeletable } from "./chat-delete";
 import { PATH_KIND, roomPushPath, ROOM_PUSH_METHOD } from "./room-push";
 import { favoriteBody, favoritePath, parseFavorites } from "./favorites";
+import { FORWARD_METHOD, forwardMembersPath, forwardRoomPath, normalizeForwardCryptIds } from "./forward";
+import { parseNotice, roomNoticePath, ROOM_NOTICE_METHOD } from "./room-notice";
 import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
 import { fromElectronCookie, needsWebLogin, onSessionExpired, WEB_LOGIN_MESSAGE, type ElectronCookieIn } from "./web-login";
 
@@ -222,8 +224,11 @@ export class DaouClient {
       avatar: String(r.userImage || ""),
       memberCount: r.memberCount != null ? Number(r.memberCount) : undefined,
       isSelf: kind === "buddy" && (seq === uid || r.buddyRoomType === "my"),
+      buddyRoomSeq: r.buddyRoomSeq != null ? Number(r.buddyRoomSeq) : undefined,
       peerUserId: kind === "buddy" ? seq : undefined,
       position: r.buddyPosition ? String(r.buddyPosition) : undefined,
+      notice: parseNotice(r.noticeMessage),
+      noticeUpdatedAt: r.noticeMessage?.updatedAt ? String(r.noticeMessage.updatedAt) : undefined,
     };
   }
 
@@ -329,6 +334,70 @@ export class DaouClient {
       contentType: "application/json",
     });
     if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `알림 설정 실패 (HTTP ${res.status})`);
+  }
+
+  // ---------- forward ----------
+  /** ⚠ MUTATES server state: forward attachments to one room; form-urlencoded, empty body. */
+  async forwardToRoom(roomSeq: number, cryptIds: unknown): Promise<{ ok: true; count: number }> {
+    const uid = this.requireUser().id;
+    const ids = normalizeForwardCryptIds(cryptIds);
+    return this.forwardRequest(forwardRoomPath(roomSeq, ids, uid), ids.length);
+  }
+
+  /** ⚠ MUTATES server state: forward attachments to people (single|group); empty form-urlencoded body. */
+  async forwardToMembers(
+    memberSeqs: number[],
+    cryptIds: unknown,
+    roomType: "single" | "group"
+  ): Promise<{ ok: true; count: number }> {
+    const uid = this.requireUser().id;
+    const ids = normalizeForwardCryptIds(cryptIds);
+    return this.forwardRequest(forwardMembersPath(memberSeqs, ids, roomType, uid), ids.length);
+  }
+
+  private async forwardRequest(path: string, count: number): Promise<{ ok: true; count: number }> {
+    const res = await this.request(path, { method: FORWARD_METHOD, contentType: "application/x-www-form-urlencoded" });
+    if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `전달 실패 (HTTP ${res.status})`);
+    let body: any = null;
+    try {
+      body = JSON.parse(res.text);
+    } catch {
+      /* empty or non-JSON success body */
+    }
+    if (body?.code != null && String(body.code) !== "200") {
+      const n = Number(body.code);
+      const status = Number.isInteger(n) && n >= 100 && n <= 599 ? n : 500;
+      throw new HttpError(status, String(body.message ?? body.msg ?? body.data?.message ?? `전달 실패 (code ${body.code})`));
+    }
+    return { ok: true, count };
+  }
+
+  // ---------- room notice ----------
+  /** ⚠ MUTATES server state: PUT /api/chat/notice/{roomSeq}?messageId=…&userSeq=…, no body. */
+  async registerRoomNotice(roomSeq: number, messageId: number): Promise<{ ok: true }> {
+    const uid = this.requireUser().id;
+    const res = await this.request(roomNoticePath(roomSeq, messageId, uid), { method: ROOM_NOTICE_METHOD });
+    if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `공지 등록 실패 (HTTP ${res.status})`);
+    let body: any = null;
+    try {
+      body = JSON.parse(res.text);
+    } catch {
+      /* empty or non-JSON success body */
+    }
+    if (body?.code != null && String(body.code) !== "200") {
+      const n = Number(body.code);
+      const status = Number.isInteger(n) && n >= 100 && n <= 599 ? n : 500;
+      throw new HttpError(status, String(body.message ?? body.msg ?? body.data?.message ?? `공지 등록 실패 (code ${body.code})`));
+    }
+    return { ok: true };
+  }
+
+  registerNotice(roomSeq: number, messageId: number): Promise<{ ok: true }> {
+    return this.registerRoomNotice(roomSeq, messageId);
+  }
+
+  setRoomNotice(roomSeq: number, messageId: number): Promise<{ ok: true }> {
+    return this.registerRoomNotice(roomSeq, messageId);
   }
 
   // ---------- favorites ----------

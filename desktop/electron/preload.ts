@@ -17,6 +17,10 @@ function sub(ch: string, cb: (p: any) => void) {
 const api = {
   call,
   deleteChatMessages: (ids: number[]) => call<{ ok: true; count: number }>("msg:delete", ids),
+  forwardToRoom: (roomSeq: number, cryptIds: string[]) => call<{ ok: true; count: number }>("msg:forwardRoom", roomSeq, cryptIds),
+  forwardToMembers: (memberSeqs: number[], cryptIds: string[], roomType: "single" | "group") =>
+    call<{ ok: true; count: number }>("msg:forwardMembers", memberSeqs, cryptIds, roomType),
+  registerNotice: (key: string, messageId: number) => call<import("./core/types").Room>("room:notice", key, messageId),
   setRoomPush: (key: string, usePush: boolean) => call<void>("rooms:setPush", key, usePush),
   listFavorites: () => call<import("./core/types").Person[]>("favorites:list"),
   addFavorite: (id: number) => call<{ ok: true }>("favorites:add", id),

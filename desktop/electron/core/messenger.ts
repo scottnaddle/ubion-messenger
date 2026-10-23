@@ -7,6 +7,7 @@ import { BoshClient } from "./bosh";
 import { xmppKeyFromLoginId } from "./xmpp-key";
 import { canonMessageId } from "./messages";
 import { isDeletedMessage } from "./chat-delete";
+import { parseNotice } from "./room-notice";
 import type {
   ChatMessage,
   ConnState,
@@ -322,6 +323,16 @@ export class MessengerCore {
   private onBody(obj: Record<string, any>) {
     const me = this.client.user?.id;
     if (me == null) return;
+    const actiontype = String(obj.actiontype ?? obj.actionType ?? "").toLowerCase();
+    if (actiontype === "notice") {
+      const routed = routeXmppBody(obj, me);
+      if (routed.seq != null && Number.isFinite(routed.seq) && routed.kind !== "unknown") {
+        this.applyRoomNotice(`${routed.kind}:${routed.seq}`, obj);
+      } else {
+        this.scheduleSync();
+      }
+      return;
+    }
     const r = routeXmppBody(obj, me);
     if (r.type === "confirm") {
       if (r.receipt) {
@@ -379,6 +390,32 @@ export class MessengerCore {
       isMine: r.isMine,
       usePush: r.usePush && (room ? room.usePush : true),
     });
+  }
+
+  private applyRoomNotice(key: string, obj: Record<string, any>) {
+    const notice = parseNotice(obj);
+    if (!notice) {
+      this.scheduleRoomSync(key);
+      return;
+    }
+    const updatedAt = notice.createdAt || new Date().toISOString();
+    const apply = (room: Room) => {
+      room.notice = notice;
+      room.noticeUpdatedAt = updatedAt;
+      this.emit("roomNotice", { roomKey: key, notice });
+      this.emitRooms();
+    };
+    const room = this.rooms.get(key);
+    if (room) {
+      apply(room);
+      return;
+    }
+    void this.refreshRooms()
+      .then(() => {
+        const found = this.rooms.get(key);
+        if (found) apply(found);
+      })
+      .catch(() => undefined);
   }
 
   private markEmitted(key: string, id?: number) {
