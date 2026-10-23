@@ -11,6 +11,8 @@
 
 export type StatusServerOptions = {
   baseUrl?: string;
+  /** The caller (never the looked-up target): X-UBM-User-Seq identifies who is making the request. */
+  getUserSeq: () => number;
   getSessionHeader: () => Promise<string>;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
@@ -24,6 +26,7 @@ const MAX_COOKIE_LENGTH = 4096;
 
 export function createStatusClient({
   baseUrl = "https://bot.ubion.global",
+  getUserSeq,
   getSessionHeader,
   fetch: fetchImpl,
   timeoutMs = 8000,
@@ -31,6 +34,10 @@ export function createStatusClient({
   const root = String(baseUrl).replace(/\/+$/, "");
 
   async function request(method: "GET" | "PUT", userSeq: number, text?: string): Promise<StatusResult> {
+    const callerSeq = Number(getUserSeq());
+    if (!Number.isSafeInteger(callerSeq) || callerSeq <= 0) {
+      return { ok: false, message: "로그인이 필요합니다" };
+    }
     let cookie: string;
     try {
       cookie = await getSessionHeader();
@@ -50,7 +57,7 @@ export function createStatusClient({
         method,
         headers: {
           "Content-Type": "application/json",
-          "X-UBM-User-Seq": String(userSeq),
+          "X-UBM-User-Seq": String(callerSeq),
           "X-UBM-Session": cookie,
         },
         body: method === "PUT" ? JSON.stringify({ text: text ?? "" }) : undefined,

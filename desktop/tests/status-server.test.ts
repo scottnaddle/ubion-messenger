@@ -10,14 +10,24 @@ const ok = (body: unknown, status = 200) => ({
 describe("status server client (unverified shape)", () => {
   it("GET returns the text from the documented shape", async () => {
     const fetch = vi.fn().mockResolvedValue(ok({ text: "점심시간" }));
-    const c = createStatusClient({ baseUrl: "https://bot.ubion.global", getSessionHeader: async () => "a=b", fetch: fetch as any });
+    const c = createStatusClient({
+      baseUrl: "https://bot.ubion.global", getUserSeq: () => 7, getSessionHeader: async () => "a=b", fetch: fetch as any,
+    });
     await expect(c.get(42)).resolves.toEqual({ ok: true, text: "점심시간" });
-    expect(fetch).toHaveBeenCalledWith("https://bot.ubion.global/v1/status/42", expect.objectContaining({ method: "GET" }));
+    expect(fetch).toHaveBeenCalledWith(
+      "https://bot.ubion.global/v1/status/42",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ "X-UBM-User-Seq": "7" }),
+      }),
+    );
   });
 
   it("PUT sends {text} and returns the stored text", async () => {
     const fetch = vi.fn().mockResolvedValue(ok({ status: { text: "회의 중" } }));
-    const c = createStatusClient({ baseUrl: "https://bot.ubion.global/", getSessionHeader: async () => "a=b", fetch: fetch as any });
+    const c = createStatusClient({
+      baseUrl: "https://bot.ubion.global/", getUserSeq: () => 7, getSessionHeader: async () => "a=b", fetch: fetch as any,
+    });
     await expect(c.put(42, "회의 중")).resolves.toEqual({ ok: true, text: "회의 중" });
     expect(fetch).toHaveBeenCalledWith(
       "https://bot.ubion.global/v1/status/42",
@@ -27,28 +37,35 @@ describe("status server client (unverified shape)", () => {
 
   it("maps 401 to an auth failure and never leaks the cookie", async () => {
     const fetch = vi.fn().mockResolvedValue(ok("", 401));
-    const c = createStatusClient({ getSessionHeader: async () => "secret=value", fetch: fetch as any });
+    const c = createStatusClient({ getUserSeq: () => 7, getSessionHeader: async () => "secret=value", fetch: fetch as any });
     const r = await c.get(1);
     expect(r).toMatchObject({ ok: false });
     expect(JSON.stringify(r)).not.toContain("secret=value");
   });
 
+  it("rejects requests without a caller userSeq before sending", async () => {
+    const fetch = vi.fn();
+    const c = createStatusClient({ getUserSeq: () => 0, getSessionHeader: async () => "a=b", fetch: fetch as any });
+    await expect(c.get(42)).resolves.toEqual({ ok: false, message: "로그인이 필요합니다" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("returns an empty text for a malformed body", async () => {
     const fetch = vi.fn().mockResolvedValue(ok({}));
-    const c = createStatusClient({ getSessionHeader: async () => "a=b", fetch: fetch as any });
+    const c = createStatusClient({ getUserSeq: () => 7, getSessionHeader: async () => "a=b", fetch: fetch as any });
     await expect(c.get(1)).resolves.toEqual({ ok: true, text: "" });
   });
 
   it("fails cleanly on network errors", async () => {
     const fetch = vi.fn().mockRejectedValue(new Error("boom"));
-    const c = createStatusClient({ getSessionHeader: async () => "a=b", fetch: fetch as any });
+    const c = createStatusClient({ getUserSeq: () => 7, getSessionHeader: async () => "a=b", fetch: fetch as any });
     const r = await c.get(1);
     expect(r.ok).toBe(false);
   });
 
   it("rejects cookies with newlines / oversized cookies", async () => {
     const fetch = vi.fn();
-    const c = createStatusClient({ getSessionHeader: async () => "a\r\nb", fetch: fetch as any });
+    const c = createStatusClient({ getUserSeq: () => 7, getSessionHeader: async () => "a\r\nb", fetch: fetch as any });
     const r = await c.get(1);
     expect(r.ok).toBe(false);
     expect(fetch).not.toHaveBeenCalled();

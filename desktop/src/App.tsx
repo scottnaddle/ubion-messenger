@@ -19,7 +19,7 @@ import { Approval } from "./components/Approval";
 import { LockScreen } from "./components/LockScreen";
 import { Flex } from "./components/Flex";
 import { noticeStoreKey } from "../electron/core/room-notice";
-import { isAuthMarkerText } from "./lib/markers";
+import { isBotAuthDm } from "./lib/markers";
 import { THEME_STYLE_ID } from "../electron/core/theme";
 import { navForDigit, type NavView } from "./nav";
 import {
@@ -38,6 +38,7 @@ export function App() {
   const t = useT();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [botUserSeq, setBotUserSeq] = useState(0);
   const [booting, setBooting] = useState(true);
   /** Set when the account needs the web-login window (OTP / 2-step) — at boot or on session expiry. */
   const [webPrompt, setWebPrompt] = useState("");
@@ -139,6 +140,19 @@ export function App() {
       setBooting(false);
     })();
   }, [toast]);
+
+  // Known bot userSeq for safe auth-DM hiding; 0/unknown = hide nothing.
+  useEffect(() => {
+    let alive = true;
+    if (!user) {
+      setBotUserSeq(0);
+      return;
+    }
+    api().call<number>("auth:botUserSeq").then((n) => {
+      if (alive) setBotUserSeq(Number(n) || 0);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [user?.id]);
 
   // messenger lock state (main owns the actual lock)
   useEffect(() => {
@@ -308,7 +322,9 @@ export function App() {
     { id: "action:globalSearch", kind: "action", label: t("전체 대화 검색"), icon: "search", keywords: "global search" },
     ...rooms.map((r) => ({
       id: `room:${r.key}`, kind: "room" as const, label: r.name,
-      sublabel: r.preview && !isAuthMarkerText(r.preview) ? r.preview : undefined,
+      sublabel: r.preview && !isBotAuthDm({
+        text: r.preview, roomKind: r.kind, senderSeq: r.peerUserId, botUserSeq,
+      }) ? r.preview : undefined,
       roomKey: r.key, icon: "chat", unread: r.unread,
     })),
     ...orgUsers
@@ -442,6 +458,7 @@ export function App() {
                   presence={presence}
                   onOpen={setActiveKey}
                   toast={toast}
+                  botUserSeq={botUserSeq}
                   onGlobalSearch={(keyword) => setGlobalSearch({ keyword: keyword || "" })}
                 />
               ) : (
@@ -464,6 +481,7 @@ export function App() {
                   presence={activeRoom.peerUserId ? presence[activeRoom.peerUserId] : undefined}
                   statusMessage={activeRoom.peerUserId ? statusMessages[activeRoom.peerUserId] : undefined}
                   botStatus={botStatuses[activeRoom.key]}
+                  botUserSeq={botUserSeq}
                   toast={toast}
                 />
               ) : (

@@ -83,8 +83,9 @@ import {
   ZOOM_DISABLED_TEXT, type ZoomConfig,
 } from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
+import { isBotAuthDm } from "../src/lib/markers";
 import { createBotSettingsClient } from "./core/bot-settings";
-import { createUbmAuth, isAuthMarkerText, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
+import { createUbmAuth, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
 import { applyMainLanguage, filterLanguagePatch, i18nCaps, tm } from "./core/i18n-main";
 import { createAwayMonitor } from "./core/away";
 import { createLockState, hashPin, validatePin, verifyPin, type PinRecord } from "./core/lock";
@@ -322,7 +323,7 @@ const ubmAuth = createUbmAuth({
   getUserSeq: () => core.user?.id ?? 0,
   readBotDm: async (botUserSeq) => {
     const messages = await core.client.fetchMessages("buddy", botUserSeq, 20);
-    return messages.map((m) => m.message);
+    return messages.map((m) => ({ text: m.message, senderSeq: m.sendUserSeq }));
   },
   store: ubmTokenStore,
 });
@@ -351,7 +352,11 @@ const botSettings = createBotSettingsClient({
 });
 
 const statusClient = () => {
-  const client = createStatusClient({ baseUrl: UBM_BASE_URL(), getSessionHeader: ubmServerProof });
+  const client = createStatusClient({
+    baseUrl: UBM_BASE_URL(),
+    getUserSeq: () => core.user?.id ?? 0,
+    getSessionHeader: ubmServerProof,
+  });
   return {
     get: (userSeq: number) => retryUbm(() => client.get(userSeq), isUbmAuthFailure),
     put: (userSeq: number, text: string) => retryUbm(() => client.put(userSeq, text), isUbmAuthFailure),
@@ -455,6 +460,7 @@ function handle(channel: string, fn: (...args: any[]) => any) {
 function wireCore() {
   unsubscribe.forEach((u) => u());
   resetZoom();
+  core.botUserSeq = () => ubmAuth.botUserSeq();
   core.allowTcpFallback = !!settings.xmppTcpFallback;
   core.portal.persistedMaxPostId = typeof settings.portalLastPostId === "number" ? settings.portalLastPostId : null;
   core.portal.onPostBaseline = (id) => {
@@ -1022,7 +1028,14 @@ function notifyNewPostSummary(p: MessengerEventMap["portalNewPostSummary"]) {
 // ---------- notifications ----------
 function maybeNotify(m: MessengerEventMap["message"]) {
   if (!settings.notifications) return;
-  if (isAuthMarkerText(m.message)) return; // UBION login DM (bot challenge) — never notify
+  if (
+    isBotAuthDm({
+      text: m.message,
+      roomKind: m.roomKind,
+      senderSeq: m.sendUserSeq,
+      botUserSeq: ubmAuth.botUserSeq(),
+    })
+  ) return; // UBION login DM (bot challenge) — never notify
   if (dndActive()) return;
   const room = core.getRooms().find((r) => r.key === m.roomKey);
   const mentioned = !!room && room.kind === "room" && !room.isSelf &&
@@ -1228,6 +1241,7 @@ function registerIpc() {
   });
 
   handle("auth:state", () => ({ user: core.user, conn: core.conn }));
+  handle("auth:botUserSeq", () => ubmAuth.botUserSeq());
   handle(
     "auth:login",
     async (o: { serverUrl: string; username: string; password?: string; rememberMe: boolean; autoLogin: boolean }) => {

@@ -1,5 +1,5 @@
 import { normalizeAttach } from "./attach";
-import { isAuthMarkerText } from "../../src/lib/markers";
+import { isBotAuthDm } from "../../src/lib/markers";
 import { EventEmitter } from "node:events";
 import { DaouClient, sortRooms } from "./daou-client";
 import { PortalService } from "./portal";
@@ -106,6 +106,8 @@ export class MessengerCore {
   /** BOSH failures (before ever online) that trigger the TCP fallback when allowed. */
   tcpFallbackAfter = 3;
   log: (msg: string) => void = (m) => console.log(`[core] ${m}`);
+  /** Known UBION bot userSeq (0 = unknown, hide nothing); auth DMs from anyone else stay visible. */
+  botUserSeq: () => number = () => 0;
   private em = new EventEmitter();
   private rooms = new Map<string, Room>();
   /** Locally-created group rooms the server list has not caught up with yet. */
@@ -407,8 +409,16 @@ export class MessengerCore {
     if (msg.needConfirmCount == null) msg.needConfirmCount = initialNeedConfirm(r.kind, r.seq, me, room);
     msg.confirmUsers = [];
     const viewing = this.activeRoomKey === key && this.focused;
-    if (room && isAuthMarkerText(msg.message)) {
-      // UBION login DM from the bot: consumed by ubm-auth, never a visible/unread message.
+    if (
+      room &&
+      isBotAuthDm({
+        text: msg.message,
+        roomKind: r.kind,
+        senderSeq: msg.sendUserSeq,
+        botUserSeq: this.botUserSeq(),
+      })
+    ) {
+      // UBION login DM from the known bot in a 1:1 room: consumed by ubm-auth, never visible/unread.
     } else if (room) {
       room.preview = msg.attach ? `📎 ${msg.attach.name}` : msg.message.slice(0, 200);
       room.messageId = msg.messageId ?? room.messageId;

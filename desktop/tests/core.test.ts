@@ -133,6 +133,58 @@ describe("realtime file attach reconciliation", () => {
   });
 });
 
+describe("bot auth DM hiding", () => {
+  const AUTH_TEXT = "인증 코드: [[ubm:auth:AAAAAAAAAAAAAAAA:BBBBBBBBBBBBBBBBBBBB]]";
+  const buddy = (seq: number): Room => ({
+    key: `buddy:${seq}`, kind: "buddy", seq, name: "peer", preview: "", messageId: 0, unread: 0,
+    usePin: false, usePush: true, avatar: "", isSelf: false, peerUserId: seq,
+    createdAt: new Date(1e12).toISOString(),
+  });
+
+  async function ready(peerSeq: number) {
+    const core = new MessengerCore("https://example.invalid");
+    core.client.user = { id: 1, repId: 1, name: "me", loginId: "me" };
+    core.client.listRooms = async () => [buddy(peerSeq)];
+    await core.refreshRooms();
+    return core;
+  }
+
+  it("hides a complete auth marker from the known bot in a 1:1 room", async () => {
+    const core = await ready(99);
+    core.botUserSeq = () => 99;
+    (core as any).onBody({
+      type: "message", subtype: "single", from: { userSeq: 99, userName: "bot" }, toSeq: 1,
+      message: AUTH_TEXT, messageId: 1001,
+    });
+    expect(core.getRooms()[0].preview).toBe("");
+    expect(core.getRooms()[0].unread).toBe(0);
+    core.shutdown();
+  });
+
+  it("does not hide spoofed marker text from another sender", async () => {
+    const core = await ready(2);
+    core.botUserSeq = () => 99;
+    (core as any).onBody({
+      type: "message", subtype: "single", from: { userSeq: 2, userName: "peer" }, toSeq: 1,
+      message: AUTH_TEXT, messageId: 1002,
+    });
+    expect(core.getRooms()[0].preview).toBe(AUTH_TEXT);
+    expect(core.getRooms()[0].unread).toBe(1);
+    core.shutdown();
+  });
+
+  it("hides nothing while the bot userSeq is unknown", async () => {
+    const core = await ready(99);
+    (core as any).onBody({
+      type: "message", subtype: "single", from: { userSeq: 99, userName: "bot" }, toSeq: 1,
+      message: AUTH_TEXT, messageId: 1003,
+    });
+    expect(core.getRooms()[0].preview).toBe(AUTH_TEXT);
+    expect(core.getRooms()[0].unread).toBe(1);
+    core.shutdown();
+  });
+});
+
 describe("IME-safe Enter", () => {
   it("never sends while composing", () => {
     expect(isSendEnter({ key: "Enter", shiftKey: false, isComposing: true })).toBe(false);

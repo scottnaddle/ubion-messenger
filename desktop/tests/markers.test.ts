@@ -1,8 +1,47 @@
 import { describe, expect, it } from "vitest";
 import {
-  composeEditText, composeQuoteText, decodeEditId, decodeReplyId, EDIT_TAG, encodeEditMarker,
-  encodeReplyMarker, parseMessage, stripEditMarkers, stripReplyMarkers, truncateQuote,
+  AUTH_MARKER_RE, composeEditText, composeQuoteText, decodeEditId, decodeReplyId, EDIT_TAG, encodeEditMarker,
+  encodeReplyMarker, isAuthMarkerText, isBotAuthDm, parseMessage, stripEditMarkers, stripReplyMarkers, truncateQuote,
 } from "../src/lib/markers";
+
+const AUTH_TEXT = "인증 코드: [[ubm:auth:AAAAAAAAAAAAAAAA:BBBBBBBBBBBBBBBBBBBB]]";
+
+describe("markers: auth DM hiding", () => {
+  it("requires a complete marker, not just the prefix", () => {
+    expect(isAuthMarkerText(AUTH_TEXT)).toBe(true);
+    expect(AUTH_MARKER_RE.test(AUTH_TEXT)).toBe(true);
+    expect(isAuthMarkerText("인증 코드: [[ubm:auth:incomplete")).toBe(false);
+    expect(isAuthMarkerText("[[ubm:auth:AAAAAAAAAAAAAAAA:short]]")).toBe(false);
+    expect(isAuthMarkerText("no marker")).toBe(false);
+  });
+
+  it("hides only a complete marker from the known bot in a buddy room", () => {
+    expect(isBotAuthDm({
+      text: AUTH_TEXT, roomKind: "buddy", senderSeq: 99, botUserSeq: 99,
+    })).toBe(true);
+    expect(isBotAuthDm({
+      text: AUTH_TEXT, roomKind: "buddy", senderSeq: "99", botUserSeq: 99,
+    })).toBe(true);
+  });
+
+  it("never hides when the room, sender, marker, or bot identity is unknown", () => {
+    expect(isBotAuthDm({
+      text: AUTH_TEXT, roomKind: "room", senderSeq: 99, botUserSeq: 99,
+    })).toBe(false);
+    expect(isBotAuthDm({
+      text: AUTH_TEXT, roomKind: "buddy", senderSeq: 7, botUserSeq: 99,
+    })).toBe(false);
+    expect(isBotAuthDm({
+      text: "인증 코드: [[ubm:auth:incomplete", roomKind: "buddy", senderSeq: 99, botUserSeq: 99,
+    })).toBe(false);
+    expect(isBotAuthDm({
+      text: AUTH_TEXT, roomKind: "buddy", senderSeq: 99, botUserSeq: 0,
+    })).toBe(false);
+    expect(isBotAuthDm({
+      text: AUTH_TEXT, roomKind: "buddy", senderSeq: 99, botUserSeq: undefined,
+    })).toBe(false);
+  });
+});
 
 describe("markers: edit encode/decode", () => {
   it("round-trips a positive id", () => {

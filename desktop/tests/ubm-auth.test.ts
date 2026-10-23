@@ -12,8 +12,9 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const marker = (challengeId = CHALLENGE_ID, code = CODE) => `인증 코드: [[ubm:auth:${challengeId}:${code}]]`;
+const dm = (text = marker(), senderSeq = 99) => ({ text, senderSeq });
 
-function authStore(initial: { token: string; userSeq: number; expiresAt: string } | null = null) {
+function authStore(initial: { token: string; userSeq: number; expiresAt: string; botUserSeq?: number } | null = null) {
   const load = vi.fn(async () => initial);
   const save = vi.fn(async (_value: unknown) => undefined);
   return { load, save };
@@ -31,7 +32,8 @@ describe("token / marker helpers", () => {
 
   it("detects auth marker text without matching ordinary messages", () => {
     expect(isAuthMarkerText(marker())).toBe(true);
-    expect(isAuthMarkerText("prefix [[ubm:auth:incomplete")).toBe(true);
+    expect(isAuthMarkerText("prefix [[ubm:auth:incomplete")).toBe(false);
+    expect(isAuthMarkerText("[[ubm:auth:short:too-short]]")).toBe(false);
     expect(isAuthMarkerText("no marker here")).toBe(false);
     expect(isAuthMarkerText(null)).toBe(false);
     expect(isAuthMarkerText(undefined)).toBe(false);
@@ -62,7 +64,7 @@ describe("createUbmAuth login", () => {
     const readBotDm = vi.fn(async (botSeq: number) => {
       expect(botSeq).toBe(botUserSeq);
       readCount += 1;
-      return readCount === 1 ? ["일반 메시지"] : ["안내", marker()];
+      return readCount === 1 ? [dm("일반 메시지", 7)] : [dm("안내", 7), dm()];
     });
     const sleep = vi.fn(async () => undefined);
     const store = authStore();
@@ -91,8 +93,9 @@ describe("createUbmAuth login", () => {
     expect(challengeRequest.codeChallenge).not.toContain("=");
 
     expect(store.save).toHaveBeenCalledWith({
-      token: "server-token-123456", userSeq, expiresAt: "2026-01-01T01:00:00.000Z",
+      token: "server-token-123456", userSeq, expiresAt: "2026-01-01T01:00:00.000Z", botUserSeq: 99,
     });
+    expect(auth.botUserSeq()).toBe(99);
     expect(auth.status()).toEqual({
       userSeq, expiresAt: "2026-01-01T01:00:00.000Z", masked: "serve…3456",
     });
@@ -119,7 +122,7 @@ describe("createUbmAuth login", () => {
     const auth = createUbmAuth({
       baseUrl: "https://bot.example",
       getUserSeq: () => 7,
-      readBotDm: async () => [marker()],
+      readBotDm: async () => [dm()],
       fetch: fetch as unknown as typeof globalThis.fetch,
       now: () => clock,
       sleep: async () => undefined,
@@ -154,7 +157,7 @@ describe("createUbmAuth login", () => {
     const auth = createUbmAuth({
       baseUrl: "https://bot.example",
       getUserSeq: () => 7,
-      readBotDm: async () => [marker()],
+      readBotDm: async () => [dm()],
       fetch: fetch as unknown as typeof globalThis.fetch,
       now: () => START,
       sleep: async () => undefined,
@@ -164,7 +167,7 @@ describe("createUbmAuth login", () => {
     await expect(auth.getToken()).resolves.toBe("new-user-token");
     expect(challengeUserSeq).toBe("7");
     expect(store.save).toHaveBeenCalledWith({
-      token: "new-user-token", userSeq: 7, expiresAt: "2026-01-02T00:00:00.000Z",
+      token: "new-user-token", userSeq: 7, expiresAt: "2026-01-02T00:00:00.000Z", botUserSeq: 99,
     });
   });
 
@@ -191,7 +194,7 @@ describe("createUbmAuth login", () => {
       }
       throw new Error(`unexpected ${u}`);
     });
-    const readBotDm = vi.fn(async () => [marker()]);
+    const readBotDm = vi.fn(async () => [dm()]);
     const auth = createUbmAuth({
       baseUrl: "https://bot.example",
       getUserSeq: () => 7,
@@ -216,7 +219,7 @@ describe("createUbmAuth login", () => {
     const auth = createUbmAuth({
       baseUrl: "https://bot.example",
       getUserSeq: () => 7,
-      readBotDm: async () => ["no marker"],
+      readBotDm: async () => [dm("no marker")],
       fetch: fetch as unknown as typeof globalThis.fetch,
       now: () => clock,
       sleep: async (ms) => {
@@ -230,6 +233,44 @@ describe("createUbmAuth login", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it("only accepts the auth marker from the bot itself", async () => {
+    let clock = 0;
+    const fetch = vi.fn(async () => json({ challengeId: CHALLENGE_ID, botUserSeq: 99 }, 202));
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => 7,
+      readBotDm: async () => [dm(marker(), 7), dm(marker(), 100)],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+      },
+      pollMs: 1000,
+      waitMs: 3000,
+    });
+
+    await expect(auth.getToken()).rejects.toThrow("인증 메시지를 받지 못했습니다");
+  });
+
+  it("loads the persisted bot userSeq together with a stored token", async () => {
+    const fetch = vi.fn();
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => 7,
+      readBotDm: async () => [dm()],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => START,
+      store: authStore({
+        token: "saved-token-123456", userSeq: 7, expiresAt: "2026-01-01T01:00:00.000Z", botUserSeq: 99,
+      }),
+    });
+
+    expect(auth.botUserSeq()).toBe(0);
+    await expect(auth.getToken()).resolves.toBe("saved-token-123456");
+    expect(auth.botUserSeq()).toBe(99);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("backs off for 60 seconds after a failed login without another challenge", async () => {
     let clock = 0;
     let challenges = 0;
@@ -240,7 +281,7 @@ describe("createUbmAuth login", () => {
     const auth = createUbmAuth({
       baseUrl: "https://bot.example",
       getUserSeq: () => 7,
-      readBotDm: async () => [marker()],
+      readBotDm: async () => [dm()],
       fetch: fetch as unknown as typeof globalThis.fetch,
       now: () => clock,
       sleep: async () => undefined,
@@ -257,6 +298,244 @@ describe("createUbmAuth login", () => {
     clock = 60_000;
     await expect(auth.getToken()).rejects.toThrow("인증 서버에 일시적인 오류");
     expect(challenges).toBe(2);
+  });
+
+  it("doubles the backoff after each failure and caps it at 30 minutes", async () => {
+    let clock = 0;
+    let challenges = 0;
+    const fetch = vi.fn(async () => {
+      challenges += 1;
+      return json({ error: { code: "upstream_error" } }, 502);
+    });
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => 7,
+      readBotDm: async () => [dm()],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => clock,
+      sleep: async () => undefined,
+    });
+
+    const delays = [60_000, 120_000, 240_000, 480_000, 960_000, 1_800_000, 1_800_000];
+    for (let i = 0; i < delays.length; i += 1) {
+      await expect(auth.getToken()).rejects.toThrow("인증 서버에 일시적인 오류");
+      expect(challenges).toBe(i + 1);
+      await expect(auth.getToken()).rejects.toThrow("잠시 후 다시 시도하세요");
+      clock += delays[i] - 1;
+      await expect(auth.getToken()).rejects.toThrow("잠시 후 다시 시도하세요");
+      expect(challenges).toBe(i + 1);
+      clock += 1;
+    }
+  });
+
+  it.each([404, 403])("stops automatic logins for the session when the challenge returns %i", async (status) => {
+    let clock = 0;
+    let challengeCalls = 0;
+    let challengeBody: any;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/auth/challenge")) {
+        challengeCalls += 1;
+        challengeBody = JSON.parse(String(init?.body));
+        if (challengeCalls === 1) return json({ error: "unsupported" }, status);
+        return json({ challengeId: CHALLENGE_ID, botUserSeq: 99 }, 202);
+      }
+      if (u.endsWith("/v1/auth/token")) {
+        return json({ token: "recovered-token", userSeq: 7, expiresAt: "2026-01-02T00:00:00.000Z" });
+      }
+      throw new Error(`unexpected ${u}`);
+    });
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => 7,
+      readBotDm: async () => [dm()],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => clock,
+      sleep: async () => undefined,
+    });
+
+    await expect(auth.getToken()).rejects.toThrow("자동 로그인을 사용할 수 없습니다");
+    expect(challengeCalls).toBe(1);
+    clock += 24 * 60 * 60_000;
+    await expect(auth.getToken()).rejects.toThrow("자동 로그인을 사용할 수 없습니다");
+    expect(challengeCalls).toBe(1);
+
+    await auth.logout();
+    await expect(auth.getToken()).resolves.toBe("recovered-token");
+    expect(challengeCalls).toBe(2);
+    expect(challengeBody.userSeq).toBe("7");
+    expect(auth.botUserSeq()).toBe(99);
+  });
+
+  it("resets the automatic-login stop when the account changes", async () => {
+    let seq = 7;
+    let challengeCalls = 0;
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/v1/auth/challenge")) {
+        challengeCalls += 1;
+        if (challengeCalls === 1) return json({ error: "unsupported" }, 404);
+        expect(JSON.parse(String(init?.body)).userSeq).toBe("8");
+        return json({ challengeId: CHALLENGE_ID, botUserSeq: 99 }, 202);
+      }
+      if (u.endsWith("/v1/auth/token")) {
+        return json({ token: "account-8-token", userSeq: 8, expiresAt: "2026-01-02T00:00:00.000Z" });
+      }
+      throw new Error(`unexpected ${u}`);
+    });
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => seq,
+      readBotDm: async () => [dm()],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => START,
+      sleep: async () => undefined,
+    });
+
+    await expect(auth.getToken()).rejects.toThrow("자동 로그인을 사용할 수 없습니다");
+    seq = 8;
+    await expect(auth.getToken()).resolves.toBe("account-8-token");
+    expect(challengeCalls).toBe(2);
+  });
+
+  it("discards a login that finishes after logout", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const startedP = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/v1/auth/challenge")) {
+        started();
+        await gate;
+        return json({ challengeId: CHALLENGE_ID, botUserSeq: 99 }, 202);
+      }
+      if (u.endsWith("/v1/auth/token")) {
+        return json({ token: "late-token-123456", userSeq: 7, expiresAt: "2026-01-02T00:00:00.000Z" });
+      }
+      throw new Error(`unexpected ${u}`);
+    });
+    const store = authStore();
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => 7,
+      readBotDm: async () => [dm()],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => START,
+      sleep: async () => undefined,
+      store,
+    });
+
+    const pending = auth.getToken();
+    await startedP;
+    await auth.logout();
+    release();
+    await expect(pending).rejects.toThrow("로그인이 취소되었습니다");
+    expect(store.save).not.toHaveBeenCalledWith(expect.objectContaining({ token: "late-token-123456" }));
+    expect(store.save).toHaveBeenLastCalledWith(null);
+    expect(auth.status()).toEqual({});
+  });
+
+  it("discards a login that finishes after invalidate", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const startedP = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/v1/auth/challenge")) {
+        started();
+        await gate;
+        return json({ challengeId: CHALLENGE_ID, botUserSeq: 99 }, 202);
+      }
+      if (u.endsWith("/v1/auth/token")) {
+        return json({ token: "late-token-654321", userSeq: 7, expiresAt: "2026-01-02T00:00:00.000Z" });
+      }
+      throw new Error(`unexpected ${u}`);
+    });
+    const store = authStore();
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => 7,
+      readBotDm: async () => [dm()],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => START,
+      sleep: async () => undefined,
+      store,
+    });
+
+    const pending = auth.getToken();
+    await startedP;
+    await auth.invalidate();
+    release();
+    await expect(pending).rejects.toThrow("로그인이 취소되었습니다");
+    expect(store.save).not.toHaveBeenCalledWith(expect.objectContaining({ token: "late-token-654321" }));
+    expect(store.save).toHaveBeenLastCalledWith(null);
+    expect(auth.status()).toEqual({});
+  });
+
+  it("discards a login that finishes after the account changes", async () => {
+    let seq = 7;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const startedP = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let challengeCalls = 0;
+    let tokenCalls = 0;
+    const fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/v1/auth/challenge")) {
+        challengeCalls += 1;
+        if (challengeCalls === 1) {
+          started();
+          await gate;
+        }
+        return json({ challengeId: CHALLENGE_ID, botUserSeq: 99 }, 202);
+      }
+      if (u.endsWith("/v1/auth/token")) {
+        tokenCalls += 1;
+        return json({
+          token: `account-token-${tokenCalls}`,
+          userSeq: tokenCalls === 1 ? 7 : 8,
+          expiresAt: "2026-01-02T00:00:00.000Z",
+        });
+      }
+      throw new Error(`unexpected ${u}`);
+    });
+    const store = authStore();
+    const auth = createUbmAuth({
+      baseUrl: "https://bot.example",
+      getUserSeq: () => seq,
+      readBotDm: async () => [dm()],
+      fetch: fetch as unknown as typeof globalThis.fetch,
+      now: () => START,
+      sleep: async () => undefined,
+      store,
+    });
+
+    const pending = auth.getToken();
+    await startedP;
+    seq = 8;
+    release();
+    await expect(pending).rejects.toThrow("로그인이 취소되었습니다");
+    expect(store.save).not.toHaveBeenCalledWith(expect.objectContaining({ token: "account-token-1" }));
+    expect(auth.status()).toEqual({});
+    await expect(auth.getToken()).resolves.toBe("account-token-2");
+    expect(store.save).toHaveBeenLastCalledWith({
+      token: "account-token-2", userSeq: 8, expiresAt: "2026-01-02T00:00:00.000Z", botUserSeq: 99,
+    });
   });
 
   it("invalidates the cached token and logs out on the server", async () => {
@@ -283,7 +562,7 @@ describe("createUbmAuth login", () => {
     const auth = createUbmAuth({
       baseUrl: "https://bot.example",
       getUserSeq: () => 7,
-      readBotDm: async () => [marker()],
+      readBotDm: async () => [dm()],
       fetch: fetch as unknown as typeof globalThis.fetch,
       now: () => START,
       sleep: async () => undefined,
@@ -325,7 +604,7 @@ describe("createUbmAuth login", () => {
     const auth = createUbmAuth({
       baseUrl: "https://bot.example",
       getUserSeq: () => 7,
-      readBotDm: async () => [marker()],
+      readBotDm: async () => [dm()],
       fetch: fetch as unknown as typeof globalThis.fetch,
       now: () => START,
       sleep: async () => undefined,

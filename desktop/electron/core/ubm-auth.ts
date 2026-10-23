@@ -15,6 +15,7 @@ import { AUTH_MARKER_RE, isAuthMarkerText } from "../../src/lib/markers";
 export { AUTH_MARKER_RE, isAuthMarkerText };
 
 export const UBM_AUTH_BACKOFF_MS = 60_000;
+export const UBM_AUTH_BACKOFF_MAX_MS = 30 * 60_000;
 export const UBM_AUTH_REFRESH_MS = 5 * 60_000;
 
 const MAX_TOKEN_LENGTH = 4096;
@@ -25,6 +26,8 @@ export type UbmAuthToken = {
   token: string;
   userSeq: number;
   expiresAt: string;
+  /** DaouOffice userSeq of the bot that sends the auth DM; persisted with the token. */
+  botUserSeq?: number;
 };
 
 export type UbmTokenStore = {
@@ -38,11 +41,13 @@ export type UbmAuthStatus = {
   masked?: string;
 };
 
+export type UbmAuthDm = { text: string; senderSeq?: number };
+
 export type UbmAuthOptions = {
   baseUrl?: string;
   getUserSeq: () => number;
-  /** Recent message texts of the 1:1 room with the bot (newest first or last — order does not matter). */
-  readBotDm: (botUserSeq: number) => Promise<string[]>;
+  /** Recent messages of the 1:1 room with the bot (newest first or last — order does not matter). */
+  readBotDm: (botUserSeq: number) => Promise<UbmAuthDm[]>;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -56,6 +61,8 @@ export type UbmAuth = {
   invalidate(): Promise<void>;
   logout(): Promise<void>;
   status(): UbmAuthStatus;
+  /** Known bot userSeq (0 until a challenge succeeds); used to recognize auth DMs without trusting text alone. */
+  botUserSeq(): number;
 };
 
 const MESSAGES = {
@@ -71,6 +78,8 @@ const MESSAGES = {
   badResponse: "인증 서버 응답을 확인할 수 없습니다.",
   userMismatch: "인증 사용자 정보가 일치하지 않습니다.",
   dmUnavailable: "봇 대화방의 메시지를 확인할 수 없습니다.",
+  autoLoginUnavailable: "이 서버에서는 자동 로그인을 사용할 수 없습니다. 다시 로그인하세요.",
+  loginCancelled: "로그인이 취소되었습니다. 다시 시도하세요.",
 } as const;
 
 /** Mask a token for logging: first 5 + … + last 4, or *** when it is too short to reveal safely. */
@@ -82,6 +91,11 @@ export function maskToken(token: unknown): string {
 function positiveSeq(value: unknown): number {
   const n = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
   return Number.isSafeInteger(n) && n > 0 ? n : 0;
+}
+
+/** 60 s, 2 min, 4 min … capped at 30 min after consecutive failures. */
+function backoffMs(failures: number): number {
+  return Math.min(UBM_AUTH_BACKOFF_MAX_MS, UBM_AUTH_BACKOFF_MS * 2 ** Math.max(0, failures - 1));
 }
 
 function httpError(status: number, fallback: string): Error {
@@ -153,19 +167,28 @@ export function createUbmAuth({
   const waitFor = Math.max(0, Math.floor(waitMs));
 
   let token: UbmAuthToken | null = null;
+  let botSeq = 0;
   let loaded = false;
   let loadPromise: Promise<void> | null = null;
   let loginPromise: Promise<string> | null = null;
+  let loginAttempt = 0;
+  let generation = 0;
+  let lastSeq = 0;
   let blockedUntil = 0;
+  let failures = 0;
+  /** 404/403 on /v1/auth/challenge means this app session cannot use DM auth; stay quiet until logout/account change. */
+  let autoLoginStopped = false;
 
   async function ensureLoaded(): Promise<void> {
     if (loaded) return;
     if (!loadPromise) {
+      const genAtLoad = generation;
       loadPromise = (async () => {
         if (!store) return;
         try {
           const saved = await store.load();
           if (
+            genAtLoad === generation &&
             saved &&
             typeof saved.token === "string" &&
             saved.token.length > 0 &&
@@ -175,7 +198,14 @@ export function createUbmAuth({
             typeof saved.expiresAt === "string" &&
             Number.isFinite(Date.parse(saved.expiresAt))
           ) {
-            token = { token: saved.token, userSeq: Number(saved.userSeq), expiresAt: saved.expiresAt };
+            const savedBotSeq = positiveSeq(saved.botUserSeq);
+            token = {
+              token: saved.token,
+              userSeq: Number(saved.userSeq),
+              expiresAt: saved.expiresAt,
+              ...(savedBotSeq > 0 ? { botUserSeq: savedBotSeq } : {}),
+            };
+            if (savedBotSeq > 0) botSeq = savedBotSeq;
           }
         } catch {
           /* an unreadable store is treated as empty */
@@ -203,6 +233,19 @@ export function createUbmAuth({
     return Number.isFinite(expires) && expires - now() > UBM_AUTH_REFRESH_MS;
   }
 
+  /** Account change: invalidate any in-flight login and all per-account backoff/stop state. */
+  function resetForAccount(seq: number) {
+    generation += 1;
+    loginAttempt += 1;
+    loginPromise = null;
+    token = null;
+    botSeq = 0;
+    blockedUntil = 0;
+    failures = 0;
+    autoLoginStopped = false;
+    lastSeq = seq;
+  }
+
   async function requestChallenge(userSeq: number) {
     const verifier = randomBytes(32).toString("base64url");
     const codeChallenge = createHash("sha256").update(verifier).digest("base64url");
@@ -219,6 +262,8 @@ export function createUbmAuth({
       throw new Error(MESSAGES.network);
     }
 
+    // 404/403: the server has no DM-challenge auth or the bot may not DM us. Retrying only spams failures.
+    if (res.status === 404 || res.status === 403) throw new Error(MESSAGES.autoLoginUnavailable);
     if (res.status < 200 || res.status >= 300) throw httpError(res.status, MESSAGES.startFailed);
     const data = await readJson(res);
     const challengeId = typeof data?.challengeId === "string" ? data.challengeId : "";
@@ -233,12 +278,16 @@ export function createUbmAuth({
     let polls = 0;
     while (true) {
       polls += 1;
-      let texts: string[];
+      let entries: UbmAuthDm[];
       try {
-        texts = await readBotDm(botUserSeq);
+        entries = await readBotDm(botUserSeq);
       } catch {
         throw new Error(MESSAGES.dmUnavailable);
       }
+      // A marker in a spoofed/non-bot message must never be consumed as our code.
+      const texts = entries
+        .filter((m) => m && positiveSeq(m.senderSeq) === botUserSeq)
+        .map((m) => m.text);
       const code = findCode(texts, challengeId);
       if (code) return code;
       const remaining = deadline - now();
@@ -283,46 +332,91 @@ export function createUbmAuth({
   async function login(seq: number): Promise<UbmAuthToken> {
     const challenge = await requestChallenge(seq);
     const code = await waitForCode(challenge.botUserSeq, challenge.challengeId);
-    return exchange(seq, challenge.challengeId, code, challenge.verifier);
+    const next = await exchange(seq, challenge.challengeId, code, challenge.verifier);
+    return { ...next, botUserSeq: challenge.botUserSeq };
   }
 
   async function getToken(): Promise<string> {
     await ensureLoaded();
     const seq = positiveSeq(getUserSeq());
     if (seq <= 0) throw new Error(MESSAGES.loginRequired);
+    if (lastSeq > 0 && seq !== lastSeq) {
+      resetForAccount(seq);
+      await save(null);
+    } else {
+      lastSeq = seq;
+    }
+    if (autoLoginStopped) throw new Error(MESSAGES.autoLoginUnavailable);
     if (fresh(token, seq)) return token.token;
 
     const current = now();
     if (current < blockedUntil) throw new Error(MESSAGES.backoff);
+    if (loginPromise) return loginPromise;
 
-    if (!loginPromise) {
-      loginPromise = (async () => {
-        try {
-          const next = await login(seq);
-          token = next;
-          blockedUntil = 0;
-          await save(next);
-          return next.token;
-        } catch (e) {
-          blockedUntil = now() + UBM_AUTH_BACKOFF_MS;
-          throw e instanceof Error ? e : new Error(MESSAGES.badResponse);
-        } finally {
-          loginPromise = null;
+    const gen = generation;
+    const attempt = ++loginAttempt;
+    const running = (async (): Promise<string> => {
+      try {
+        const next = await login(seq);
+        if (gen !== generation) throw new Error(MESSAGES.loginCancelled);
+        const seqNow = positiveSeq(getUserSeq());
+        if (seqNow !== seq) {
+          // Account changed while the challenge was in flight: never cache/save the old account's token.
+          resetForAccount(seqNow);
+          await save(null);
+          throw new Error(MESSAGES.loginCancelled);
         }
-      })();
-    }
-    return loginPromise;
+        token = next;
+        if (next.botUserSeq) botSeq = next.botUserSeq;
+        blockedUntil = 0;
+        failures = 0;
+        autoLoginStopped = false;
+        await save(next);
+        return next.token;
+      } catch (e) {
+        if (gen !== generation) throw e instanceof Error ? e : new Error(MESSAGES.badResponse);
+        const seqNow = positiveSeq(getUserSeq());
+        if (seqNow !== seq) {
+          resetForAccount(seqNow);
+          await save(null);
+          throw new Error(MESSAGES.loginCancelled);
+        }
+        if (e instanceof Error && e.message === MESSAGES.autoLoginUnavailable) {
+          autoLoginStopped = true;
+          blockedUntil = 0;
+          failures = 0;
+        } else {
+          failures += 1;
+          blockedUntil = now() + backoffMs(failures);
+        }
+        throw e instanceof Error ? e : new Error(MESSAGES.badResponse);
+      } finally {
+        if (loginAttempt === attempt) loginPromise = null;
+      }
+    })();
+    loginPromise = running;
+    return running;
   }
 
   async function invalidate(): Promise<void> {
+    generation += 1;
+    loginAttempt += 1;
+    loginPromise = null;
     token = null;
     await save(null);
   }
 
   async function logout(): Promise<void> {
     const current = token;
+    generation += 1;
+    loginAttempt += 1;
+    loginPromise = null;
     token = null;
+    botSeq = 0;
     blockedUntil = 0;
+    failures = 0;
+    autoLoginStopped = false;
+    lastSeq = 0;
     loaded = true;
     if (current) {
       const doFetch = fetchImpl ?? globalThis.fetch;
@@ -347,5 +441,5 @@ export function createUbmAuth({
     return { userSeq: token.userSeq, expiresAt: token.expiresAt, masked: maskToken(token.token) };
   }
 
-  return { getToken, invalidate, logout, status };
+  return { getToken, invalidate, logout, status, botUserSeq: () => botSeq };
 }

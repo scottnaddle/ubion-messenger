@@ -32,7 +32,7 @@ import {
   applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionPollIds, reactionUiVisibility,
   REACTION_POLL_MS,
 } from "../lib/reactions";
-import { composeQuoteText, decodePollId, isAuthMarkerText, parseMessage, truncateQuote } from "../lib/markers";
+import { composeQuoteText, decodePollId, isBotAuthDm, parseMessage, truncateQuote } from "../lib/markers";
 import { FileCard, MediaViewer } from "./FileCard";
 import { BackupModal } from "./BackupModal";
 import { EmojiPicker } from "./EmojiPicker";
@@ -80,8 +80,11 @@ function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
 }
 
 export function ChatView({
-  room, me, focused, presence, statusMessage, botStatus, toast,
-}: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; statusMessage?: string; botStatus?: BotStatusEntry; toast: ToastFn }) {
+  room, me, focused, presence, statusMessage, botStatus, botUserSeq, toast,
+}: {
+  room: Room; me: SessionUser; focused: boolean; presence?: Presence; statusMessage?: string;
+  botStatus?: BotStatusEntry; botUserSeq?: number; toast: ToastFn;
+}) {
   const t = useT();
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -747,7 +750,12 @@ export function ChatView({
     }
   };
   const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
-  const visibleMsgs = useMemo(() => msgs.filter((m) => !isAuthMarkerText(m.message)), [msgs]);
+  const visibleMsgs = useMemo(
+    () => msgs.filter((m) => !isBotAuthDm({
+      text: m.message, roomKind: room.kind, senderSeq: m.sendUserSeq, botUserSeq,
+    })),
+    [msgs, room.kind, botUserSeq],
+  );
   const subtitle =
     room.kind === "buddy"
       ? [room.position, t(presence ? PRES_LABEL[presence] : PRES_LABEL.offline), statusMessage].filter(Boolean).join(" · ")

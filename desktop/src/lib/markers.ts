@@ -19,8 +19,29 @@ const POLL_MARKERS = /\[\[ubm:poll:\d+\]\]/g;
 /** Bot auth DM marker: `[[ubm:auth:<challengeId>:<code>]]` (hidden from the chat UI). */
 export const AUTH_MARKER_RE = /\[\[ubm:auth:([A-Za-z0-9_-]{16,32}):([A-Za-z0-9_-]{20,64})\]\]/;
 
+function markerSeq(value: unknown): number {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isSafeInteger(n) && n > 0 ? n : 0;
+}
+
+/** True only when the text contains a complete, well-formed auth marker (not just the loose prefix). */
 export function isAuthMarkerText(text: unknown): boolean {
-  return typeof text === "string" && text.includes("[[ubm:auth:");
+  return typeof text === "string" && AUTH_MARKER_RE.test(text);
+}
+
+/**
+ * Hide an auth DM only when all three facts are known and consistent:
+ * the complete marker text, a 1:1 (buddy) room, and the known bot as its sender.
+ */
+export function isBotAuthDm({
+  text, roomKind, senderSeq, botUserSeq,
+}: {
+  text: unknown; roomKind: unknown; senderSeq: unknown; botUserSeq: unknown;
+}): boolean {
+  if (roomKind !== "buddy") return false;
+  const bot = markerSeq(botUserSeq);
+  if (bot <= 0 || markerSeq(senderSeq) !== bot) return false;
+  return isAuthMarkerText(text);
 }
 
 export const EDIT_TAG = "(수정됨)";
