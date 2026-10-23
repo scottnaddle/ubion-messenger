@@ -6,7 +6,7 @@ const F = REACTION_ROOM_FORBIDDEN;
 describe("reaction room state", () => {
   it("keeps the UI after it has worked once, even across repeated transient failures", () => {
     let st = reactionRoomOk();
-    for (let i = 0; i < 5; i++) st = reactionRoomFailed(st, "세션이 만료되었습니다. 다시 로그인하세요.", F);
+    for (let i = 0; i < 2; i++) st = reactionRoomFailed(st, "세션이 만료되었습니다. 다시 로그인하세요.", F);
     expect(st.blocked).toBeNull();
     expect(reactionRoomReason(true, true, st)).toBeNull();
   });
@@ -28,5 +28,23 @@ describe("reactions client 403", () => {
     const fetchImpl = vi.fn(async () => new Response("{}", { status: 403 }));
     const c = createReactionsClient({ baseUrl: "https://x", getUserSeq: () => 5, getSessionHeader: async () => "t", fetch: fetchImpl } as never);
     expect(await c.list(1, [1])).toEqual({ ok: false, message: F });
+  });
+});
+
+describe("reaction toggle failures", () => {
+  it("toast text distinguishes 'bot not in room' from a server outage", async () => {
+    const { reactionToggleErrorText, reactionBlockedToast } = await import("../src/lib/reactions");
+    expect(reactionToggleErrorText(F, F)).toContain("봇이 없어");
+    expect(reactionToggleErrorText("리액션 서버에 연결할 수 없습니다.", F)).toContain("봇 서버 연결 안 됨");
+    expect(reactionBlockedToast("봇이 이 대화방에 없음")).toContain("초대");
+    expect(reactionBlockedToast("봇 서버 연결 안 됨")).toContain("다시 시도");
+  });
+  it("a sustained outage greys the UI out even after it worked; recovery re-enables", () => {
+    let st = reactionRoomOk();
+    st = reactionRoomFailed(st, "x", F); st = reactionRoomFailed(st, "x", F);
+    expect(st.blocked).toBeNull();
+    st = reactionRoomFailed(st, "x", F);
+    expect(reactionRoomReason(true, true, st)).toBe("봇 서버 연결 안 됨");
+    expect(reactionRoomReason(true, true, reactionRoomOk())).toBeNull();
   });
 });

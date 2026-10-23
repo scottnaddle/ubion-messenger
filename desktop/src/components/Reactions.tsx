@@ -14,7 +14,7 @@ export type ReactionPickerState = { messageId: number; mode: "palette" | "full" 
 
 /** Chips + the "+" button. Presentational: the open palette lives in ChatView (see ReactionPopup). */
 export function ReactionBar({
-  map, messageId, me, names, onToggle, open = false, onOpenPicker, disabledReason = null,
+  map, messageId, me, names, onToggle, open = false, onOpenPicker, disabledReason = null, onBlocked,
 }: {
   map: ReactionMap | undefined;
   messageId: number | undefined;
@@ -24,6 +24,8 @@ export function ReactionBar({
   open?: boolean;
   onOpenPicker?: (mode: "palette" | "full" | null) => void;
   disabledReason?: string | null;
+  /** Click on a disabled control: explain why (toast). */
+  onBlocked?: () => void;
 }) {
   const t = useT();
   const chips = reactionChips(map, messageId, me);
@@ -37,8 +39,8 @@ export function ReactionBar({
           {chips.map((c) => {
             const label = formatReactionTooltip(c.emoji, byEmoji[c.emoji] ?? [], nameFor);
             return (
-              <button key={c.emoji} type="button" title={label} aria-label={label} disabled={!!disabledReason}
-                className={`reaction-chip${c.mine ? " mine" : ""}`} onClick={() => onToggle(c.emoji)}>
+              <button key={c.emoji} type="button" title={label} aria-label={label} aria-disabled={!!disabledReason}
+                className={`reaction-chip${c.mine ? " mine" : ""}`} onClick={() => (disabledReason ? onBlocked?.() : onToggle(c.emoji))}>
                 <span className="reaction-emoji">{c.emoji}</span>
                 <span className="reaction-count">{c.count}</span>
               </button>
@@ -50,7 +52,7 @@ export function ReactionBar({
         aria-label={t("리액션")} title={disabledReason ? t(disabledReason) : t("리액션")}
         aria-disabled={!!disabledReason} aria-expanded={open}
         onMouseDown={(e) => e.stopPropagation()}
-        onClick={() => { if (!disabledReason) onOpenPicker?.(open ? null : "palette"); }}>
+        onClick={() => { if (disabledReason) onBlocked?.(); else onOpenPicker?.(open ? null : "palette"); }}>
         <span aria-hidden="true">☺+</span>
       </button>
     </div>

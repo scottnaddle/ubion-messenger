@@ -127,7 +127,8 @@ export function reactionRoomOk(): ReactionRoomState {
 export function reactionRoomFailed(prev: ReactionRoomState, message: string, forbiddenMessage: string): ReactionRoomState {
   const failures = prev.failures + 1;
   if (message.includes(forbiddenMessage)) return { everOk: prev.everOk, failures, blocked: "forbidden" };
-  if (prev.everOk) return { everOk: true, failures, blocked: null };
+  // Worked before: keep chips and UI through blips; only a sustained outage (3+ in a row) greys it out.
+  if (prev.everOk) return { everOk: true, failures, blocked: failures >= 3 ? "offline" : null };
   // Never worked yet: allow a slow first sign-in a couple of tries before saying the server is down.
   return { everOk: false, failures, blocked: failures >= 2 ? "offline" : null };
 }
@@ -138,4 +139,17 @@ export function reactionRoomReason(capsEnabled: boolean, roomSupported: boolean,
   if (st.blocked === "forbidden") return "봇이 이 대화방에 없음";
   if (st.blocked === "offline") return "봇 서버 연결 안 됨";
   return null;
+}
+
+/** Toast for a failed reaction toggle (the optimistic chip has been rolled back). */
+export function reactionToggleErrorText(message: string, forbiddenMessage: string): string {
+  if (message.includes(forbiddenMessage)) return "이 대화방에는 봇이 없어 리액션을 달 수 없습니다. 봇을 대화방에 초대해 주세요.";
+  return "리액션을 보내지 못했습니다 (봇 서버 연결 안 됨). 잠시 후 다시 시도해 주세요.";
+}
+
+/** Toast when a disabled reaction control is clicked. */
+export function reactionBlockedToast(reason: string): string {
+  if (reason === "봇이 이 대화방에 없음") return "이 대화방에는 봇이 없어 리액션을 달 수 없습니다. 봇을 대화방에 초대해 주세요.";
+  if (reason === "봇 서버 연결 안 됨") return "봇 서버에 연결할 수 없어 리액션을 쓸 수 없습니다. 잠시 후 자동으로 다시 시도합니다.";
+  return `리액션을 쓸 수 없습니다: ${reason}`;
 }
