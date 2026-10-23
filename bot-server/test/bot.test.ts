@@ -826,3 +826,38 @@ describe("extract", () => {
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   }, 20_000);
 });
+
+describe("reverse proxy exposure", () => {
+  it("proxied requests reach only the settings endpoints, without Bearer", async () => {
+    await setup({ context: { store: new MemoryContextStore() } });
+    const xff = { "x-forwarded-for": "203.0.113.7" };
+    expect((await fetch(`${base}/bot/health`, { headers: xff })).status).toBe(404);
+    expect((await fetch(`${base}/bot/rooms`, { headers: { ...xff, authorization: `Bearer ${FULL}` } })).status).toBe(404);
+    expect((await fetch(`${base}/bot/files/1`, { headers: { ...xff, authorization: `Bearer ${FULL}` } })).status).toBe(404);
+    const url = `${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`;
+    expect((await fetch(url, { headers: { ...xff, authorization: `Bearer ${SET}` } })).status).toBe(403);
+    asMember();
+    expect((await fetch(url, { headers: { ...xff, "x-daou-session": "ck" } })).status).toBe(200);
+    expect((await fetch(url, { method: "DELETE", headers: xff })).status).toBe(405);
+    // local (no XFF) still works as before
+    expect((await fetch(`${base}/bot/health`)).status).toBe(200);
+  });
+  it("OPTIONS + CORS only for configured origins", async () => {
+    await setup({ context: { store: new MemoryContextStore() }, corsOrigins: ["app://ubion"] });
+    const url = `${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`;
+    const ok = await fetch(url, { method: "OPTIONS", headers: { origin: "app://ubion" } });
+    expect(ok.status).toBe(204);
+    expect(ok.headers.get("access-control-allow-origin")).toBe("app://ubion");
+    expect(ok.headers.get("access-control-allow-headers")).toContain("X-Daou-Session");
+    const bad = await fetch(url, { method: "OPTIONS", headers: { origin: "https://evil.example" } });
+    expect(bad.headers.get("access-control-allow-origin")).toBeNull();
+  });
+  it("client IP comes from X-Forwarded-For only for trusted peers", async () => {
+    await setup();
+    const fake = (peer: string, xff?: string) => ({ socket: { remoteAddress: peer }, headers: xff ? { "x-forwarded-for": xff } : {} }) as any;
+    expect(srv.clientIp(fake("127.0.0.1", "1.1.1.1, 9.9.9.9"))).toBe("9.9.9.9");
+    expect(srv.clientIp(fake("::ffff:127.0.0.1", "9.9.9.9"))).toBe("9.9.9.9");
+    expect(srv.clientIp(fake("10.0.0.5", "9.9.9.9"))).toBe("10.0.0.5");
+    expect(srv.clientIp(fake("127.0.0.1"))).toBe("127.0.0.1");
+  });
+});

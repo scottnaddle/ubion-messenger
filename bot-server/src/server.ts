@@ -23,7 +23,11 @@ export type BotServerOpts = {
   port: DaouPort; tokens: TokenStore; allowlist: Allowlist; mentionOnly?: boolean;
   heartbeatMs?: number; sendRate?: { cap: number; perSec: number }; roomRate?: { cap: number; perSec: number };
   audit?: Audit; maxTextLen?: number; maxFileBytes?: number; now?: () => number;
-  statusThrottleMs?: number; placeholderTtlMs?: number; attachRetryMs?: number[]; logger?: (m: string) => void;
+  statusThrottleMs?: number;
+  /** Peers whose X-Forwarded-For is trusted (reverse proxy). Default 127.0.0.1 and ::1. */
+  trustedProxies?: string[];
+  /** Browser origins allowed for CORS on the settings endpoints (empty = no CORS headers). */
+  corsOrigins?: string[]; placeholderTtlMs?: number; attachRetryMs?: number[]; logger?: (m: string) => void;
   context?: ContextOpts; autonomyNotices?: boolean;
 };
 
@@ -276,6 +280,7 @@ export class BotServer {
   private upgrade(req: http.IncomingMessage, sock: any, head: Buffer) {
     const url = new URL(req.url || "/", "http://x");
     const tok = this.o.tokens.verify(req.headers.authorization);
+    if (this.viaProxy(req)) { sock.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"); sock.destroy(); return; }
     if (url.pathname !== "/bot/ws" || !tok || !hasScope(tok, "events:read")) {
       sock.write(`HTTP/1.1 ${tok ? 403 : 401} ${tok ? "Forbidden" : "Unauthorized"}\r\nConnection: close\r\n\r\n`); sock.destroy(); return;
     }
@@ -300,9 +305,42 @@ export class BotServer {
   private json(s: http.ServerResponse, st: number, b: unknown, h: Record<string, string> = {}) { s.writeHead(st, { "content-type": "application/json", ...h }); s.end(JSON.stringify(b)); }
   private fail(s: http.ServerResponse, e: Err, h: Record<string, string> = {}) { this.json(s, e.status, { error: { code: e.code, message: e.message } }, h); }
 
+  private isTrustedPeer(q: http.IncomingMessage) {
+    const peer = (q.socket.remoteAddress ?? "").replace(/^::ffff:/, "");
+    return (this.o.trustedProxies ?? ["127.0.0.1", "::1"]).includes(peer);
+  }
+  private viaProxy(q: http.IncomingMessage) { return this.isTrustedPeer(q) && q.headers["x-forwarded-for"] != null; }
+  /** Real client IP: rightmost X-Forwarded-For entry (the one our proxy appended), only from a trusted peer. */
+  clientIp(q: http.IncomingMessage) {
+    const peer = (q.socket.remoteAddress ?? "?").replace(/^::ffff:/, "");
+    const xff = q.headers["x-forwarded-for"];
+    if (!this.isTrustedPeer(q) || xff == null) return peer;
+    const parts = (Array.isArray(xff) ? xff.join(",") : xff).split(",").map((x) => x.trim()).filter(Boolean);
+    return parts[parts.length - 1] || peer;
+  }
+
   private async route(q: http.IncomingMessage, s: http.ServerResponse) {
     const url = new URL(q.url || "/", "http://x");
     const path = url.pathname;
+    // Requests that came through the public reverse proxy (X-Forwarded-For from a trusted peer) may only
+    // reach the human settings endpoints; everything else stays local-only.
+    const proxied = this.viaProxy(q);
+    const isSettings = /^\/bot\/rooms\/[^/]+\/settings$/.test(path);
+    if (proxied && !isSettings) return this.fail(s, E(404, "not_found", "no such endpoint"));
+    if (isSettings) {
+      const origin = typeof q.headers.origin === "string" ? q.headers.origin : "";
+      if (origin && (this.o.corsOrigins ?? []).includes(origin)) {
+        s.setHeader("access-control-allow-origin", origin);
+        s.setHeader("vary", "Origin");
+        s.setHeader("access-control-allow-methods", "GET, PUT, OPTIONS");
+        s.setHeader("access-control-allow-headers", "X-Daou-Session, Content-Type");
+        s.setHeader("access-control-max-age", "600");
+      }
+      if (q.method === "OPTIONS") { s.writeHead(204, { allow: "GET, PUT, OPTIONS" }); s.end(); return; }
+      if (q.method !== "GET" && q.method !== "PUT") return this.fail(s, E(405, "method_not_allowed", "GET, PUT, OPTIONS only"), { allow: "GET, PUT, OPTIONS" });
+      // never let a proxied (public) request use a Bearer token
+      if (proxied && q.headers.authorization) return this.fail(s, E(403, "bearer_not_allowed", "use X-Daou-Session"));
+    }
     if (q.method === "GET" && path === "/bot/health") return this.json(s, 200, { ok: true, daou: this.o.port.healthy().state, ws_clients: this.clients.size, last_event_id: this.lastId() });
     const tok = this.o.tokens.verify(q.headers.authorization);
     const settingsMatch = (q.method === "GET" || q.method === "PUT") ? /^\/bot\/rooms\/([^/]+)\/settings$/.exec(path) : null;
@@ -383,7 +421,7 @@ export class BotServer {
       if (cookie.length > 4096 || /[\r\n]/.test(cookie))
         return this.fail(s, E(401, "invalid_session", "invalid session"));
       // throttle before the upstream coco call so random cookies cannot hammer it
-      const ipKey = `ip:${q.socket.remoteAddress ?? "?"}`;
+      const ipKey = `ip:${this.clientIp(q)}`;
       const irl = this.humanRl.take(ipKey);
       if (!irl.ok) {
         const retry = Math.ceil(irl.retryAfterMs / 1000);
