@@ -1,0 +1,179 @@
+/**
+ * 이모지 리액션: our own server (bot.ubion.global) keyed by roomSeq:messageId. Behind UBM_REACTIONS=1
+ * (needs a server deploy). UBION users only — original-app users cannot see these.
+ *
+ * ⚠ UNVERIFIED request shape:
+ *   GET  {base}/v1/reactions?roomSeq=123&ids=1,2,3  → 200 { reactions: { [messageId]: { [emoji]: number[] } } }
+ *   POST {base}/v1/reactions  body { roomSeq, messageId, emoji }  → toggles the caller's reaction
+ * Auth headers: X-UBM-User-Seq (caller seq) + X-UBM-Session (DaouOffice session proof). Headers are never logged.
+ */
+
+import { checkForwardTarget } from "./forward";
+
+export const REACTIONS_ENV = "UBM_REACTIONS";
+export const REACTIONS_DISABLED_TEXT = "이모지 리액션은 아직 지원되지 않습니다";
+export const REACTION_EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
+export const REACTION_MAX_EMOJI_LENGTH = 8;
+const MAX_SESSION_LENGTH = 4096;
+
+export type ReactionsCaps = { enabled: boolean };
+/** messageId (string) → emoji → userSeqs that reacted. */
+export type ReactionMap = Record<string, Record<string, number[]>>;
+
+export type ReactionsOptions = {
+  baseUrl?: string;
+  getUserSeq: () => number;
+  getSessionHeader: () => Promise<string>;
+  fetch?: typeof globalThis.fetch;
+  timeoutMs?: number;
+};
+
+export type ReactionsResult<T = ReactionMap> = { ok: true; data: T } | { ok: false; message: string };
+
+export function reactionsEnabled(env: Record<string, string | undefined> | undefined): boolean {
+  return env?.[REACTIONS_ENV] === "1";
+}
+
+export function reactionsCaps(env: Record<string, string | undefined> | undefined): ReactionsCaps {
+  return { enabled: reactionsEnabled(env) };
+}
+
+function positiveSeq(value: unknown, label: string): number {
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  if (!Number.isSafeInteger(n) || n <= 0) throw new Error(`${label}가 올바르지 않습니다`);
+  return n;
+}
+
+export function normalizeRoomSeq(value: unknown): number {
+  return positiveSeq(value, "대화방");
+}
+
+export function normalizeMessageId(value: unknown): number {
+  return positiveSeq(value, "메시지");
+}
+
+export function normalizeMessageIds(value: unknown): number[] {
+  const list = Array.isArray(value) ? value : [];
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const v of list) {
+    const n = positiveSeq(v, "메시지");
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+export function normalizeEmoji(value: unknown): string {
+  if (typeof value !== "string") throw new Error("이모지를 선택하세요");
+  const emoji = Array.from(value.trim()).slice(0, REACTION_MAX_EMOJI_LENGTH).join("");
+  if (!emoji) throw new Error("이모지를 선택하세요");
+  return emoji;
+}
+
+/** Parse/coerce the documented GET response into ReactionMap (messageId → emoji → userSeqs). */
+export function parseReactions(body: unknown): ReactionMap {
+  const out: ReactionMap = {};
+  if (!body || typeof body !== "object") return out;
+  const reactions = (body as Record<string, unknown>).reactions;
+  if (!reactions || typeof reactions !== "object") return out;
+  for (const [messageId, byEmoji] of Object.entries(reactions as Record<string, unknown>)) {
+    if (!byEmoji || typeof byEmoji !== "object") continue;
+    const emojiMap: Record<string, number[]> = {};
+    for (const [emoji, seqs] of Object.entries(byEmoji as Record<string, unknown>)) {
+      const list = Array.isArray(seqs)
+        ? seqs.map((s) => Number(s)).filter((n) => Number.isSafeInteger(n) && n > 0)
+        : [];
+      if (list.length) emojiMap[emoji] = list;
+    }
+    if (Object.keys(emojiMap).length) out[messageId] = emojiMap;
+  }
+  return out;
+}
+
+export function reactionUserSeqs(map: ReactionMap, messageId: unknown, emoji: string): number[] {
+  if (messageId == null) return [];
+  const seqs = map[String(messageId)]?.[emoji];
+  return Array.isArray(seqs) ? seqs : [];
+}
+
+/** Self-only guard for the reaction toggle — reuses the shared forward/notice guard. */
+export function guardReactionRoom({ selfOnly, roomSeq, me, selfRoomSeq }: {
+  selfOnly: boolean; roomSeq: number; me: number; selfRoomSeq?: number | null;
+}): void {
+  checkForwardTarget({ selfOnly, target: { roomSeq }, me, selfRoomSeq });
+}
+
+export function createReactionsClient({
+  baseUrl = "https://bot.ubion.global",
+  getUserSeq,
+  getSessionHeader,
+  fetch: fetchImpl,
+  timeoutMs = 8000,
+}: ReactionsOptions) {
+  const root = String(baseUrl).replace(/\/+$/, "");
+
+  async function request(method: "GET" | "POST", path: string, body?: unknown): Promise<ReactionsResult> {
+    const userSeq = getUserSeq();
+    if (!Number.isSafeInteger(userSeq) || userSeq <= 0) return { ok: false, message: "로그인이 필요합니다" };
+    let session: string;
+    try {
+      session = await getSessionHeader();
+    } catch {
+      return { ok: false, message: "세션이 만료되었습니다. 다시 로그인하세요." };
+    }
+    if (typeof session !== "string" || session.length > MAX_SESSION_LENGTH || /[\r\n]/.test(session)) {
+      return { ok: false, message: "세션이 만료되었습니다. 다시 로그인하세요." };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      const doFetch = fetchImpl ?? globalThis.fetch;
+      res = await doFetch(`${root}${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "X-UBM-User-Seq": String(userSeq),
+          "X-UBM-Session": session,
+        },
+        body: body != null ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
+      });
+    } catch {
+      clearTimeout(timer);
+      return { ok: false, message: "리액션 서버에 연결할 수 없습니다." };
+    } finally {
+      clearTimeout(timer);
+    }
+
+    let text = "";
+    try {
+      text = await res.text();
+    } catch {
+      return { ok: false, message: "리액션 서버에 연결할 수 없습니다." };
+    }
+    if (res.status === 401) return { ok: false, message: "세션이 만료되었습니다. 다시 로그인하세요." };
+    if (res.status < 200 || res.status >= 300) return { ok: false, message: "리액션 서버에서 처리하지 못했습니다." };
+
+    let data: unknown = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    return { ok: true, data: parseReactions(data) };
+  }
+
+  return {
+    list: (roomSeq: number, messageIds: number[]): Promise<ReactionsResult> => {
+      const ids = normalizeMessageIds(messageIds);
+      const query = `roomSeq=${encodeURIComponent(String(roomSeq))}&ids=${encodeURIComponent(ids.join(","))}`;
+      return request("GET", `/v1/reactions?${query}`);
+    },
+    toggle: (roomSeq: number, messageId: number, emoji: string): Promise<ReactionsResult> =>
+      request("POST", "/v1/reactions", { roomSeq, messageId, emoji }),
+  };
+}

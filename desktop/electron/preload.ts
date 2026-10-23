@@ -90,6 +90,11 @@ const api = {
     set: (text: string) => call<{ text: string | null }>("status:set", text),
     presenceStatus: () => call<Record<number, string>>("status:presenceStatus"),
   },
+  reactions: {
+    caps: () => call<import("./core/reactions").ReactionsCaps>("reactions:caps"),
+    list: (roomSeq: number, messageIds: number[]) => call<import("./core/reactions").ReactionMap>("reactions:list", roomSeq, messageIds),
+    toggle: (roomSeq: number, messageId: number, emoji: string) => call<import("./core/reactions").ReactionMap>("reactions:toggle", roomSeq, messageId, emoji),
+  },
   openChatBot: (brandName?: string) => call<void>("app:openChatBot", brandName),
   onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
   onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),

@@ -124,6 +124,7 @@ const dict: Record<string, string> = {
   "파일 첨부": "Attach File",
   "화면 캡쳐": "Screen Capture",
   "이모티콘": "Emoticons",
+  "리액션": "React",
   "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)": "Type a message (Enter to send, Shift+Enter for new line)",
   "전송": "Send",
   "대화 검색": "Search Chat",

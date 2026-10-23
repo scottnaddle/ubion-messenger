@@ -290,6 +290,11 @@ export function installMockIfNeeded() {
       set: async (text: string) => ({ text: text || null }),
       presenceStatus: async () => ({}) as Record<number, string>,
     },
+    reactions: {
+      caps: async () => ({ enabled: new URLSearchParams(location.search).has("reactions") }),
+      list: async () => ({}),
+      toggle: async () => ({}),
+    },
     openChatBot: async () => undefined,
     onEvent: () => () => undefined,
     onOpenRoom: (cb) => {

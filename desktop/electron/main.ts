@@ -51,6 +51,10 @@ import {
 import { computeManualUntil, isInDnd, normalizeDndDays, normalizeDndMin } from "./core/dnd";
 import { normalizeStatusText, statusCaps, statusServerEnabled, statusXmppEnabled } from "./core/status-message";
 import { createStatusClient } from "./core/status-server";
+import {
+  createReactionsClient, guardReactionRoom, normalizeEmoji, normalizeMessageId, normalizeMessageIds, normalizeRoomSeq,
+  reactionsCaps, REACTIONS_DISABLED_TEXT, reactionsEnabled,
+} from "./core/reactions";
 import { normalizeGlobalQuery } from "../src/lib/global-search";
 import {
   activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
@@ -266,6 +270,16 @@ const statusClient = () =>
   createStatusClient({
     baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
     getCookieHeader: async () => {
+      const cookies = await core.client.sessionCookies();
+      return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
+    },
+  });
+
+const reactionsClient = () =>
+  createReactionsClient({
+    baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
+    getUserSeq: () => core.user?.id ?? 0,
+    getSessionHeader: async () => {
       const cookies = await core.client.sessionCookies();
       return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
     },
@@ -1715,6 +1729,29 @@ function registerIpc() {
     return { text: currentStatusText };
   });
   handle("status:presenceStatus", () => core.allStatusMessages());
+  // 이모지 리액션: our server (bot.ubion.global) keyed by roomSeq:messageId. Behind UBM_REACTIONS=1.
+  const REACTIONS_ON = reactionsEnabled(process.env);
+  handle("reactions:caps", () => reactionsCaps(process.env));
+  handle("reactions:list", async (roomSeq: unknown, ids: unknown) => {
+    if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
+    if (core.user == null) throw new Error("로그인이 필요합니다");
+    const seq = normalizeRoomSeq(roomSeq);
+    const r = await reactionsClient().list(seq, normalizeMessageIds(ids));
+    if (!r.ok) throw new Error(r.message);
+    return r.data;
+  });
+  handle("reactions:toggle", async (roomSeq: unknown, messageId: unknown, emoji: unknown) => {
+    if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const seq = normalizeRoomSeq(roomSeq);
+    const mid = normalizeMessageId(messageId);
+    const e = normalizeEmoji(emoji);
+    guardReactionRoom({ selfOnly: process.env.UBM_SELF_ONLY === "1", roomSeq: seq, me, selfRoomSeq: selfRoomApiSeq() });
+    const r = await reactionsClient().toggle(seq, mid, e);
+    if (!r.ok) throw new Error(r.message);
+    return r.data;
+  });
   handle("app:badgeOverlay", (dataUrl: string | null) => {
     if (process.platform !== "win32" || !win) return;
     win.setOverlayIcon(dataUrl ? nativeImage.createFromDataURL(dataUrl) : null, dataUrl ? "읽지 않은 메시지" : "");

@@ -14,6 +14,7 @@ import type { SavedInput, SavedMessage } from "../electron/core/saved";
 import type { Reminder, ReminderInput } from "../electron/core/reminders";
 import type { ScheduledMessage, ScheduledInput } from "../electron/core/scheduled-send";
 import type { StatusCaps } from "../electron/core/status-message";
+import type { ReactionsCaps, ReactionMap } from "../electron/core/reactions";
 import type { Language } from "./lib/i18n-core";
 import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
@@ -136,6 +137,12 @@ export type Bridge = {
     get(): Promise<{ text: string | null }>;
     set(text: string): Promise<{ text: string | null }>;
     presenceStatus(): Promise<Record<number, string>>;
+  };
+  /** 이모지 리액션 (our server, keyed by roomSeq:messageId), gated by UBM_REACTIONS=1. */
+  reactions: {
+    caps(): Promise<ReactionsCaps>;
+    list(roomSeq: number, messageIds: number[]): Promise<ReactionMap>;
+    toggle(roomSeq: number, messageId: number, emoji: string): Promise<ReactionMap>;
   };
   openChatBot(brandName?: string): Promise<void>;
   onEvent(cb: (e: { type: string; payload: any }) => void): () => void;

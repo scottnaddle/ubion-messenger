@@ -21,10 +21,13 @@ import {
 } from "../../electron/core/room-notice";
 import type { NoticeStatus } from "../../electron/core/types";
 import type { ZoomCaps } from "../../electron/core/zoom";
+import type { ReactionMap } from "../../electron/core/reactions";
+import { apiRoomSeq } from "../../electron/core/forward";
 import { REMINDER_PRESETS, type ReminderPreset } from "../../electron/core/reminders";
 import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
+import { applyToggle } from "../lib/reactions";
 import { FileCard, MediaViewer } from "./FileCard";
 import { BackupModal } from "./BackupModal";
 import { EmojiPicker } from "./EmojiPicker";
@@ -32,6 +35,7 @@ import {
   DAOU_STICKERS_ENABLED, insertAtSelection, loadRecentEmoji, parseEmoticonCodes, pushRecentEmoji, saveRecentEmoji,
 } from "../lib/emoticon";
 import { LinkPreview } from "./LinkPreview";
+import { ReactionBar } from "./Reactions";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
 import { tk, useT } from "../lib/i18n";
@@ -96,6 +100,15 @@ export function ChatView({
   const [botSaving, setBotSaving] = useState(false);
   const [botError, setBotError] = useState("");
   const [botDisabled, setBotDisabled] = useState(false);
+  const [reactions, setReactions] = useState<ReactionMap | undefined>(undefined);
+  const [reactionsOn, setReactionsOn] = useState(false);
+  const reactionsRoomSeq = useMemo(() => {
+    try {
+      return apiRoomSeq(room);
+    } catch {
+      return undefined;
+    }
+  }, [room]);
   const isGroupRoom = room.kind === "room" && !room.isSelf;
   const botRoom = isBotGroupRoom(room, roomMembers);
   const memberNames = useMemo(() => roomMembers.map((m) => m.name), [roomMembers]);
@@ -165,6 +178,26 @@ export function ChatView({
       alive = false;
     };
   }, [room.key, toast]);
+
+  // 이모지 리액션: server capability once, then poll per room on open/history (best effort).
+  useEffect(() => {
+    api().reactions.caps().then((c) => setReactionsOn(c.enabled)).catch(() => setReactionsOn(false));
+  }, []);
+  useEffect(() => {
+    if (!reactionsOn || reactionsRoomSeq == null) return;
+    let alive = true;
+    const ids = msgs.map((m) => m.messageId).filter((n): n is number => n != null);
+    api()
+      .reactions.list(reactionsRoomSeq, ids)
+      .then((map) => { if (alive) setReactions(map); })
+      .catch(() => { if (alive) setReactions(undefined); });
+    return () => { alive = false; };
+  }, [reactionsOn, reactionsRoomSeq, msgs]);
+  const toggleReaction = useCallback((messageId: number, emoji: string) => {
+    if (reactionsRoomSeq == null) return;
+    setReactions((m) => applyToggle(m ?? {}, messageId, emoji, me.id));
+    api().reactions.toggle(reactionsRoomSeq, messageId, emoji).then(setReactions).catch(() => undefined);
+  }, [reactionsRoomSeq, me.id]);
 
   // group room members (mentions + popup), cached per room
   useEffect(() => {
@@ -659,6 +692,7 @@ export function ChatView({
                     onNotice={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestNotice(m) : undefined}
                     onSave={!isDeletedMessage(m) && !m.pending && !m.failed ? () => void saveMessage(m) : undefined}
                     onRemind={!isDeletedMessage(m) && !m.pending && !m.failed ? () => setRemindTarget(m) : undefined}
+                    reactions={reactions} onToggleReaction={toggleReaction}
                   />
                 </Fragment>
               );
@@ -982,11 +1016,13 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
+  reactions, onToggleReaction,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
   onSave?: () => void; onRemind?: () => void;
+  reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
 }) {
   const t = useT();
   const deleted = isDeletedMessage(m);
@@ -1033,6 +1069,9 @@ function MessageRow({
               </>
             )}
           </div>
+          {!deleted && !m.pending && !m.failed && m.messageId != null && (
+            <ReactionBar map={reactions} messageId={m.messageId} me={meId} onToggle={(e) => onToggleReaction(m.messageId!, e)} />
+          )}
         </div>
       </div>
     </div>
