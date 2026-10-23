@@ -26,7 +26,7 @@ import { fetchLinkPreview, fetchPreviewImage, PreviewCache } from "./core/link-p
 import { MediaCache } from "./core/media-cache";
 import { Updater } from "./updater";
 import { HttpError } from "./core/daou-client";
-import type { MessengerEventMap } from "./core/types";
+import type { ChatMessage, MessengerEventMap } from "./core/types";
 import { isPortalUrl, isFlexUrl, isFlexSsoUrl, toElectronCookie } from "./core/portal-cookies";
 import {
   isFlexLoginUrl, flexEmailFromUsername, flexAutoLoginScript, maskFlexLog,
@@ -38,6 +38,11 @@ import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { backupFileName, historyClearEnabled, normalizeBackupFileType } from "./core/backup";
 import { checkPubsubDelete, checkPubsubSend, pubsubCaps, pubsubSendEnabled, PUBSUB_SEND_DISABLED_TEXT } from "./core/pubsub";
 import { maskSecrets } from "./core/mask";
+import {
+  createRateLimiter, DEFAULT_CONCURRENCY, DEFAULT_MIN_INTERVAL_MS, globalSearchCaps, runGlobalSearch,
+} from "./core/global-search";
+import { SearchCacheStore } from "./core/search-cache";
+import { normalizeGlobalQuery } from "../src/lib/global-search";
 import {
   activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
   themeFileName, themeNameFromPath, type ThemeState,
@@ -98,6 +103,19 @@ let unsubscribe: Array<() => void> = [];
 let startHidden = false;
 let awayMonitor: ReturnType<typeof createAwayMonitor> | null = null;
 let lockRecord: PinRecord | null = null;
+// 통합 검색 로컬 캐시: <userData>/search-cache/<userSeq>.json, client-local only.
+let searchCache: SearchCacheStore | null = null;
+const searchIndex = () => {
+  if (!searchCache) searchCache = new SearchCacheStore(path.join(app.getPath("userData"), "search-cache"), fs, { join: path.join });
+  return searchCache.for(core.user?.id);
+};
+const indexMessages = (key: string, list: ChatMessage[]) => {
+  try {
+    if (searchIndex()?.add(key, list)) searchCache?.scheduleSave();
+  } catch (e) {
+    console.warn("search index failed:", maskSecrets(String((e as Error)?.message ?? e)));
+  }
+};
 let locked = false;
 const lockState = createLockState({ now: () => Date.now() });
 const updater = new Updater(() => win);
@@ -202,6 +220,7 @@ function wireCore() {
     core.on("loggedOut", () => resetZoom()),
     core.on("rooms", () => updateBadge()),
     core.on("message", (m) => {
+      indexMessages(m.roomKey, [m]);
       if (m.attachUpdate) return; // attach fill-in of an already-delivered file message (renderer upserts it)
       maybeNotify(m);
     }),
@@ -981,6 +1000,7 @@ function registerIpc() {
     return openWebLogin(serverUrl); // SessionUser, or null if the user closed the window
   });
   handle("auth:logout", async () => {
+    searchCache?.flush();
     await core.logout("user");
     mediaCache.clear();
     await clearPortalSession();
@@ -1055,11 +1075,61 @@ function registerIpc() {
   handle("msg:history", async (key: string, before?: number) => {
     const list = await core.history(key, before);
     core.noteSeen(key, list);
+    indexMessages(key, list);
     return list;
   });
   handle("rooms:sync", () => core.sync("manual"));
   handle("rooms:members", (key: string) => core.members(key));
-  handle("msg:search", (key: string, kw: string) => core.searchInRoom(key, kw));
+  handle("msg:search", async (key: string, kw: string) => {
+    const list = await core.searchInRoom(key, kw);
+    indexMessages(key, list);
+    return list;
+  });
+  // 통합 검색: local cache first, then a throttled read-only fan-out over per-room search (recent rooms first).
+  // Progress streams on "search:progress"; a new search or search:cancel aborts the previous one.
+  const searchLimiter = createRateLimiter({ concurrency: DEFAULT_CONCURRENCY, minIntervalMs: DEFAULT_MIN_INTERVAL_MS });
+  let searchAbort: AbortController | null = null;
+  handle("search:caps", () => globalSearchCaps(process.env));
+  handle("search:global", async (searchId: unknown, raw: unknown) => {
+    const id = Number(searchId);
+    if (!Number.isSafeInteger(id)) throw new Error("잘못된 검색 요청입니다");
+    const q = normalizeGlobalQuery(raw);
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    searchAbort?.abort();
+    const ac = (searchAbort = new AbortController());
+    const caps = globalSearchCaps(process.env);
+    try {
+      return await runGlobalSearch(q, {
+        searchId: id,
+        rooms: core.getRooms(),
+        userSeq: me,
+        getJson: (p) => core.client.searchGet(p),
+        index: searchIndex() ?? undefined,
+        limiter: searchLimiter,
+        maxRooms: caps.maxRooms,
+        serverEnabled: caps.server,
+        dateRangeEnabled: caps.dateRange,
+        signal: ac.signal,
+        onProgress: (p) => send("search:progress", p),
+        onRoomError: (room, e) => console.warn(`global search ${room.kind} room failed:`, maskSecrets(String((e as Error)?.message ?? e))),
+      });
+    } finally {
+      if (searchAbort === ac) searchAbort = null;
+      searchCache?.scheduleSave();
+    }
+  });
+  handle("search:cancel", () => {
+    searchAbort?.abort();
+    searchAbort = null;
+  });
+  handle("search:cacheInfo", () => ({ docs: searchIndex()?.size ?? 0 }));
+  handle("search:clearCache", () => {
+    searchAbort?.abort();
+    if (!searchCache) searchCache = new SearchCacheStore(path.join(app.getPath("userData"), "search-cache"), fs, { join: path.join });
+    searchCache.clear();
+    return { docs: 0 };
+  });
   handle("msg:send", (key: string, text: string) => core.sendText(key, text));
   handle("msg:delete", (ids: unknown) => core.client.deleteChatMessages(ids));
   const selfRoomApiSeq = (): number | undefined => {
@@ -1505,6 +1575,7 @@ app.on("before-quit", () => {
   quitting = true;
   awayMonitor?.stop();
   core.shutdown();
+  searchCache?.flush();
   clearPreviewTemp();
 });
 app.on("window-all-closed", () => {

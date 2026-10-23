@@ -11,6 +11,7 @@ import type { PreviewMode } from "../electron/core/doc-preview";
 import type { CustomTheme, ThemePresetId, ThemeState } from "../electron/core/theme";
 import type { PubsubCaps, PubsubDetail, PubsubPage, PubsubTarget } from "../electron/core/pubsub";
 import type { Language } from "./lib/i18n-core";
+import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
 
 export type LockStatus = { enabled: boolean; locked: boolean; timeoutMin: number };
@@ -84,6 +85,15 @@ export type Bridge = {
     remove(id: string): Promise<ThemeState>;
     activate(id: string | null): Promise<ThemeState>;
     css(id?: string): Promise<string>;
+  };
+  /** 통합 검색: local cache + throttled per-room server fan-out; progress streams via onProgress. */
+  search: {
+    caps(): Promise<GlobalSearchCaps>;
+    global(searchId: number, query: GlobalSearchQuery): Promise<GlobalSearchResult>;
+    cancel(): Promise<void>;
+    cacheInfo(): Promise<{ docs: number }>;
+    clearCache(): Promise<{ docs: number }>;
+    onProgress(cb: (p: GlobalSearchProgress) => void): () => void;
   };
   listFavorites(): Promise<Person[]>;
   addFavorite(id: number): Promise<{ ok: true }>;

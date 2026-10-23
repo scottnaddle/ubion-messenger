@@ -53,6 +53,15 @@ const api = {
     activate: (id: string | null) => call<import("./core/theme").ThemeState>("theme:activate", id),
     css: (id?: string) => call<string>("theme:css", id),
   },
+  search: {
+    caps: () => call<import("../src/lib/global-search").GlobalSearchCaps>("search:caps"),
+    global: (searchId: number, query: import("../src/lib/global-search").GlobalSearchQuery) =>
+      call<import("../src/lib/global-search").GlobalSearchResult>("search:global", searchId, query),
+    cancel: () => call<void>("search:cancel"),
+    cacheInfo: () => call<{ docs: number }>("search:cacheInfo"),
+    clearCache: () => call<{ docs: number }>("search:clearCache"),
+    onProgress: (cb: (p: import("../src/lib/global-search").GlobalSearchProgress) => void) => sub("search:progress", cb),
+  },
   listFavorites: () => call<import("./core/types").Person[]>("favorites:list"),
   addFavorite: (id: number) => call<{ ok: true }>("favorites:add", id),
   removeFavorite: (id: number) => call<{ ok: true }>("favorites:remove", id),

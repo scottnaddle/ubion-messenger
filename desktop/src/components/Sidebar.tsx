@@ -7,10 +7,12 @@ import { Avatar, Icon } from "./ui";
 import { useT } from "../lib/i18n";
 
 export function Sidebar({
-  rooms, activeKey, presence, onOpen, toast,
+  rooms, activeKey, presence, onOpen, toast, onGlobalSearch,
 }: {
   rooms: Room[]; activeKey: string | null; presence: Record<number, Presence>;
   onOpen: (k: string) => void; toast: (t: string, k?: Toast["kind"]) => void;
+  /** 통합 검색 (all rooms, server + local cache). */
+  onGlobalSearch?: (keyword?: string) => void;
 }) {
   const t = useT();
   const [q, setQ] = useState("");
@@ -30,6 +32,11 @@ export function Sidebar({
     <aside className="sidebar" onClick={() => setMenu(null)}>
       <div className="side-head">
         <h2>{t("대화")}</h2>
+        {onGlobalSearch && (
+          <button className="icon-btn" title={t("전체 대화 검색 (⌘/Ctrl+Shift+F)")} onClick={() => onGlobalSearch()}>
+            <Icon name="search" size={18} />
+          </button>
+        )}
         <button
           className={`icon-btn ${refreshing ? "spin" : ""}`}
           title={t("새로고침")}
@@ -47,6 +54,11 @@ export function Sidebar({
         <input id="room-filter" placeholder={t("대화방, 메시지 검색")} value={q} onChange={(e) => setQ(e.target.value)} />
         {q && <button className="icon-btn tiny" onClick={() => setQ("")}><Icon name="close" size={14} /></button>}
       </div>
+      {q.trim() && onGlobalSearch && (
+        <button className="link gsearch-jump" onClick={() => onGlobalSearch(q.trim())}>
+          {t("전체 대화에서 \"{q}\" 검색", { q: q.trim() })}
+        </button>
+      )}
       <div className="chips">
         {(["all", "unread", "dm", "group"] as const).map((f) => (
           <button key={f} className={`chip ${filter === f ? "on" : ""}`} onClick={() => setFilter(f)}>

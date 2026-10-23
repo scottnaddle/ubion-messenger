@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { People } from "./components/People";
 import { SettingsModal } from "./components/SettingsModal";
+import { GlobalSearch } from "./components/GlobalSearch";
 import { drawBadge } from "./lib/badge";
 import { applySavedLanguage, useT, type I18nCaps } from "./lib/i18n";
 import { Avatar, Icon } from "./components/ui";
@@ -42,6 +43,7 @@ export function App() {
   const [botStatuses, setBotStatuses] = useState<BotStatusMap>({});
   const [view, setView] = useState<NavView | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState<{ keyword: string } | null>(null);
   const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -230,6 +232,9 @@ export function App() {
       if (mod && e.key === ",") {
         e.preventDefault();
         setShowSettings(true);
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setGlobalSearch({ keyword: "" });
       } else if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setView("chats");
@@ -354,7 +359,14 @@ export function App() {
               ) : view === "menu" ? (
                 <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} toast={toast} />
               ) : view === "chats" ? (
-                <Sidebar rooms={rooms} activeKey={activeKey} presence={presence} onOpen={setActiveKey} toast={toast} />
+                <Sidebar
+                  rooms={rooms}
+                  activeKey={activeKey}
+                  presence={presence}
+                  onOpen={setActiveKey}
+                  toast={toast}
+                  onGlobalSearch={(keyword) => setGlobalSearch({ keyword: keyword || "" })}
+                />
               ) : (
                 <People
                   presence={presence}
@@ -404,6 +416,17 @@ export function App() {
             setPortalBadge({ approval: 0, noti: 0, mail: 0 });
             setSettings(await api().call("settings:get"));
           }}
+        />
+      )}
+      {globalSearch && user && (
+        <GlobalSearch
+          rooms={rooms}
+          initialKeyword={globalSearch.keyword}
+          onOpenRoom={(k) => {
+            setView("chats");
+            setActiveKey(k);
+          }}
+          onClose={() => setGlobalSearch(null)}
         />
       )}
       <Toasts toasts={toasts} />

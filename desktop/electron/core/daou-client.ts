@@ -278,6 +278,13 @@ export class DaouClient {
     return (body.data || []).map((m: Record<string, unknown>) => normalizeRestMessage(m, `${kind}:${seq}`));
   }
 
+  /** 통합 검색: read-only GET, restricted to the per-room search / attaches list endpoints. */
+  async searchGet(path: string): Promise<any> {
+    this.requireUser();
+    if (!/^\/api\/chat\/(\d+\/search\?|(buddies|rooms|pubsubs)\/attaches\/\d+\?)/.test(path)) throw new Error("허용되지 않은 검색 요청입니다");
+    return this.getJson(path);
+  }
+
   async sendMessage(
     kind: RoomKind,
     seq: number,

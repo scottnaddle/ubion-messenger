@@ -233,6 +233,27 @@ export function installMockIfNeeded() {
       activate: async (id: string | null) => mockThemeState(activateTheme(mockSettings.customThemes, id || "")),
       css: async (id?: string) => mockThemeCss[id ?? mockSettings.activeThemeId] || "",
     },
+    // 통합 검색: fake hits from the mock history of every room (no network).
+    search: {
+      caps: async () => ({ server: true, dateRange: false, maxRooms: 60, localEngine: "inverted-index-json" }),
+      global: async (searchId, query) => {
+        const kw = (query.keyword || "").toLowerCase();
+        const hits = rooms.flatMap((r) =>
+          msgs
+            .filter((m: any) => m.messageId != null && (!kw || String(m.message || m.attach?.name || "").toLowerCase().includes(kw)))
+            .filter((m: any) => (query.senderSeq == null || m.sendUserSeq === query.senderSeq) && (!query.files || m.attach))
+            .map((m: any) => ({
+              roomKey: r.key, messageId: m.messageId * 100 + r.seq, sendUserSeq: m.sendUserSeq, sendUserName: m.sendUserName,
+              message: m.message, createdAt: m.createdAt, attach: m.attach ? { name: m.attach.name } : undefined, source: "local" as const,
+            }))
+        );
+        return { searchId, hits, searchedRooms: rooms.length, totalRooms: rooms.length, failedRooms: 0, cancelled: false, serverSearched: true };
+      },
+      cancel: async () => undefined,
+      cacheInfo: async () => ({ docs: msgs.length }),
+      clearCache: async () => ({ docs: 0 }),
+      onProgress: () => () => undefined,
+    },
     listFavorites: async () => users.slice(0, 2),
     addFavorite: async () => ({ ok: true as const }),
     removeFavorite: async () => ({ ok: true as const }),

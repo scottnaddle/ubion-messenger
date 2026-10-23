@@ -283,12 +283,51 @@ export function SettingsModal({
             </div>
           </div>
           <Toggle k="askSaveLocation" label={t("매번 저장 위치 묻기")} desc={t("채팅 파일 '저장' 시 저장 위치와 이름을 선택합니다")} />
+          <SearchCacheRow />
           <h4>{t("업데이트")}</h4>
           <UpdateRow />
           <Toggle k="autoUpdate" label={t("자동으로 업데이트 확인")} desc={t("시작할 때와 4시간마다 확인합니다")} />
           <p className="muted tiny about">UBION Messenger {info?.version} · {info?.platform}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 통합 검색 로컬 캐시: lives only in this PC's app data folder; clearing it never touches the server. */
+function SearchCacheRow() {
+  const t = useT();
+  const [docs, setDocs] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    Promise.resolve()
+      .then(() => api().search.cacheInfo())
+      .then((i) => setDocs(i.docs))
+      .catch(() => undefined);
+  }, []);
+  return (
+    <div className="row">
+      <div>
+        <div>{t("검색 캐시")}</div>
+        <div className="muted tiny">
+          {t("전체 대화 검색을 빠르게 하려고 이 PC에만 저장한 대화 내용입니다 (서버로 전송되지 않음)")}
+          {docs != null && ` · ${t("메시지 {n}개", { n: docs })}`}
+        </div>
+      </div>
+      <button
+        className="link small"
+        disabled={busy || docs === 0}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            setDocs((await api().search.clearCache()).docs);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {t("캐시 삭제")}
+      </button>
     </div>
   );
 }
