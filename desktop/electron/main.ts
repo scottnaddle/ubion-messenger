@@ -237,6 +237,7 @@ async function sendScheduled(item: ScheduledMessage): Promise<void> {
  * `startup` marks missed items (app was closed at send time) without auto-sending unless the
  * per-item "놓친 경우 앱 실행 시 전송" option is set.
  */
+const scheduledInFlight = new Set<string | number>();
 function armScheduledTimer(startup = false) {
   if (scheduledTimer) {
     clearTimeout(scheduledTimer);
@@ -247,16 +248,19 @@ function armScheduledTimer(startup = false) {
   store.for(core.user.id);
   const now = Date.now();
   for (const item of dueScheduled(store.list(), now)) {
+    if (scheduledInFlight.has(item.id)) continue;
     if (startup && !item.sendOnMissedLaunch) {
       store.markMissed(item.id);
       continue;
     }
+    scheduledInFlight.add(item.id);
     void sendScheduled(item)
       .then(() => store.remove(item.id))
       .catch((e) => {
         console.warn("scheduled send failed:", maskSecrets(String((e as Error)?.message ?? e)));
         store.markMissed(item.id);
-      });
+      })
+      .finally(() => scheduledInFlight.delete(item.id));
   }
   const next = nextScheduledAt(store.list(), now);
   if (next == null) return;
@@ -278,33 +282,35 @@ const botSettings = createBotSettingsClient({
   },
 });
 
+/**
+ * Auth proof for our server (bot.ubion.global). NEVER forward DaouOffice session cookies to it: that would hand a
+ * company credential to a third host. Until a server-issued UBION token flow exists (TODO, needs design + deploy
+ * approval), use an explicitly provisioned token from UBM_BOT_USER_TOKEN; empty → requests fail closed.
+ */
+const ubmServerProof = async (): Promise<string> => {
+  const t = (process.env.UBM_BOT_USER_TOKEN || "").trim();
+  if (!t) throw new Error("UBION 서버 인증이 설정되지 않았습니다");
+  return t;
+};
+
 const statusClient = () =>
   createStatusClient({
     baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
-    getCookieHeader: async () => {
-      const cookies = await core.client.sessionCookies();
-      return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
-    },
+    getSessionHeader: ubmServerProof,
   });
 
 const reactionsClient = () =>
   createReactionsClient({
     baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
     getUserSeq: () => core.user?.id ?? 0,
-    getSessionHeader: async () => {
-      const cookies = await core.client.sessionCookies();
-      return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
-    },
+    getSessionHeader: ubmServerProof,
   });
 
 const pollsClient = () =>
   createPollsClient({
     baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
     getUserSeq: () => core.user?.id ?? 0,
-    getSessionHeader: async () => {
-      const cookies = await core.client.sessionCookies();
-      return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
-    },
+    getSessionHeader: ubmServerProof,
   });
 
 const resPath = (f: string) =>
@@ -1466,6 +1472,7 @@ function registerIpc() {
     return { ok: true as const };
   });
   handle("files:sendPaths", async (key: string, paths: string[]) => {
+    if (process.env.UBM_SELF_ONLY === "1") guardedRoomSeq(key);
     for (const p of paths) {
       const st = fs.statSync(p);
       if (!st.isFile()) continue;

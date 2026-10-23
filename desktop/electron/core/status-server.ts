@@ -5,13 +5,13 @@
  * ⚠ Request shape is UNVERIFIED (no live calls made). Documented as:
  *   GET  {base}/v1/status/{userSeq}                 → 200 { "text": string }
  *   PUT  {base}/v1/status/{userSeq}  body {text}    → 200 { "text": string }
- * Authenticated by the DaouOffice SSO session (cookie header supplied by the caller); the cookie is
+ * Authenticated by a UBION server token (X-UBM-Session, supplied by the caller — never DaouOffice cookies); the token is
  * never logged. A malformed/absent `text` is normalized to "".
  */
 
 export type StatusServerOptions = {
   baseUrl?: string;
-  getCookieHeader: () => Promise<string>;
+  getSessionHeader: () => Promise<string>;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 };
@@ -24,7 +24,7 @@ const MAX_COOKIE_LENGTH = 4096;
 
 export function createStatusClient({
   baseUrl = "https://bot.ubion.global",
-  getCookieHeader,
+  getSessionHeader,
   fetch: fetchImpl,
   timeoutMs = 8000,
 }: StatusServerOptions) {
@@ -33,7 +33,7 @@ export function createStatusClient({
   async function request(method: "GET" | "PUT", userSeq: number, text?: string): Promise<StatusResult> {
     let cookie: string;
     try {
-      cookie = await getCookieHeader();
+      cookie = await getSessionHeader();
     } catch {
       return { ok: false, message: "세션이 만료되었습니다. 다시 로그인하세요." };
     }
@@ -48,7 +48,7 @@ export function createStatusClient({
       const doFetch = fetchImpl ?? globalThis.fetch;
       res = await doFetch(`${root}/v1/status/${encodeURIComponent(String(userSeq))}`, {
         method,
-        headers: { "Content-Type": "application/json", "X-Daou-Session": cookie },
+        headers: { "Content-Type": "application/json", "X-UBM-Session": cookie },
         body: method === "PUT" ? JSON.stringify({ text: text ?? "" }) : undefined,
         signal: controller.signal,
       });
