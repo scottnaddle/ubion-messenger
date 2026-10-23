@@ -16,6 +16,7 @@ function sub(ch: string, cb: (p: any) => void) {
 
 const api = {
   call,
+  deleteChatMessages: (ids: number[]) => call<{ ok: true; count: number }>("msg:delete", ids),
   onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
   onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),
   onOpenSettings: (cb: () => void) => sub("nav:settings", cb),

@@ -1,4 +1,5 @@
 import type { ChatMessage, ReadReceipt, Room } from "./types";
+import { isDeletedMessage } from "./chat-delete";
 
 const RECONCILE_MS = 120_000;
 
@@ -14,7 +15,11 @@ export function ensureTimestamp(m: ChatMessage, fallback = new Date().toISOStrin
 }
 
 export function normalizeMessage(m: ChatMessage): ChatMessage {
-  return ensureTimestamp({ ...m, messageId: canonMessageId(m.messageId) });
+  return ensureTimestamp({
+    ...m,
+    messageId: canonMessageId(m.messageId),
+    ...(isDeletedMessage(m) ? { deleted: true } : {}),
+  });
 }
 
 export function upsertMessage(list: ChatMessage[], incoming: ChatMessage): ChatMessage[] {

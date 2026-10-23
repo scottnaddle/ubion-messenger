@@ -54,6 +54,8 @@ export type ChatMessage = {
   attach?: AttachModel;
   pending?: boolean;
   failed?: boolean;
+  /** Server tombstone: the row stays, but text/attachments render as "삭제된 메시지입니다". */
+  deleted?: boolean;
   confirmCount?: number;
   needConfirmCount?: number;
   /** userSeqs who have read this message (REST `confirmUsers`) */
@@ -68,6 +70,8 @@ export type SessionUser = {
   companyId?: number;
   thumbnail?: string;
   position?: string;
+  /** /api/user/session isMessageDeletable; undefined = allowed (older server). */
+  isMessageDeletable?: boolean;
 };
 
 export type Person = {

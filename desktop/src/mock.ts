@@ -5,7 +5,7 @@ export function installMockIfNeeded() {
   if ((window as any).ubion) return;
   const now = Date.now();
   const iso = (minAgo: number) => new Date(now - minAgo * 60_000).toISOString();
-  const me = { id: 1, repId: 1, name: "홍길동", loginId: "hong", companyId: 1, position: "매니저" };
+  const me = { id: 1, repId: 1, name: "홍길동", loginId: "hong", companyId: 1, position: "매니저", isMessageDeletable: true };
   const svg = (c: string, t: string) =>
     "data:image/svg+xml;utf8," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='560' height='360'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='${c}'/><stop offset='1' stop-color='#1d2b4f'/></linearGradient></defs><rect width='560' height='360' fill='url(#g)'/><circle cx='430' cy='90' r='46' fill='#ffd36b'/><path d='M0 300 L170 170 L290 270 L380 200 L560 330 L560 360 L0 360z' fill='#ffffff55'/><text x='28' y='336' font-size='22' fill='#fff' font-family='sans-serif'>${t}</text></svg>`);
   const rooms = [
@@ -79,6 +79,12 @@ export function installMockIfNeeded() {
       if (ch === "link:preview") return { url: args[0], title: "팀 위키 — 요구사항 정리", description: "1.0.10 파일 카드/링크 미리보기 요구사항과 일정", siteName: "example.com", image: "https://example.com/og.png" };
       if (ch === "link:image") return svg("#1f9d55", "OG");
       return handlers[ch]?.(...args);
+    },
+    deleteChatMessages: async (ids: number[]) => {
+      await new Promise((r) => setTimeout(r, 250));
+      if (new URLSearchParams(location.search).get("delfail")) throw new Error("메시지 삭제 실패 (mock code 500)");
+      for (const m of msgs) if (m.messageId != null && ids.includes(m.messageId)) (m as any).deleted = true;
+      return { ok: true as const, count: ids.length };
     },
     onEvent: () => () => undefined,
     onOpenRoom: (cb) => {

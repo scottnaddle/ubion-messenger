@@ -2,6 +2,7 @@ import { CookieJar } from "tough-cookie";
 import { normalizeAttach } from "./attach";
 import type { AttachModel, ChatMessage, Department, RoomMember, LoginOptions, Person, Room, RoomKind, SessionUser } from "./types";
 import { canonMessageId, ensureTimestamp } from "./messages";
+import { chatDeleteBody, isDeletedMessage, normalizeChatDeleteIds, parseIsMessageDeletable } from "./chat-delete";
 import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
 import { fromElectronCookie, needsWebLogin, onSessionExpired, WEB_LOGIN_MESSAGE, type ElectronCookieIn } from "./web-login";
 
@@ -151,6 +152,7 @@ export class DaouClient {
       companyId: Number(data.companyId ?? data.companies?.[0]?.id),
       thumbnail: data.thumbnail,
       position: data.position,
+      isMessageDeletable: parseIsMessageDeletable(data),
     };
     this.companies = data.companies || [];
     if (!this.resource) this.resource = `go_pc_${this.user.id}_${Math.floor(Math.random() * 900 + 100)}_ubion`;
@@ -284,6 +286,24 @@ export class DaouClient {
     const cryptId = up?.data?.cryptId;
     if (!cryptId) throw new Error("업로드 응답에 cryptId 없음");
     return this.sendMessage(kind, seq, "", { tempMessageId: tmp, path: file.name, cryptAttachText: String(cryptId) });
+  }
+
+  /** ⚠ MUTATES server state: PUT /api/chat/message/delete?userSeq=<me> {"ids":[…]} → server tombstone. */
+  async deleteChatMessages(ids: unknown): Promise<{ ok: true; count: number }> {
+    const uid = this.requireUser().id;
+    const list = normalizeChatDeleteIds(ids);
+    const body = await this.getJson(`/api/chat/message/delete?userSeq=${uid}`, {
+      method: "PUT",
+      json: chatDeleteBody(list),
+    });
+    const code = body?.code;
+    if (code != null && String(code) !== "200") {
+      const n = Number(code);
+      const status = Number.isInteger(n) && n >= 100 && n <= 599 ? n : 500;
+      const msg = body?.message ?? body?.msg ?? body?.data?.message ?? `메시지 삭제 실패 (code ${code})`;
+      throw new HttpError(status, String(msg));
+    }
+    return { ok: true, count: list.length };
   }
 
   async markRead(kind: RoomKind, seq: number, messageId: number): Promise<void> {
@@ -495,6 +515,7 @@ export function normalizeRestMessage(m: Record<string, any>, roomKey?: string): 
       : undefined,
     attach,
     messageType: m.messageType ? String(m.messageType) : attach ? "SENDFILE" : "TEXT",
+    ...(isDeletedMessage(m) ? { deleted: true } : {}),
   });
 }
 

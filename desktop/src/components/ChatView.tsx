@@ -1,6 +1,9 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, media, type ChatMessage, type Presence, type Room, type SessionUser } from "../api";
 import { applyReadReceipt, dedupeByMessageId, mergeReceipts, upsertMessage } from "../../electron/core/messages";
+import {
+  applyChatDelete, canDeleteMessage, CHAT_DELETE_CONFIRM, CHAT_DELETED_PLACEHOLDER, isDeletedMessage,
+} from "../../electron/core/chat-delete";
 import { isSendEnter } from "../lib/composer";
 import { FileCard, MediaViewer } from "./FileCard";
 import { LinkPreview } from "./LinkPreview";
@@ -21,6 +24,7 @@ export function ChatView({
   const [dragOver, setDragOver] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [uploading, setUploading] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
   const prevHeight = useRef<number | null>(null);
@@ -132,6 +136,27 @@ export function ChatView({
     void sendText(m.message);
   };
 
+  const deletable = me.isMessageDeletable !== false;
+  const requestDelete = (m: ChatMessage) => {
+    if (!deletable || !canDeleteMessage(m, me.id)) return;
+    setConfirmDelete(m);
+  };
+  const doDelete = async () => {
+    const target = confirmDelete;
+    if (!target?.messageId) return;
+    setConfirmDelete(null);
+    const ids = [target.messageId];
+    const snapshot = msgs.find((m) => m.messageId === target.messageId);
+    setMsgs((l) => applyChatDelete(l, ids));
+    try {
+      await api().deleteChatMessages(ids);
+      toast("메시지를 삭제했습니다", "info");
+    } catch (e) {
+      if (snapshot) setMsgs((l) => l.map((m) => (m.messageId === target.messageId ? snapshot : m)));
+      toast(`삭제하지 못했습니다: ${(e as Error).message}`);
+    }
+  };
+
   const uploadPaths = async (paths: string[]) => {
     if (!paths.length) return;
     setUploading((n) => n + paths.length);
@@ -214,6 +239,7 @@ export function ChatView({
                     m={m} mine={mine} grouped={!!grouped} showTime={showTime} room={room} meId={me.id}
                     isLastMine={m === lastMine}
                     onImage={() => setViewer(m)} onRetry={() => retry(m)} toast={toast}
+                    onDelete={deletable && canDeleteMessage(m, me.id) ? () => requestDelete(m) : undefined}
                   />
                 </Fragment>
               );
@@ -235,6 +261,19 @@ export function ChatView({
       )}
       {dragOver && <div className="drop-hint">여기에 놓아 파일 보내기</div>}
       {viewer?.attach && <MediaViewer m={viewer} onClose={() => setViewer(null)} toast={toast} />}
+      {confirmDelete && (
+        <div className="modal-back" onClick={() => setConfirmDelete(null)}>
+          <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-body">
+              <p>{CHAT_DELETE_CONFIRM}</p>
+              <div className="approval-modal-actions">
+                <button className="link" onClick={() => setConfirmDelete(null)}>취소</button>
+                <button className="danger-btn" autoFocus onClick={() => void doDelete()}>삭제</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -254,29 +293,50 @@ function Linkified({ text }: { text: string }) {
   );
 }
 
+function DeleteMenu({ x, y, onDelete, onClose }: { x: number; y: number; onDelete: () => void; onClose: () => void }) {
+  useEffect(() => {
+    const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
+    window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
+    return () => { window.removeEventListener("mousedown", h); window.removeEventListener("keydown", h); window.removeEventListener("blur", h); };
+  }, [onClose]);
+  return (
+    <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> 삭제</button>
+    </div>
+  );
+}
+
 function MessageRow({
-  m, mine, grouped, showTime, room, meId, isLastMine, onImage, onRetry, toast,
+  m, mine, grouped, showTime, room, meId, isLastMine, onImage, onRetry, toast, onDelete,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
-  onImage: () => void; onRetry: () => void; toast: ToastFn;
+  onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void;
 }) {
-  const deleted = m.messageType === "DELETEDMESSAGE";
+  const deleted = isDeletedMessage(m);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const openMenu = (e: React.MouseEvent) => {
+    if (!onDelete || deleted) return;
+    e.preventDefault();
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 70) });
+  };
   // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.
   const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message }
     : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || "삭제된 파일", expired: true } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
+      {menu && onDelete && <DeleteMenu x={menu.x} y={menu.y} onDelete={onDelete} onClose={() => setMenu(null)} />}
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
       <div className="msg-main">
         {!mine && !grouped && <div className="msg-name">{m.sendUserName}</div>}
         <div className="msg-line">
           {deleted ? (
-            <div className="bubble deleted">삭제된 메시지입니다</div>
+            <div className="bubble deleted">{CHAT_DELETED_PLACEHOLDER}</div>
           ) : a ? (
-            <FileCard m={a === m.attach ? m : { ...m, attach: a }} mine={mine} onOpenMedia={onImage} toast={toast} />
+            <FileCard m={a === m.attach ? m : { ...m, attach: a }} mine={mine} onOpenMedia={onImage} toast={toast}
+              canDelete={!!onDelete} onDelete={onDelete} />
           ) : (
             <div className="bubble-col">
-              <div className="bubble"><Linkified text={m.message} /></div>
+              <div className="bubble" onContextMenu={openMenu}><Linkified text={m.message} /></div>
               {!m.pending && <LinkPreview text={m.message} />}
             </div>
           )}
@@ -393,7 +453,7 @@ function SearchPanel({ room, onClose }: { room: Room; onClose: () => void }) {
         {res?.map((m) => (
           <div key={m.messageId} className="search-hit">
             <div className="small"><b>{m.sendUserName}</b> <span className="muted tiny">{dayLabel(m.createdAt)} {timeLabel(m.createdAt)}</span></div>
-            <div className="small hit-text">{m.message}</div>
+            <div className="small hit-text">{isDeletedMessage(m) ? CHAT_DELETED_PLACEHOLDER : m.message}</div>
           </div>
         ))}
       </div>

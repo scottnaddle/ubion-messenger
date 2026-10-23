@@ -6,6 +6,7 @@ import { XmppClient } from "./xmpp";
 import { BoshClient } from "./bosh";
 import { xmppKeyFromLoginId } from "./xmpp-key";
 import { canonMessageId } from "./messages";
+import { isDeletedMessage } from "./chat-delete";
 import type {
   ChatMessage,
   ConnState,
@@ -66,6 +67,7 @@ export function routeXmppBody(obj: Record<string, any>, me: number) {
     userImage: String(fr.userImg || ""),
     messageType: obj.messageType ? String(obj.messageType) : normalizeAttach(a) ? "SENDFILE" : "TEXT",
     attach: normalizeAttach(a, obj.message ? String(obj.message) : undefined, obj.createdAt || obj.sendDate || obj.sendAt || new Date().toISOString()),
+    ...(isDeletedMessage(obj) ? { deleted: true } : {}),
   };
   const receipt =
     type === "confirm" && fromSeq != null && seq != null

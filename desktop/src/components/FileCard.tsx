@@ -27,8 +27,10 @@ export async function saveChatFile(m: ChatMessage, mode: SaveMode, toast: ToastF
   }
 }
 
-/** Right-click menu for a file card: 저장 / 다른 이름으로 저장. */
-function SaveMenu({ x, y, onPick, onClose }: { x: number; y: number; onPick: (m: SaveMode) => void; onClose: () => void }) {
+/** Right-click menu for a file card: 저장 / 다른 이름으로 저장 / 삭제. */
+function SaveMenu({
+  x, y, onPick, onDelete, canSave = true, onClose,
+}: { x: number; y: number; onPick: (m: SaveMode) => void; onDelete?: () => void; canSave?: boolean; onClose: () => void }) {
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
@@ -36,17 +38,20 @@ function SaveMenu({ x, y, onPick, onClose }: { x: number; y: number; onPick: (m:
   }, [onClose]);
   return (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
-      <button role="menuitem" onClick={() => { onClose(); onPick("downloads"); }}><Icon name="download" size={14} /> 저장</button>
-      <button role="menuitem" onClick={() => { onClose(); onPick("saveAs"); }}>다른 이름으로 저장…</button>
-      <button role="menuitem" onClick={() => { onClose(); onPick("open"); }}><Icon name="external" size={14} /> 기본 앱으로 열기</button>
+      {canSave && <>
+        <button role="menuitem" onClick={() => { onClose(); onPick("downloads"); }}><Icon name="download" size={14} /> 저장</button>
+        <button role="menuitem" onClick={() => { onClose(); onPick("saveAs"); }}>다른 이름으로 저장…</button>
+        <button role="menuitem" onClick={() => { onClose(); onPick("open"); }}><Icon name="external" size={14} /> 기본 앱으로 열기</button>
+      </>}
+      {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> 삭제</button>}
     </div>
   );
 }
 
 /** DaouOffice-style attachment bubble: image/video thumbnails or a file card with 저장 / 다른 이름으로 저장. */
 export function FileCard({
-  m, mine, onOpenMedia, toast,
-}: { m: ChatMessage; mine: boolean; onOpenMedia: () => void; toast: ToastFn }) {
+  m, mine, onOpenMedia, toast, canDelete, onDelete,
+}: { m: ChatMessage; mine: boolean; onOpenMedia: () => void; toast: ToastFn; canDelete?: boolean; onDelete?: () => void }) {
   const a = m.attach!;
   const missing = !a.cryptId && !a.expired;
   const expired = missing || isExpired(a);
@@ -54,12 +59,13 @@ export function FileCard({
   const exp = expiryLabel(a);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const save = async (mode: SaveMode) => { if (!expired) await saveChatFile(m, mode, toast); };
+  const ctxDelete = canDelete && onDelete ? onDelete : undefined;
   const onCtx = (e: React.MouseEvent) => {
-    if (expired) return;
+    if (expired && !ctxDelete) return;
     e.preventDefault();
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 120) });
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 140) });
   };
-  const ctx = menu && <SaveMenu x={menu.x} y={menu.y} onPick={(md) => void save(md)} onClose={() => setMenu(null)} />;
+  const ctx = menu && <SaveMenu x={menu.x} y={menu.y} onPick={(md) => void save(md)} onDelete={ctxDelete} canSave={!expired} onClose={() => setMenu(null)} />;
   const actions = (
     <div className="fc-actions">
       <button className="link tiny" disabled={expired} onClick={() => save("downloads")}>저장</button>

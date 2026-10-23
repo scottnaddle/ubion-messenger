@@ -681,6 +681,7 @@ function registerIpc() {
   handle("rooms:members", (key: string) => core.members(key));
   handle("msg:search", (key: string, kw: string) => core.searchInRoom(key, kw));
   handle("msg:send", (key: string, text: string) => core.sendText(key, text));
+  handle("msg:delete", (ids: unknown) => core.client.deleteChatMessages(ids));
   handle("msg:markRead", (key: string, mid?: number) => core.markRead(key, mid));
   handle("files:sendPaths", async (key: string, paths: string[]) => {
     for (const p of paths) {

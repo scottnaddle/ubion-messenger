@@ -17,6 +17,7 @@ export type Settings = {
 
 export type Bridge = {
   call<T = any>(ch: string, ...args: unknown[]): Promise<T>;
+  deleteChatMessages(ids: number[]): Promise<{ ok: true; count: number }>;
   onEvent(cb: (e: { type: string; payload: any }) => void): () => void;
   onOpenRoom(cb: (key: string) => void): () => void;
   onOpenSettings(cb: () => void): () => void;
