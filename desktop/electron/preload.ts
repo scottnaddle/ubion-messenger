@@ -102,6 +102,11 @@ const api = {
     reply: (key: string, target: import("./core/edit-reply").ReplyTarget, replyText: string) =>
       call<{ ok: true; messageId?: number }>("msg:reply", key, target, replyText),
   },
+  botSummary: {
+    caps: () => call<import("./core/bot-summary").BotSummaryCaps>("bot:summary:caps"),
+    request: (roomKey: string, mode: import("../src/lib/bot-summary").SummaryMode, recentN?: number) =>
+      call<{ ok: true; messageId?: number }>("bot:summary:request", roomKey, mode, recentN),
+  },
   openChatBot: (brandName?: string) => call<void>("app:openChatBot", brandName),
   onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
   onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),

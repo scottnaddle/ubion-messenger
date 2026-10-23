@@ -16,6 +16,8 @@ import type { ScheduledMessage, ScheduledInput } from "../electron/core/schedule
 import type { StatusCaps } from "../electron/core/status-message";
 import type { ReactionsCaps, ReactionMap } from "../electron/core/reactions";
 import type { EditCaps, ReplyTarget } from "../electron/core/edit-reply";
+import type { BotSummaryCaps } from "../electron/core/bot-summary";
+import type { SummaryMode } from "./lib/bot-summary";
 import type { Language } from "./lib/i18n-core";
 import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
@@ -150,6 +152,11 @@ export type Bridge = {
     caps(): Promise<EditCaps>;
     edit(key: string, origMessageId: number, newText: string): Promise<{ ok: true; messageId?: number }>;
     reply(key: string, target: ReplyTarget, replyText: string): Promise<{ ok: true; messageId?: number }>;
+  };
+  /** 유비온봇 대화/안읽은 메시지 요약: posts a /요약 command to the 나 room. Gated by UBM_BOT_SUMMARY=1; self-only guard applies. */
+  botSummary: {
+    caps(): Promise<BotSummaryCaps>;
+    request(roomKey: string, mode: SummaryMode, recentN?: number): Promise<{ ok: true; messageId?: number }>;
   };
   openChatBot(brandName?: string): Promise<void>;
   onEvent(cb: (e: { type: string; payload: any }) => void): () => void;

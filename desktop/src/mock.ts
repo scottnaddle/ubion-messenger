@@ -304,6 +304,10 @@ export function installMockIfNeeded() {
       },
       reply: async () => ({ ok: true as const, messageId: Date.now() }),
     },
+    botSummary: {
+      caps: async () => ({ enabled: new URLSearchParams(location.search).has("summary"), selfOnly: false }),
+      request: async () => ({ ok: true as const, messageId: Date.now() }),
+    },
     openChatBot: async () => undefined,
     onEvent: () => () => undefined,
     onOpenRoom: (cb) => {

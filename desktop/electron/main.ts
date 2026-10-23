@@ -59,6 +59,10 @@ import {
   editCaps, editEnabled, EDIT_DISABLED_TEXT, guardEditReplyTarget, normalizeEditText, normalizeReplyTarget,
   normalizeReplyText, performEdit, performReply,
 } from "./core/edit-reply";
+import {
+  BOT_SUMMARY_DISABLED_TEXT, botSummaryCaps, botSummaryEnabled, guardBotSummaryTarget, normalizeSummaryRoomKey,
+  normalizeSummaryMode, normalizeRecentN, performBotSummary,
+} from "./core/bot-summary";
 import { normalizeGlobalQuery } from "../src/lib/global-search";
 import {
   activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
@@ -1783,6 +1787,27 @@ function registerIpc() {
       roomKey: String(key),
       target: normalizeReplyTarget(target),
       replyText: normalizeReplyText(replyText),
+    });
+  });
+  // 유비온봇 대화 요약 / 안 읽은 메시지 요약: posts a /요약 command to the 나 room (bot room).
+  // New message-sending path → self-only guard. Behind UBM_BOT_SUMMARY=1 (needs server deploy).
+  const BOT_SUMMARY_ON = botSummaryEnabled(process.env);
+  handle("bot:summary:caps", () => botSummaryCaps(process.env));
+  handle("bot:summary:request", async (target: unknown, mode: unknown, recentN?: unknown) => {
+    if (!BOT_SUMMARY_ON) throw new Error(BOT_SUMMARY_DISABLED_TEXT);
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const selfRoom = core.getRooms().find((r) => r.isSelf) ?? null;
+    const roomKey = normalizeSummaryRoomKey(target);
+    const m = normalizeSummaryMode(mode);
+    const n = m === "recent" ? normalizeRecentN(recentN) : undefined;
+    return performBotSummary({
+      guard: () => guardBotSummaryTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", me, selfRoomSeq: selfRoomApiSeq(), selfRoom }),
+      sendText: (k, t) => core.sendText(k, t),
+      selfRoomKey: selfRoom?.key ?? "",
+      roomKey,
+      mode: m,
+      recentN: n,
     });
   });
   handle("app:badgeOverlay", (dataUrl: string | null) => {

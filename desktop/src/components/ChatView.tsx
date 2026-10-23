@@ -27,6 +27,7 @@ import { REMINDER_PRESETS, type ReminderPreset } from "../../electron/core/remin
 import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
+import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
 import { applyToggle } from "../lib/reactions";
 import { composeQuoteText, parseMessage, truncateQuote } from "../lib/markers";
 import { FileCard, MediaViewer } from "./FileCard";
@@ -104,6 +105,8 @@ export function ChatView({
   const [reactions, setReactions] = useState<ReactionMap | undefined>(undefined);
   const [reactionsOn, setReactionsOn] = useState(false);
   const [editOn, setEditOn] = useState(true);
+  const [summaryOn, setSummaryOn] = useState(false);
+  const [summaryBusy, setSummaryBusy] = useState(false);
   const [replyTarget, setReplyTarget] = useState<{ messageId: number; senderName: string; text: string } | null>(null);
   const [editTarget, setEditTarget] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState("");
@@ -191,6 +194,10 @@ export function ChatView({
   // 메시지 수정: capability once (UBM_EDIT default on).
   useEffect(() => {
     api().edit.caps().then((c) => setEditOn(c.enabled)).catch(() => setEditOn(false));
+  }, []);
+  // 유비온봇 요약: capability once (UBM_BOT_SUMMARY=1).
+  useEffect(() => {
+    api().botSummary.caps().then((c) => setSummaryOn(c.enabled)).catch(() => setSummaryOn(false));
   }, []);
   useEffect(() => {
     if (!reactionsOn || reactionsRoomSeq == null) return;
@@ -623,6 +630,19 @@ export function ChatView({
       toast(t("알림 설정을 변경하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
+  const requestBotSummary = async (mode: SummaryMode) => {
+    setRoomMenu(null);
+    if (!summaryOn || summaryBusy) return;
+    setSummaryBusy(true);
+    try {
+      await api().botSummary.request(room.key, mode, mode === "recent" ? SUMMARY_DEFAULT_RECENT_N : undefined);
+      toast(t("유비온봇에게 요약을 요청했습니다"), "info");
+    } catch (e) {
+      toast(t("요약을 요청하지 못했습니다: {error}", { error: (e as Error).message }));
+    } finally {
+      setSummaryBusy(false);
+    }
+  };
   const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
   const subtitle =
     room.kind === "buddy"
@@ -821,6 +841,8 @@ export function ChatView({
           onBackup={room.kind !== "pubsub" ? () => setBackupOpen(true) : undefined}
           showBot={botRoom} botAutonomy={botAutonomy} botBusy={botLoading || botSaving}
           botDisabled={botDisabled} botError={botError} onToggleBot={() => void toggleBotAutonomy()}
+          showSummary={summaryOn && !room.isSelf} summaryBusy={summaryBusy}
+          onSummary={(m) => void requestBotSummary(m)}
         />
       )}
       {backupOpen && (
@@ -936,12 +958,15 @@ function MentionedText({ text, memberNames, myName }: { text: string; memberName
 function RoomMenu({
   x, y, usePush, onToggle, onClose, onBackup,
   showBot, botAutonomy, botBusy, botDisabled, botError, onToggleBot,
+  showSummary, summaryBusy, onSummary,
 }: {
   x: number; y: number; usePush: boolean; onToggle: () => void; onClose: () => void; onBackup?: () => void;
   showBot: boolean; botAutonomy: boolean; botBusy: boolean; botDisabled: boolean;
   botError: string; onToggleBot: () => void;
+  showSummary: boolean; summaryBusy: boolean; onSummary: (mode: SummaryMode) => void;
 }) {
   const t = useT();
+  const [summaryOpen, setSummaryOpen] = useState(false);
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
@@ -956,6 +981,20 @@ function RoomMenu({
         <button role="menuitem" onClick={() => { onClose(); onBackup(); }}>
           <Icon name="download" size={14} /> {t("대화 백업")}
         </button>
+      )}
+      {showSummary && (
+        <div className="bot-summary">
+          <button role="menuitem" disabled={summaryBusy} onClick={() => setSummaryOpen((s) => !s)}>
+            <Icon name="chat" size={14} /> {t("유비온봇에게 요약 요청")}
+          </button>
+          {summaryOpen && (
+            <div className="bot-summary-modes">
+              <button role="menuitem" onClick={() => onSummary("unread")}><Icon name="mail" size={13} /> {t("안 읽은 메시지 요약")}</button>
+              <button role="menuitem" onClick={() => onSummary("today")}><Icon name="calendar" size={13} /> {t("오늘 대화 요약")}</button>
+              <button role="menuitem" onClick={() => onSummary("recent")}><Icon name="clock" size={13} /> {t("최근 대화 요약")}</button>
+            </div>
+          )}
+        </div>
       )}
       {showBot && (
         <div className="bot-autonomy">
