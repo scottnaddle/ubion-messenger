@@ -35,6 +35,12 @@ export type MailFolders = {
   userSharedFolders: MailFolder[];
   userTags: string[];
 };
+import {
+  isAllowedMailPost, mailListBody, normalizeMailListArgs, normalizeMailUid, parseMailList, parseMailMessage, validFolder,
+  type MailListPage, type MailMessage,
+} from "./mail";
+export type { MailListPage, MailMessage, MailListItem, MailAttachment, MailAddr } from "./mail";
+
 export const APPROVAL_BOXES = ["todo", "upcoming", "draft", "approve"] as const;
 export type ApprovalBox = (typeof APPROVAL_BOXES)[number];
 export const APPROVAL_BOX_LABELS: Record<ApprovalBox, string> = {
@@ -104,7 +110,7 @@ export type PortalEvents = {
   portalNewPostSummary: { count: number; atLeast: boolean };
 };
 
-type Fetcher = (path: string, init?: { method?: string }) => Promise<{ status: number; text: string }>;
+type Fetcher = (path: string, init?: { method?: string; json?: unknown }) => Promise<{ status: number; text: string }>;
 
 /** Path prefixes (pathname only) that may be requested. Exact match or regex. */
 export const PORTAL_WHITELIST: RegExp[] = [
@@ -582,6 +588,33 @@ export class PortalService {
   async mailTodayCount() { return parseMailCount(await this.get("/api/mail/message/count?today=on")); }
 
   async mailFolders() { return parseMailFolders(await this.get("/api/mail/folder/all")); }
+
+  /** JSON POST, restricted to MAIL_POST_WHITELIST (list/read only — never send/delete/move). */
+  async post(path: string, json: unknown): Promise<any> {
+    if (!isAllowedMailPost(path)) throw new Error(`portal POST not allowed: ${path.split("?")[0]}`);
+    const res = await this.fetcher(path, { method: "POST", json });
+    if (res.status !== 200) {
+      const e = new Error(`HTTP ${res.status} ${path}`) as Error & { status?: number };
+      e.status = res.status;
+      throw e;
+    }
+    try {
+      return JSON.parse(res.text);
+    } catch {
+      throw new Error(`invalid JSON ${path}`);
+    }
+  }
+
+  async mailList(folder: string, page = 1, keyword = ""): Promise<MailListPage> {
+    const a = normalizeMailListArgs(folder, page, keyword);
+    return parseMailList(await this.post("/api/mail/message/list", mailListBody(a)), a.folder);
+  }
+
+  /** ⚠ Marks the message as read on the server. Call only when the user opens a message. */
+  async mailRead(folder: string, uid: number): Promise<MailMessage> {
+    const f = validFolder(folder);
+    return parseMailMessage(await this.post("/api/mail/message/read", { folder: f, uid: normalizeMailUid(uid) }), f);
+  }
 
   async approvalList(box: ApprovalBox, page = 0, keyword = "") {
     const a = normalizeApprovalListArgs(box, page, keyword);

@@ -171,3 +171,11 @@ Script: `proof_readonly.py` (run on Mac with Keychain password).
 5. **Ops:** IP allowlist means clients must run on office/VPN network (or a small
    on-prem bridge host). Box/cloud agents cannot reach the server directly.
 
+
+## Native mail list/read (v1.0.11, live-verified 2026-10-23)
+- `POST /api/mail/message/list` JSON `{folder, page (1-based), offset (page size), keyWord?}` → `data{folderName, folderFullName, total, unreadMessageCount, pageInfo{page,pageSize,total,lastPage}, messageList[]}`.
+  Items: `id, folderFullName, subject, from ("Name"<addr>), preview, dateUtc, seen, flag (S=seen, T=attachment, A=answered, F=flagged), priority, size`.
+  `messageList` is omitted when empty. ⚠ Without `page`+`offset` the server returns the entire folder (11k+ items). Form-encoded body → 500.
+- `POST /api/mail/message/read` JSON `{folder, uid}` → `data.msgContent{uid, subject, from, fromPersonal, dateUtc, htmlContent, priority, flaged, toList[{personal,address}], ccList?, attachList[{path,fileName,size,fileType,fsize}]}`. ⚠ Marks the message read.
+- `GET /api/mail/folder/all` (POST → 405).
+- Attachment download endpoint NOT found yet (`/api/mail/message/download|attach/download?folder&uid&part` → 500); app opens the message in web mail for downloads.

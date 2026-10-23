@@ -95,6 +95,28 @@ export function installMockIfNeeded() {
         userFolders: [{ id: "3", name: "업무", fullName: "Inbox/업무", encName: "Inbox%2F%EC%97%85%EB%AC%B4", depth: 1, newCnt: 0, unseenCnt: 1, totalCnt: 7 }],
         userSharedFolders: [], userTags: [],
       }),
+      mailList: async (folder: string, page: number, keyword = "") => {
+        const people = [["김하늘", "sky.kim@example.com"], ["이서준", "seojun@example.com"], ["박지민", "jimin.park@example.org"], ["최유나", "yuna@example.net"], ["정민호", "minho@example.com"]];
+        const subjects = ["4분기 로드맵 리뷰 일정 안내", "[공지] 사내 보안 점검 협조 요청", "견적서 송부드립니다", "주간 회의록 (10/21)", "신규 입사자 온보딩 자료", "디자인 시안 v3 피드백", "출장 경비 정산 확인 부탁드립니다", "서버 점검 완료 보고"];
+        const all = Array.from({ length: 46 }, (_, i) => {
+          const [name, addr] = people[i % people.length];
+          return {
+            uid: 900 - i, folder, subject: subjects[i % subjects.length], from: { name, address: addr },
+            preview: "안녕하세요, 요청하신 내용 정리해서 공유드립니다. 확인 후 회신 부탁드립니다.",
+            dateUtc: new Date(Date.now() - i * 5.5 * 3600_000).toISOString(), seen: i > 3 && i !== 6, hasAttach: i % 3 === 2,
+            flagged: i === 5, answered: false, important: i === 1 || i === 9, size: "24KB",
+          };
+        }).filter((m) => !keyword || m.subject.includes(keyword) || m.from.address.includes(keyword) || m.from.name.includes(keyword));
+        const size = 20, items = all.slice((page - 1) * size, page * size);
+        return { folder, folderName: folder === "Inbox" ? "받은편지함" : folder, items, page, pageSize: size, total: all.length, unread: 3, lastPage: page * size >= all.length, search: !!keyword };
+      },
+      mailRead: async (folder: string, uid: number) => ({
+        uid, folder, subject: "견적서 송부드립니다", from: { name: "박지민", address: "jimin.park@example.org" },
+        to: [{ name: "홍길동", address: "hong@example.com" }], cc: [{ name: "김하늘", address: "sky.kim@example.com" }],
+        dateUtc: new Date(Date.now() - 3 * 3600_000).toISOString(), important: false, flagged: false,
+        html: '<p>안녕하세요, 홍길동 매니저님.</p><p>요청하신 <b>클라우드 이전 프로젝트</b> 견적서를 첨부와 같이 송부드립니다.</p><table border="1" cellpadding="6" style="border-collapse:collapse"><tr><th>항목</th><th>금액</th></tr><tr><td>컨설팅</td><td>12,000,000원</td></tr><tr><td>마이그레이션</td><td>28,500,000원</td></tr></table><p><img src="https://images.example.com/banner.png" width="480" height="60" alt="banner"></p><p>자세한 내용은 <a href="https://example.com/quote">견적 상세 페이지</a>를 참고해 주세요.</p><script>alert(1)</script><p>감사합니다.<br>박지민 드림</p>',
+        attachments: [{ part: "1", name: "견적서_2026Q4.pdf", size: 204800, sizeLabel: "200KB", type: "pdf" }, { part: "2", name: "일정표.xlsx", size: 51200, sizeLabel: "50KB", type: "xlsx" }],
+      }),
       approvalList: async () => ({
         items: [{
           id: 11, documentId: 11, formName: "지출결의서", title: "10월 법인카드 정산", docStatusName: "진행중",
