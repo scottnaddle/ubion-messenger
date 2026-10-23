@@ -295,6 +295,13 @@ export function installMockIfNeeded() {
       list: async () => ({}),
       toggle: async () => ({}),
     },
+    polls: {
+      caps: async () => ({ enabled: new URLSearchParams(location.search).has("polls"), selfOnly: false }),
+      create: async () => ({ id: 1, roomSeq: 1, question: "", options: [], multiSelect: false, closed: false, votes: {} }),
+      get: async () => ({ id: 1, roomSeq: 1, question: "", options: [], multiSelect: false, closed: false, votes: {} }),
+      vote: async () => ({ id: 1, roomSeq: 1, question: "", options: [], multiSelect: false, closed: false, votes: {} }),
+      close: async () => ({ id: 1, roomSeq: 1, question: "", options: [], multiSelect: false, closed: true, votes: {} }),
+    },
     edit: {
       caps: async () => ({ enabled: true, selfOnly: false }),
       edit: async (_key: string, origMessageId: number, newText: string) => {

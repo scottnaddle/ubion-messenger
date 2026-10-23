@@ -29,7 +29,7 @@ import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
 import { applyToggle } from "../lib/reactions";
-import { composeQuoteText, parseMessage, truncateQuote } from "../lib/markers";
+import { composeQuoteText, decodePollId, parseMessage, truncateQuote } from "../lib/markers";
 import { FileCard, MediaViewer } from "./FileCard";
 import { BackupModal } from "./BackupModal";
 import { EmojiPicker } from "./EmojiPicker";
@@ -38,6 +38,7 @@ import {
 } from "../lib/emoticon";
 import { LinkPreview } from "./LinkPreview";
 import { ReactionBar } from "./Reactions";
+import { PollCard, PollCreateModal } from "./PollCard";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
 import { tk, useT } from "../lib/i18n";
@@ -107,6 +108,8 @@ export function ChatView({
   const [editOn, setEditOn] = useState(true);
   const [summaryOn, setSummaryOn] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
+  const [pollsOn, setPollsOn] = useState(false);
+  const [pollOpen, setPollOpen] = useState(false);
   const [replyTarget, setReplyTarget] = useState<{ messageId: number; senderName: string; text: string } | null>(null);
   const [editTarget, setEditTarget] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState("");
@@ -198,6 +201,10 @@ export function ChatView({
   // 유비온봇 요약: capability once (UBM_BOT_SUMMARY=1).
   useEffect(() => {
     api().botSummary.caps().then((c) => setSummaryOn(c.enabled)).catch(() => setSummaryOn(false));
+  }, []);
+  // 투표: capability once (UBM_POLLS=1).
+  useEffect(() => {
+    api().polls.caps().then((c) => setPollsOn(c.enabled)).catch(() => setPollsOn(false));
   }, []);
   useEffect(() => {
     if (!reactionsOn || reactionsRoomSeq == null) return;
@@ -679,6 +686,11 @@ export function ChatView({
             <Icon name="video" size={18} />
           </button>
         )}
+        {pollsOn && canSend && (
+          <button className="icon-btn" title={t("투표")} aria-label={t("투표")} onClick={() => setPollOpen(true)}>
+            <Icon name="survey" size={18} />
+          </button>
+        )}
         <button className={`icon-btn ${searchOpen ? "on" : ""}`} title={t("대화 내용 검색")} onClick={() => setSearchOpen((s) => !s)}>
           <Icon name="search" size={18} />
         </button>
@@ -751,6 +763,7 @@ export function ChatView({
                     onEdit={editOn && canDeleteMessage(m, me.id) && !isDeletedMessage(m) ? () => requestEdit(m) : undefined}
                     onReply={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestReply(m) : undefined}
                     reactions={reactions} onToggleReaction={toggleReaction}
+                    pollsOn={pollsOn}
                   />
                 </Fragment>
               );
@@ -880,6 +893,13 @@ export function ChatView({
       )}
       {remindTarget && (
         <ReminderModal m={remindTarget} onPick={(p, c) => void setReminder(remindTarget, p, c)} onClose={() => setRemindTarget(null)} />
+      )}
+      {pollOpen && reactionsRoomSeq != null && (
+        <PollCreateModal
+          roomSeq={reactionsRoomSeq}
+          onClose={() => setPollOpen(false)}
+          onCreated={() => { setPollOpen(false); toast(t("투표를 만들었습니다"), "info"); }}
+        />
       )}
       {editTarget && (
         <div className="modal-back" onClick={() => setEditTarget(null)}>
@@ -1128,13 +1148,14 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
-  onEdit, onReply, reactions, onToggleReaction,
+  onEdit, onReply, reactions, onToggleReaction, pollsOn,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
   onSave?: () => void; onRemind?: () => void; onEdit?: () => void; onReply?: () => void;
   reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
+  pollsOn: boolean;
 }) {
   const t = useT();
   const deleted = isDeletedMessage(m);
@@ -1146,6 +1167,7 @@ function MessageRow({
   };
   // Parse hidden markers (edit / quote) for rendering without showing the raw marker text.
   const parsed = useMemo(() => parseMessage(m.message || ""), [m.message]);
+  const pollId = decodePollId(m.message);
   // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.
   const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message }
     : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || t("삭제된 파일"), expired: true } : undefined);
@@ -1166,14 +1188,20 @@ function MessageRow({
           ) : (
             <div className="bubble-col">
               <div className="bubble" onContextMenu={openMenu}>
-                {parsed.quote && (
-                  <div className="quote-block">
-                    <span className="quote-name">{parsed.quote.senderName}</span>
-                    <span className="quote-text">{parsed.quote.text}</span>
-                  </div>
+                {pollId != null && pollsOn ? (
+                  <PollCard pollId={pollId} me={meId} />
+                ) : (
+                  <>
+                    {parsed.quote && (
+                      <div className="quote-block">
+                        <span className="quote-name">{parsed.quote.senderName}</span>
+                        <span className="quote-text">{parsed.quote.text}</span>
+                      </div>
+                    )}
+                    <Linkified text={parsed.body} memberNames={memberNames} myName={myName} />
+                    {parsed.editedId != null && <span className="edited-tag">{t("(수정됨)")}</span>}
+                  </>
                 )}
-                <Linkified text={parsed.body} memberNames={memberNames} myName={myName} />
-                {parsed.editedId != null && <span className="edited-tag">{t("(수정됨)")}</span>}
               </div>
               {!m.pending && <LinkPreview text={m.message} />}
             </div>

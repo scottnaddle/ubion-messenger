@@ -165,6 +165,25 @@ input, textarea, select { font: inherit; color: inherit; }
 .reply-bar-quote { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reply-bar-close { margin-left: auto; }
 .edit-input { width: 100%; min-height: 88px; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; }
+.poll-card { display: flex; flex-direction: column; gap: 6px; min-width: 220px; max-width: 320px; }
+.poll-question { font-weight: 600; white-space: normal; }
+.poll-option { all: unset; display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); }
+.poll-option:hover { border-color: var(--accent); }
+.poll-option.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg2)); }
+.poll-option:disabled { cursor: default; opacity: .85; }
+.poll-option-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.poll-option-meta { display: flex; align-items: center; gap: 6px; flex: none; }
+.poll-bar { width: 56px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.poll-bar-fill { display: block; height: 100%; background: var(--accent); }
+.poll-count { font-size: 12px; color: var(--muted); min-width: 14px; text-align: right; }
+.poll-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.poll-error { color: var(--danger, #d33); font-size: 12px; }
+.poll-input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; }
+.poll-option-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.poll-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+.poll-deadline { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.poll-deadline input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; }
+.poll-card .muted.tiny { font-size: 11px; }
 .bubble.file { display: flex; align-items: center; gap: 10px; min-width: 240px; background: var(--bg2); color: var(--fg) !important; border: 1px solid var(--line); }
 .file-ic { color: var(--accent); display: flex; } .file-info { flex: 1; min-width: 0; }
 .file-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }

@@ -11,8 +11,10 @@
 
 const EDIT_MARKER = /\[\[ubm:edit:(\d+)\]\]/;
 const REPLY_MARKER = /\[\[re:(\d+)\]\]/;
+const POLL_MARKER = /\[\[ubm:poll:(\d+)\]\]/;
 const EDIT_MARKERS = /\[\[ubm:edit:\d+\]\]/g;
 const REPLY_MARKERS = /\[\[re:\d+\]\]/g;
+const POLL_MARKERS = /\[\[ubm:poll:\d+\]\]/g;
 
 export const EDIT_TAG = "(수정됨)";
 export const QUOTE_TRUNCATE = 80;
@@ -23,6 +25,10 @@ export function encodeEditMarker(id: number): string {
 
 export function encodeReplyMarker(id: number): string {
   return `[[re:${id}]]`;
+}
+
+export function encodePollMarker(id: number): string {
+  return `[[ubm:poll:${id}]]`;
 }
 
 function decodeId(re: RegExp, text: unknown): number | null {
@@ -41,12 +47,20 @@ export function decodeReplyId(text: unknown): number | null {
   return decodeId(REPLY_MARKER, text);
 }
 
+export function decodePollId(text: unknown): number | null {
+  return decodeId(POLL_MARKER, text);
+}
+
 export function stripEditMarkers(text: unknown): string {
   return typeof text === "string" ? text.replace(EDIT_MARKERS, "") : "";
 }
 
 export function stripReplyMarkers(text: unknown): string {
   return typeof text === "string" ? text.replace(REPLY_MARKERS, "") : "";
+}
+
+export function stripPollMarkers(text: unknown): string {
+  return typeof text === "string" ? text.replace(POLL_MARKERS, "") : "";
 }
 
 /** Compose the edited message body: "<newText>\n(수정됨)[[ubm:edit:<origId>]]". */
@@ -82,7 +96,7 @@ export type ParsedMessage = {
 /** Split a received message into its quote block / body / hidden markers (for rendering). */
 export function parseMessage(raw: string): ParsedMessage {
   const replyId = decodeReplyId(raw);
-  let text = stripReplyMarkers(raw);
+  let text = stripPollMarkers(stripReplyMarkers(raw));
   const editedId = decodeEditId(text);
   text = editedId != null ? stripEditTag(stripEditMarkers(text)) : stripEditMarkers(text);
 

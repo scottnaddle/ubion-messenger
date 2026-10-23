@@ -15,6 +15,7 @@ import type { Reminder, ReminderInput } from "../electron/core/reminders";
 import type { ScheduledMessage, ScheduledInput } from "../electron/core/scheduled-send";
 import type { StatusCaps } from "../electron/core/status-message";
 import type { ReactionsCaps, ReactionMap } from "../electron/core/reactions";
+import type { Poll, PollCaps, PollInput } from "../electron/core/polls";
 import type { EditCaps, ReplyTarget } from "../electron/core/edit-reply";
 import type { BotSummaryCaps } from "../electron/core/bot-summary";
 import type { SummaryMode } from "./lib/bot-summary";
@@ -146,6 +147,14 @@ export type Bridge = {
     caps(): Promise<ReactionsCaps>;
     list(roomSeq: number, messageIds: number[]): Promise<ReactionMap>;
     toggle(roomSeq: number, messageId: number, emoji: string): Promise<ReactionMap>;
+  };
+  /** 투표 (our server /v1/polls; bot posts the poll + results), gated by UBM_POLLS=1. */
+  polls: {
+    caps(): Promise<PollCaps>;
+    create(input: PollInput): Promise<Poll>;
+    get(id: number): Promise<Poll>;
+    vote(id: number, optionIndex: number): Promise<Poll>;
+    close(id: number): Promise<Poll>;
   };
   /** 메시지 수정 / 답장(인용): M 패턴 (delete+resend / quote). Gated by UBM_EDIT (default on); self-only guard applies. */
   edit: {

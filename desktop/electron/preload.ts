@@ -95,6 +95,13 @@ const api = {
     list: (roomSeq: number, messageIds: number[]) => call<import("./core/reactions").ReactionMap>("reactions:list", roomSeq, messageIds),
     toggle: (roomSeq: number, messageId: number, emoji: string) => call<import("./core/reactions").ReactionMap>("reactions:toggle", roomSeq, messageId, emoji),
   },
+  polls: {
+    caps: () => call<import("./core/polls").PollCaps>("polls:caps"),
+    create: (input: import("./core/polls").PollInput) => call<import("./core/polls").Poll>("polls:create", input),
+    get: (id: number) => call<import("./core/polls").Poll>("polls:get", id),
+    vote: (id: number, optionIndex: number) => call<import("./core/polls").Poll>("polls:vote", id, optionIndex),
+    close: (id: number) => call<import("./core/polls").Poll>("polls:close", id),
+  },
   edit: {
     caps: () => call<import("./core/edit-reply").EditCaps>("edit:caps"),
     edit: (key: string, origMessageId: number, newText: string) =>

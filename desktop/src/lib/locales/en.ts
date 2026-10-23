@@ -545,6 +545,22 @@ const dict: Record<string, string> = {
   "메시지를 수정했습니다": "Message edited",
   "수정하지 못했습니다: {error}": "Couldn't edit: {error}",
   "(수정됨)": "(edited)",
+  "투표": "Poll",
+  "투표를 만들었습니다": "Poll created",
+  "투표 불러오는 중…": "Loading poll…",
+  "투표를 불러오지 못했습니다": "Couldn't load the poll",
+  "질문을 입력하세요": "Enter a question",
+  "선택지를 2개 이상 입력하세요": "Enter at least 2 options",
+  "선택지 {n}": "Option {n}",
+  "선택지 추가": "Add option",
+  "선택지 삭제": "Remove option",
+  "복수 선택 허용": "Allow multiple choices",
+  "마감 시간 (선택)": "Deadline (optional)",
+  "마감 시간이 올바르지 않습니다": "Invalid deadline",
+  "마감: {time}": "Due: {time}",
+  "총 {n}명 참여": "{n} voted",
+  "투표 종료": "Close poll",
+  "만들기": "Create",
 };
 
 export default dict;

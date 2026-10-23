@@ -56,6 +56,10 @@ import {
   reactionsCaps, REACTIONS_DISABLED_TEXT, reactionsEnabled,
 } from "./core/reactions";
 import {
+  createPollsClient, guardPollRoom, normalizeOptionIndex, normalizePollId, normalizePollInput,
+  pollsCaps, POLLS_DISABLED_TEXT, pollsEnabled,
+} from "./core/polls";
+import {
   editCaps, editEnabled, EDIT_DISABLED_TEXT, guardEditReplyTarget, normalizeEditText, normalizeReplyTarget,
   normalizeReplyText, performEdit, performReply,
 } from "./core/edit-reply";
@@ -285,6 +289,16 @@ const statusClient = () =>
 
 const reactionsClient = () =>
   createReactionsClient({
+    baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
+    getUserSeq: () => core.user?.id ?? 0,
+    getSessionHeader: async () => {
+      const cookies = await core.client.sessionCookies();
+      return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
+    },
+  });
+
+const pollsClient = () =>
+  createPollsClient({
     baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: async () => {
@@ -1757,6 +1771,42 @@ function registerIpc() {
     const e = normalizeEmoji(emoji);
     guardReactionRoom({ selfOnly: process.env.UBM_SELF_ONLY === "1", roomSeq: seq, me, selfRoomSeq: selfRoomApiSeq() });
     const r = await reactionsClient().toggle(seq, mid, e);
+    if (!r.ok) throw new Error(r.message);
+    return r.data;
+  });
+  // 투표: our server (bot.ubion.global / UBM_BOT_API_URL); bot posts the poll + results. Behind UBM_POLLS=1.
+  const POLLS_ON = pollsEnabled(process.env);
+  handle("polls:caps", () => pollsCaps(process.env));
+  handle("polls:create", async (input: unknown) => {
+    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const parsed = normalizePollInput(input);
+    guardPollRoom({ selfOnly: process.env.UBM_SELF_ONLY === "1", roomSeq: parsed.roomSeq, me, selfRoomSeq: selfRoomApiSeq() });
+    const r = await pollsClient().create(parsed);
+    if (!r.ok) throw new Error(r.message);
+    return r.data;
+  });
+  handle("polls:get", async (id: unknown) => {
+    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (core.user == null) throw new Error("로그인이 필요합니다");
+    const r = await pollsClient().get(normalizePollId(id));
+    if (!r.ok) throw new Error(r.message);
+    return r.data;
+  });
+  handle("polls:vote", async (id: unknown, optionIndex: unknown) => {
+    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const r = await pollsClient().vote(normalizePollId(id), normalizeOptionIndex(optionIndex));
+    if (!r.ok) throw new Error(r.message);
+    return r.data;
+  });
+  handle("polls:close", async (id: unknown) => {
+    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const r = await pollsClient().close(normalizePollId(id));
     if (!r.ok) throw new Error(r.message);
     return r.data;
   });
