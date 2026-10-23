@@ -131,6 +131,7 @@ const dict: Record<string, string> = {
   "화면 캡쳐": "螢幕擷取",
   "이모티콘": "表情符號",
   "더보기": "更多",
+  "리액션 달기": "Add reaction",
   "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)": "輸入訊息（Enter 傳送，Shift+Enter 換行）",
   "전송": "傳送",
   "대화 검색": "搜尋對話",

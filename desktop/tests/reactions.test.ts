@@ -231,3 +231,13 @@ describe("reaction polling helpers", () => {
     expect(reactionUiVisibility(false, true)).toEqual({ show: false, retry: false });
   });
 });
+
+describe("reactionDisabledReason", () => {
+  it("explains why the context-menu entry is disabled", async () => {
+    const { reactionDisabledReason } = await import("../src/lib/reactions");
+    expect(reactionDisabledReason(true, false, true)).toBeNull();
+    expect(reactionDisabledReason(true, true, true)).toBe("봇 서버 연결 안 됨");
+    expect(reactionDisabledReason(false, false, true)).toBe("리액션 기능 꺼짐");
+    expect(reactionDisabledReason(true, false, false)).toBe("이 대화방은 리액션 미지원");
+  });
+});

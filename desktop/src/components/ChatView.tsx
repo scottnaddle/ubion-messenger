@@ -29,7 +29,7 @@ import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
 import {
-  applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionPollIds, reactionUiVisibility,
+  applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionDisabledReason, reactionPollIds, reactionUiVisibility,
   REACTION_POLL_MS,
 } from "../lib/reactions";
 import { composeQuoteText, decodePollId, isBotAuthDm, parseMessage, truncateQuote } from "../lib/markers";
@@ -41,6 +41,7 @@ import {
 } from "../lib/emoticon";
 import { LinkPreview } from "./LinkPreview";
 import { ReactionBar } from "./Reactions";
+import { REACTION_EMOJI } from "../../electron/core/reactions";
 import { PollCard, PollCreateModal } from "./PollCard";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
@@ -319,7 +320,8 @@ export function ChatView({
         setReactions(previous);
       });
   }, [reactionsOn, reactionsFailed, reactionsRoomSeq, me.id]);
-  const showReactions = reactionUiVisibility(reactionsOn, reactionsFailed).show;
+  const showReactions = reactionUiVisibility(reactionsOn, reactionsFailed).show && reactionsRoomSeq != null;
+  const reactionBlocked = reactionDisabledReason(reactionsOn, reactionsFailed, reactionsRoomSeq != null);
 
   // group room members (mentions + popup), cached per room
   useEffect(() => {
@@ -868,7 +870,7 @@ export function ChatView({
                     onEdit={editOn && canDeleteMessage(m, me.id) && !isDeletedMessage(m) ? () => requestEdit(m) : undefined}
                     onReply={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestReply(m) : undefined}
                     reactions={reactions} onToggleReaction={toggleReaction}
-                    reactionNames={reactionNames} showReactions={showReactions}
+                    reactionNames={reactionNames} showReactions={showReactions} reactionBlocked={reactionBlocked}
                     pollsOn={pollsOn}
                   />
                 </Fragment>
@@ -1146,9 +1148,11 @@ function RoomMenu({
   );
 }
 
+type MenuReaction = { disabledReason: string | null; onPick: (emoji: string) => void; onMore: () => void };
+
 function MessageMenu({
-  x, y, onEdit, onReply, onDelete, onNotice, onSave, onRemind, onClose,
-}: { x: number; y: number; onEdit?: () => void; onReply?: () => void; onDelete?: () => void; onNotice?: () => void; onSave?: () => void; onRemind?: () => void; onClose: () => void }) {
+  x, y, reaction, onEdit, onReply, onDelete, onNotice, onSave, onRemind, onClose,
+}: { x: number; y: number; reaction?: MenuReaction; onEdit?: () => void; onReply?: () => void; onDelete?: () => void; onNotice?: () => void; onSave?: () => void; onRemind?: () => void; onClose: () => void }) {
   const t = useT();
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
@@ -1157,6 +1161,22 @@ function MessageMenu({
   }, [onClose]);
   return (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      {reaction && (reaction.disabledReason ? (
+        <button role="menuitem" className="ctx-disabled" aria-disabled="true" disabled title={t(reaction.disabledReason)}>
+          <span aria-hidden="true">☺</span> {t("리액션 달기")} <span className="tiny muted">· {t(reaction.disabledReason)}</span>
+        </button>
+      ) : (
+        <div className="ctx-reactions" role="group" aria-label={t("리액션 달기")}>
+          <span className="ctx-label tiny muted">{t("리액션 달기")}</span>
+          <span className="ctx-reaction-row">
+            {REACTION_EMOJI.map((e) => (
+              <button key={e} role="menuitem" className="ctx-reaction" title={e} aria-label={e}
+                onClick={() => { onClose(); reaction.onPick(e); }}>{e}</button>
+            ))}
+            <button role="menuitem" className="ctx-reaction-more" onClick={() => { onClose(); reaction.onMore(); }}>{t("더보기")}</button>
+          </span>
+        </div>
+      ))}
       {onReply && <button role="menuitem" onClick={() => { onClose(); onReply(); }}><Icon name="reply" size={14} /> {t("답장")}</button>}
       {onEdit && <button role="menuitem" onClick={() => { onClose(); onEdit(); }}><Icon name="edit" size={14} /> {t("수정")}</button>}
       {onSave && <button role="menuitem" onClick={() => { onClose(); onSave(); }}><Icon name="star" size={14} /> {t("저장")}</button>}
@@ -1254,23 +1274,32 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
-  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, pollsOn,
+  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, reactionBlocked, pollsOn,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
   onSave?: () => void; onRemind?: () => void; onEdit?: () => void; onReply?: () => void;
   reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
-  reactionNames: ReadonlyMap<number, string>; showReactions: boolean;
+  reactionNames: ReadonlyMap<number, string>; showReactions: boolean; reactionBlocked: string | null;
   pollsOn: boolean;
 }) {
   const t = useT();
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [pickerRequest, setPickerRequest] = useState(0);
+  // 리액션 달기 is offered for every sent message; when the bot server is unusable it is shown disabled with a reason.
+  const canReact = !deleted && !m.pending && !m.failed && m.messageId != null;
+  const reaction = canReact ? {
+    disabledReason: reactionBlocked ?? (showReactions ? null : "봇 서버 연결 안 됨"),
+    onPick: (emoji: string) => onToggleReaction(m.messageId!, emoji),
+    onMore: () => setPickerRequest((n) => n + 1),
+  } : undefined;
+  const hasMenu = !!(onDelete || onNotice || onSave || onRemind || onEdit || onReply || reaction);
   const openMenu = (e: React.MouseEvent) => {
-    if ((!onDelete && !onNotice && !onSave && !onRemind && !onEdit && !onReply) || deleted) return;
+    if (!hasMenu || deleted) return;
     e.preventDefault();
-    setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 110) });
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 300), y: Math.min(e.clientY, window.innerHeight - 260) });
   };
   // Parse hidden markers (edit / quote) for rendering without showing the raw marker text.
   const parsed = useMemo(() => parseMessage(m.message || ""), [m.message]);
@@ -1280,8 +1309,8 @@ function MessageRow({
     : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || t("삭제된 파일"), expired: true } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
-      {menu && (onDelete || onNotice || onSave || onRemind || onEdit || onReply) && (
-        <MessageMenu x={menu.x} y={menu.y} onEdit={onEdit} onReply={onReply} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
+      {menu && hasMenu && (
+        <MessageMenu x={menu.x} y={menu.y} reaction={reaction} onEdit={onEdit} onReply={onReply} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
       )}
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
       <div className="msg-main">
@@ -1315,7 +1344,7 @@ function MessageRow({
           )}
           {showReactions && !deleted && !m.pending && !m.failed && m.messageId != null && (
             <ReactionBar map={reactions} messageId={m.messageId} me={meId} names={reactionNames}
-              onToggle={(e) => onToggleReaction(m.messageId!, e)} />
+              onToggle={(e) => onToggleReaction(m.messageId!, e)} pickerRequest={pickerRequest} />
           )}
           <div className="msg-meta">
             {m.failed ? (

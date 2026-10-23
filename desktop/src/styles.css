@@ -200,8 +200,8 @@ input, textarea, select { font: inherit; color: inherit; }
 .reaction-emoji { font-size: 13px; line-height: 1; }
 .reaction-count { font-variant-numeric: tabular-nums; }
 .reaction-add { width: 26px; height: 22px; flex: none; border-radius: 999px; border: 1px solid var(--line); background: var(--bg2);
-  color: var(--muted); font-size: 11px; line-height: 1; display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
-.msg:hover .reaction-add, .reaction-add:focus-visible, .reaction-add[aria-expanded="true"] { opacity: 1; }
+  color: var(--muted); font-size: 11px; line-height: 1; display: grid; place-items: center; opacity: .4; transition: opacity .12s; }
+.msg:hover .reaction-add, .msg:focus-within .reaction-add, .reaction-add:focus-visible, .reaction-add[aria-expanded="true"] { opacity: 1; }
 .reaction-add:hover { color: var(--accent); border-color: var(--accent); background: var(--bg3); }
 .reaction-pop { position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 22; display: flex; align-items: center; gap: 2px; padding: 5px;
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
@@ -679,3 +679,10 @@ input, textarea, select { font: inherit; color: inherit; }
 .gsearch-hit { display: block; width: 100%; text-align: left; }
 .gsearch-hit:hover { background: var(--bg2); }
 .gsearch-jump { display: block; padding: 0 14px 8px; font-size: .84em; text-align: left; }
+
+.ctx-reactions { display: flex; flex-direction: column; gap: 2px; padding: 4px 4px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.ctx-reaction-row { display: flex; align-items: center; gap: 1px; flex-wrap: nowrap; }
+.ctx-menu button.ctx-reaction { padding: 4px; font-size: 18px; line-height: 1; border-radius: 6px; }
+.ctx-menu button.ctx-reaction-more { padding: 4px 6px; font-size: 12px; color: var(--muted); }
+.ctx-menu button.ctx-disabled { cursor: default; opacity: .6; }
+.ctx-menu button.ctx-disabled:hover { background: none; }

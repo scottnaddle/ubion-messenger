@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { REACTION_EMOJI, type ReactionMap } from "../../electron/core/reactions";
 import { formatReactionTooltip, reactionChips } from "../lib/reactions";
 import { loadRecentEmoji, pushRecentEmoji, saveRecentEmoji } from "../lib/emoticon";
@@ -10,13 +10,15 @@ import { EmojiPicker } from "./EmojiPicker";
  * The compact palette has the 8 quick emoji; "더보기" opens the full composer picker.
  */
 export function ReactionBar({
-  map, messageId, me, names, onToggle,
+  map, messageId, me, names, onToggle, pickerRequest = 0,
 }: {
   map: ReactionMap | undefined;
   messageId: number | undefined;
   me: number;
   names?: ReadonlyMap<number, string>;
   onToggle: (emoji: string) => void;
+  /** Bumped by the message context menu's "더보기" to open the full picker anchored at this bar. */
+  pickerRequest?: number;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -24,6 +26,9 @@ export function ReactionBar({
   const [recent, setRecent] = useState<string[]>(() => loadRecentEmoji());
   const addRef = useRef<HTMLButtonElement>(null);
   const chips = reactionChips(map, messageId, me);
+  useEffect(() => {
+    if (pickerRequest > 0) { setOpen(false); setPickerOpen(true); }
+  }, [pickerRequest]);
   if (messageId == null) return null;
   const byEmoji = map?.[String(messageId)] ?? {};
   const nameFor = (seq: number): string | undefined => (seq === me ? t("나") : names?.get(seq));

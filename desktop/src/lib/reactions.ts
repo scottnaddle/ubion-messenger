@@ -111,3 +111,11 @@ export function reactionUiVisibility(capsEnabled: boolean, listFailed: boolean):
   if (listFailed) return { show: false, retry: true };
   return { show: true, retry: false };
 }
+
+/** Why the reaction entry in the message menu is disabled (null = usable). */
+export function reactionDisabledReason(capsEnabled: boolean, listFailed: boolean, roomSupported: boolean): string | null {
+  if (!capsEnabled) return "리액션 기능 꺼짐";
+  if (!roomSupported) return "이 대화방은 리액션 미지원";
+  if (listFailed) return "봇 서버 연결 안 됨";
+  return null;
+}
