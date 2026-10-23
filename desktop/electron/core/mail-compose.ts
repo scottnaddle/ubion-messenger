@@ -1,19 +1,19 @@
 /**
- * Native mail compose (v1.0.13). Pure helpers (renderer + main) + the single UNVERIFIED send block.
+ * Native mail compose (v1.0.13). Pure helpers (renderer + main) + the single send block.
  *
- * ⚠ SEND IS UNVERIFIED AND DISABLED (MAIL_SEND_ENABLED = false).
- * No capture of the DaouOffice web "보내기" request exists yet. The web mail JS is only served to logged-in
- * sessions, the public OpenAPI (api.daouoffice.com) has no user-mail send, and the repo only names
- * /api/mail/message/send in negative whitelist tests. The candidate below mirrors the verified
- * POST /api/mail/message/{list,read} JSON family — method, path AND body are guesses.
- * Until Scott captures one real send, the UI offers "웹에서 이어 쓰기" instead of sending.
+ * Send request VERIFIED from Scott's DevTools capture (2026-10-23, no-attachment mail to self):
+ *   POST /api/mail/message/send  (method assumed POST — JSON body observed)
+ *   body: see mailSendBody() — every key/default copied from the capture; addresses are
+ *   comma-separated `"Name" <email>` strings, sender comes from the logged-in session.
+ * Attachments (web: XHR `upload?dext=test`, payload unknown) are NOT supported → attachList "".
+ * Reply/forward are sent as new mails (quoted original + RE:/FW: subject); no server-side ref fields.
  */
 import { sanitizeHtmlToText } from "./mail-text";
 import type { MailAddr, MailMessage } from "./mail";
 
-export const MAIL_SEND_ENABLED = false;
-export const MAIL_SEND_METHOD = "POST"; // UNVERIFIED
-export const MAIL_SEND_PATH = "/api/mail/message/send"; // PATH CONFIRMED from Scott capture (2026-10-23); method/payload still UNVERIFIED. Attachments: web uses XHR "upload?dext=test" (not implemented).
+export const MAIL_SEND_ENABLED = true;
+export const MAIL_SEND_METHOD = "POST"; // assumed (capture shows a JSON body)
+export const MAIL_SEND_PATH = "/api/mail/message/send"; // verified (capture)
 export const MAIL_SEND_WHITELIST: RegExp[] = [/^\/api\/mail\/message\/send$/];
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
@@ -95,13 +95,27 @@ export function validateDraft(d: MailDraft): string | null {
 export const isDraftDirty = (d: MailDraft, initial: MailDraft) =>
   JSON.stringify({ ...d, html: d.html.trim() }) !== JSON.stringify({ ...initial, html: initial.html.trim() });
 
-/** UNVERIFIED body shape — fix here once the real request is captured. Attachments not supported yet. */
-export function mailSendBody(d: MailDraft) {
+export type MailSender = { name: string; email: string };
+
+/** `"Name" <email>` (capture format); bare email when no name. */
+export const fmtSendAddr = (a: MailAddr) => {
+  const n = a.name && a.name !== a.address ? a.name.replace(/["\\]/g, "") : "";
+  return n ? `"${n}" <${a.address}>` : a.address;
+};
+export const fmtSendAddrs = (l: MailAddr[]) => l.map(fmtSendAddr).join(", ");
+
+/** Body exactly as captured from the web "보내기" (keys + defaults). */
+export function mailSendBody(d: MailDraft, sender: MailSender) {
   return {
-    to: fmtAddrs(d.to), cc: fmtAddrs(d.cc), bcc: fmtAddrs(d.bcc),
-    subject: d.subject, content: d.html, contentType: "html",
-    sendType: d.mode === "new" ? "normal" : d.mode, // UNVERIFIED
-    ...(d.ref ? { folder: d.ref.folder, uid: d.ref.uid } : {}),
+    attachList: "", attachSign: true, attachsign: true, bannerDisplay: false,
+    bcc: fmtSendAddrs(d.bcc), bigAttachContent: "", bigAttachLinks: null, bigAttachMode: false,
+    cc: fmtSendAddrs(d.cc), charset: "UTF-8", content: `<div class='TerraceMsg'>${d.html}</div>`,
+    massMode: false, receiveNoti: true, saveSent: true, sendAttachCheckResult: false, sendEmailCheckResult: false,
+    sendFlag: "normal", sendInfoCheck: false, sendKeywordCheckResult: false, sendType: "normal",
+    senderEmail: sender.email, senderMode: true, senderName: sender.name,
+    senderUserEmail: fmtSendAddr({ name: sender.name, address: sender.email }),
+    sharedFlag: "user", sharedFolderName: "", sharedUserSeq: "0", signLocation: "outside", signSeq: "1",
+    subject: d.subject, to: fmtSendAddrs(d.to), useAliasEmail: false, writeMode: "html",
   };
 }
 
@@ -128,16 +142,18 @@ export function normalizeDraft(v: unknown): MailDraft {
 
 type Fetcher = (path: string, init?: { method?: string; json?: unknown }) => Promise<{ status: number; text: string }>;
 
-/** The ONE place that would send mail. Refuses unless explicitly enabled (never from the renderer). */
-export async function sendMail(fetcher: Fetcher, d: MailDraft, enabled = MAIL_SEND_ENABLED): Promise<{ ok: true }> {
-  if (!enabled) throw new Error("앱 내 메일 발송은 아직 검증되지 않아 꺼져 있습니다. '웹에서 이어 쓰기'를 사용하세요.");
+/** The ONE place that sends mail. */
+export async function sendMail(fetcher: Fetcher, d: MailDraft, sender: MailSender | null, enabled = MAIL_SEND_ENABLED): Promise<{ ok: true }> {
+  if (!enabled) throw new Error("앱 내 메일 발송이 꺼져 있습니다");
   const err = validateDraft(d);
   if (err) throw new Error(err);
-  if (d.attachments.length) throw new Error("첨부파일 발송은 아직 지원하지 않습니다");
+  if (d.attachments.length) throw new Error("첨부파일 발송은 다음 버전에서 지원됩니다");
+  if (!sender || !isEmail(sender.email)) throw new Error("보내는 사람 정보를 확인할 수 없습니다. 다시 로그인해 주세요.");
   if (!MAIL_SEND_WHITELIST.some((r) => r.test(MAIL_SEND_PATH))) throw new Error("mail send path not allowed");
-  const res = await fetcher(MAIL_SEND_PATH, { method: MAIL_SEND_METHOD, json: mailSendBody(d) });
+  const res = await fetcher(MAIL_SEND_PATH, { method: MAIL_SEND_METHOD, json: mailSendBody(d, sender) });
   let body: any = null;
   try { body = res.text ? JSON.parse(res.text) : null; } catch { /* ignore */ }
   if (res.status === 200 && (body?.code == null || String(body.code) === "200")) return { ok: true };
-  throw new Error(typeof body?.message === "string" && body.message ? body.message : `HTTP ${res.status}`);
+  const m = body?.message ?? body?.data?.message;
+  throw new Error(typeof m === "string" && m ? m : `메일 발송 실패 (HTTP ${res.status}${body?.code != null ? `, code ${body.code}` : ""})`);
 }

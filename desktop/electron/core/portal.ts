@@ -1,4 +1,4 @@
-import { sendMail, normalizeDraft } from "./mail-compose";
+import { sendMail, type MailSender, normalizeDraft } from "./mail-compose";
 /**
  * PortalService — read-only access to the DaouOffice portal home ("홈" tab).
  * - GET only, and only for whitelisted paths (see PORTAL_WHITELIST). Never POST/PUT/DELETE.
@@ -690,9 +690,11 @@ export class PortalService {
     }
   }
 
-  /** ⚠ Would SEND MAIL. Hard-disabled via MAIL_SEND_ENABLED until the real request is captured (see mail-compose.ts). */
+  /** ⚠ SENDS MAIL (verified request shape, see mail-compose.ts). Sender from the logged-in session. */
+  getSender: () => Promise<MailSender | null> = async () => null;
   async mailSend(draft: unknown): Promise<{ ok: true }> {
-    return sendMail(this.fetcher, normalizeDraft(draft));
+    const d = normalizeDraft(draft);
+    return sendMail(this.fetcher, d, await this.getSender());
   }
 
   async mailList(folder: string, page = 1, keyword = ""): Promise<MailListPage> {

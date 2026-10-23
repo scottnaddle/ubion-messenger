@@ -126,7 +126,7 @@ export function installMockIfNeeded() {
         page: { page: 0, offset: 20, total: 1, totalPage: 1, lastPage: true },
       }),
       approvalCounts: async () => ({ todo: 1, upcoming: 0 }),
-      mailSend: async () => { throw new Error("mock: 발송 비활성화"); },
+      mailSend: async (d: any) => { await new Promise((r) => setTimeout(r, 300)); if (String(d?.subject).includes("실패")) throw new Error("수신자 주소를 확인해 주세요 (mock code 500)"); return { ok: true as const }; },
       approvalAction: async (kind: "approve" | "return", _id: number | string, comment = "") => {
         await new Promise((r) => setTimeout(r, 150));
         if (kind === "return" && !comment.trim()) throw new Error("반려 사유를 입력하세요");

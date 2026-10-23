@@ -121,6 +121,13 @@ export class MessengerCore {
     this.portal = new PortalService((path, init) => this.client.request(path, init?.method === "POST" || init?.method === "PUT" ? { method: init.method, json: init.json } : { method: "GET" }), (e, p) => this.emit(e, p as any));
     this.em.setMaxListeners(50);
     this.portal.getUserId = () => this.client.user?.id ?? null;
+    this.portal.getSender = async () => {
+      const u = this.client.user;
+      if (!u) return null;
+      const me = (await this.users().catch(() => [] as Person[])).find((p) => p.userId === u.id);
+      const email = me?.email || (u.loginId.includes("@") ? u.loginId : "");
+      return email ? { name: me?.name || u.name, email } : null;
+    };
   }
 
   on<K extends keyof MessengerEventMap>(e: K, l: Listener<K>) {

@@ -68,7 +68,7 @@ function RecipientField({ label, value, onChange, users, autoFocus }: {
   );
 }
 
-export function MailCompose({ initial, onClose }: { initial: MailDraft; onClose: () => void }) {
+export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; onClose: () => void; onSent?: () => void }) {
   const [d, setD] = useState<MailDraft>(initial);
   const [users, setUsers] = useState<Person[]>([]);
   const [showCc, setShowCc] = useState(initial.cc.length > 0);
@@ -76,6 +76,8 @@ export function MailCompose({ initial, onClose }: { initial: MailDraft; onClose:
   const [err, setErr] = useState("");
   const [note, setNote] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [confirmNoSubject, setConfirmNoSubject] = useState(false);
+  const [sending, setSending] = useState(false);
   const editor = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -104,11 +106,16 @@ export function MailCompose({ initial, onClose }: { initial: MailDraft; onClose:
     void api().portal.open(WRITE_URL).catch(() => undefined);
   };
 
-  const send = async () => {
+  const send = async (allowEmptySubject = false) => {
     const cur = current();
     const v = validateDraft(cur);
     if (v) { setErr(v); return; }
-    try { await api().portal.mailSend(cur); onClose(); } catch (e) { setErr((e as Error).message); }
+    if (cur.attachments.length) { setErr("첨부파일 발송은 다음 버전에서 지원됩니다. 첨부를 제거해 주세요."); return; }
+    if (!cur.subject.trim() && !allowEmptySubject) { setConfirmNoSubject(true); return; }
+    setConfirmNoSubject(false); setSending(true); setErr("");
+    try { await api().portal.mailSend(cur); (onSent ?? onClose)(); }
+    catch (e) { setErr((e as Error).message || "메일 발송에 실패했습니다"); }
+    finally { setSending(false); }
   };
 
   return (
@@ -116,12 +123,8 @@ export function MailCompose({ initial, onClose }: { initial: MailDraft; onClose:
       <header className="mail-compose-head">
         <h3>{TITLES[d.mode]}</h3>
         <div className="mail-compose-actions">
-          {MAIL_SEND_ENABLED
-            ? <button className="primary small" onClick={() => void send()}>보내기</button>
-            : <>
-                <button className="primary small" disabled title="발송 API 검증 전까지 비활성화">보내기</button>
-                <button className="link" onClick={() => void continueOnWeb()} title="내용을 복사하고 웹 메일 쓰기를 엽니다"><Icon name="external" size={13} /> 웹에서 이어 쓰기</button>
-              </>}
+          <button className="primary small" disabled={!MAIL_SEND_ENABLED || sending} onClick={() => void send()}>{sending ? "보내는 중…" : "보내기"}</button>
+          {!MAIL_SEND_ENABLED && <button className="link" onClick={() => void continueOnWeb()} title="내용을 복사하고 웹 메일 쓰기를 엽니다"><Icon name="external" size={13} /> 웹에서 이어 쓰기</button>}
           <button className="link" onClick={discard}>취소</button>
         </div>
       </header>
@@ -148,7 +151,7 @@ export function MailCompose({ initial, onClose }: { initial: MailDraft; onClose:
         <button className="icon-btn" title="글머리 기호" onMouseDown={(e) => { e.preventDefault(); fmt("insertUnorderedList"); }}>•</button>
         <button className="icon-btn" title="번호 매기기" onMouseDown={(e) => { e.preventDefault(); fmt("insertOrderedList"); }}>1.</button>
         <span className="spacer" />
-        <button className="link small" onClick={() => fileRef.current?.click()}><Icon name="clip" size={13} /> 파일 첨부</button>
+        <button className="link small" disabled title="다음 버전에서 지원" onClick={() => fileRef.current?.click()}><Icon name="clip" size={13} /> 파일 첨부 (다음 버전)</button>
         <input ref={fileRef} type="file" multiple hidden onChange={(e) => { pickFiles(e.target.files); e.target.value = ""; }} />
       </div>
       {d.attachments.length > 0 && (
@@ -159,12 +162,26 @@ export function MailCompose({ initial, onClose }: { initial: MailDraft; onClose:
               <button type="button" aria-label={`${a.name} 삭제`} onClick={() => set({ attachments: d.attachments.filter((_, j) => j !== i) })}>×</button>
             </span>
           ))}
-          <span className="muted tiny">첨부 업로드는 발송 API 확인 후 지원됩니다</span>
+          <span className="muted tiny">첨부파일 발송은 다음 버전에서 지원됩니다</span>
         </div>
       )}
       <div ref={editor} className="compose-body" contentEditable suppressContentEditableWarning onInput={syncBody} onBlur={syncBody} />
       {err && <div className="error small pad">{err}</div>}
       {note && <div className="muted small pad">{note}</div>}
+      {confirmNoSubject && (
+        <div className="modal-back" onClick={() => setConfirmNoSubject(false)}>
+          <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-body">
+              <h3>제목 없이 보낼까요?</h3>
+              <p className="muted small">제목이 비어 있습니다.</p>
+              <div className="approval-modal-actions">
+                <button className="link" onClick={() => setConfirmNoSubject(false)}>취소</button>
+                <button className="primary small" onClick={() => void send(true)}>보내기</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmDiscard && (
         <div className="modal-back" onClick={() => setConfirmDiscard(false)}>
           <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>

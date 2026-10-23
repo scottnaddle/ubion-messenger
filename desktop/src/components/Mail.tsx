@@ -188,6 +188,14 @@ export function Mail() {
   };
 
   const [compose, setCompose] = useState<MailDraft | null>(null);
+  const [toast, setToast] = useState("");
+  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2500); return () => clearTimeout(t); }, [toast]);
+  const onSent = () => {
+    setCompose(null); setToast("메일을 보냈습니다");
+    const sent = folders?.defaultFolders?.find((f) => f.fullName === "Sent" || f.name === "보낸편지함");
+    if (sent) pickFolder(sent); else { setFolder("Sent"); setSel(null); setMsg(null); setKw(""); setQuery(""); }
+    setItems([]);
+  };
   const [myEmail, setMyEmail] = useState("");
   useEffect(() => {
     Promise.all([api().call<{ user: { id: number } | null }>("auth:state"), api().call<{ userId: number; email: string }[]>("org:users")])
@@ -272,7 +280,8 @@ export function Mail() {
       </section>
 
       <section className="mail-pane-read">
-        {compose && <MailCompose key={JSON.stringify(compose).length + compose.mode + (compose.ref?.uid ?? "")} initial={compose} onClose={() => setCompose(null)} />}
+        {compose && <MailCompose key={JSON.stringify(compose).length + compose.mode + (compose.ref?.uid ?? "")} initial={compose} onClose={() => setCompose(null)} onSent={onSent} />}
+        {toast && <div className="approval-toast" role="status">{toast}</div>}
         {!compose && !sel && <Overview page={list} inboxUnread={inboxUnread} folders={folders} onSender={(q) => search(undefined, q)} onPick={(m) => void openMsg(m)} />}
         {!compose && sel && msgLoading && <div className="muted small pad">불러오는 중…</div>}
         {!compose && sel && msgErr && <div className="mail-error pad"><span>{msgErr}</span><button className="link" onClick={() => void openMsg(sel)}>다시 시도</button></div>}

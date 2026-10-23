@@ -69,23 +69,65 @@ describe("compose helpers", () => {
   });
 });
 
+const ME = { name: "테스터", email: "tester@example.com" };
+const CAPTURE_KEYS = ["attachList","attachSign","attachsign","bannerDisplay","bcc","bigAttachContent","bigAttachLinks","bigAttachMode","cc","charset","content","massMode","receiveNoti","saveSent","sendAttachCheckResult","sendEmailCheckResult","sendFlag","sendInfoCheck","sendKeywordCheckResult","sendType","senderEmail","senderMode","senderName","senderUserEmail","sharedFlag","sharedFolderName","sharedUserSeq","signLocation","signSeq","subject","to","useAliasEmail","writeMode"];
+
 describe("send (fake network only)", () => {
-  it("is disabled by default and never touches the network", async () => {
-    expect(MAIL_SEND_ENABLED).toBe(false);
+  it("is enabled and builds exactly the captured body", () => {
+    expect(MAIL_SEND_ENABLED).toBe(true);
+    const d = { ...ok, to: [{ name: "홍길동", address: "hong@example.com" }, { name: "", address: "x@y.co" }], cc: [{ name: "김", address: "k@y.co" }], bcc: [{ name: "B", address: "b@y.co" }], subject: "test" };
+    const b = mailSendBody(d, ME);
+    expect(Object.keys(b).sort()).toEqual([...CAPTURE_KEYS].sort());
+    expect(b).toMatchObject({
+      attachList: "", attachSign: true, attachsign: true, bannerDisplay: false, bigAttachContent: "", bigAttachLinks: null, bigAttachMode: false,
+      charset: "UTF-8", massMode: false, receiveNoti: true, saveSent: true, sendFlag: "normal", sendType: "normal", senderMode: true,
+      sharedFlag: "user", sharedFolderName: "", sharedUserSeq: "0", signLocation: "outside", signSeq: "1", useAliasEmail: false, writeMode: "html",
+      to: '"홍길동" <hong@example.com>, x@y.co', cc: '"김" <k@y.co>', bcc: '"B" <b@y.co>', subject: "test",
+      senderEmail: "tester@example.com", senderName: "테스터", senderUserEmail: '"테스터" <tester@example.com>',
+      content: "<div class='TerraceMsg'><p>x</p></div>",
+    });
+    expect(mailSendBody({ ...ok, to: [{ name: 'a"b', address: "a@b.co" }] }, ME).to).toBe('"ab" <a@b.co>');
+  });
+  it("disabled flag → never touches the network", async () => {
     const fetcher = vi.fn();
-    await expect(sendMail(fetcher as any, ok)).rejects.toThrow("꺼져 있습니다");
-    const svc = new PortalService(fetcher as any, () => undefined);
-    await expect(svc.mailSend(ok)).rejects.toThrow("꺼져 있습니다");
+    await expect(sendMail(fetcher as any, ok, ME, false)).rejects.toThrow("꺼져");
     expect(fetcher).not.toHaveBeenCalled();
   });
-  it("when force-enabled in tests: validates, refuses attachments, POSTs the (unverified) body", async () => {
-    const fetcher = vi.fn(async () => ({ status: 200, text: '{"code":"200"}' }));
-    await expect(sendMail(fetcher as any, { ...ok, to: [] }, true)).rejects.toThrow("받는 사람");
-    await expect(sendMail(fetcher as any, { ...ok, attachments: [{ name: "a.pdf", size: 1 }] }, true)).rejects.toThrow("첨부");
+  it("validates, refuses attachments / missing sender before any request", async () => {
+    const fetcher = vi.fn();
+    await expect(sendMail(fetcher as any, { ...ok, to: [] }, ME)).rejects.toThrow("받는 사람");
+    await expect(sendMail(fetcher as any, { ...ok, attachments: [{ name: "a.pdf", size: 1 }] }, ME)).rejects.toThrow("다음 버전");
+    await expect(sendMail(fetcher as any, ok, null)).rejects.toThrow("보내는 사람");
+    await expect(sendMail(fetcher as any, ok, { name: "x", email: "" })).rejects.toThrow("보내는 사람");
     expect(fetcher).not.toHaveBeenCalled();
-    await expect(sendMail(fetcher as any, ok, true)).resolves.toEqual({ ok: true });
-    expect(fetcher).toHaveBeenCalledWith("/api/mail/message/send", { method: "POST", json: mailSendBody(ok) });
+  });
+  it("POSTs to /api/mail/message/send and maps responses", async () => {
+    const fetcher = vi.fn(async () => ({ status: 200, text: '{"code":"200","message":"OK"}' }));
+    await expect(sendMail(fetcher as any, ok, ME)).resolves.toEqual({ ok: true });
+    expect(fetcher).toHaveBeenCalledWith("/api/mail/message/send", { method: "POST", json: mailSendBody(ok, ME) });
     const bad = vi.fn(async () => ({ status: 200, text: '{"code":"500","message":"수신자 오류"}' }));
-    await expect(sendMail(bad as any, ok, true)).rejects.toThrow("수신자 오류");
+    await expect(sendMail(bad as any, ok, ME)).rejects.toThrow("수신자 오류");
+    const bad2 = vi.fn(async () => ({ status: 200, text: '{"code":"403"}' }));
+    await expect(sendMail(bad2 as any, ok, ME)).rejects.toThrow("code 403");
+    const bad3 = vi.fn(async () => ({ status: 502, text: "<html>" }));
+    await expect(sendMail(bad3 as any, ok, ME)).rejects.toThrow("HTTP 502");
+  });
+  it("PortalService.mailSend uses session sender and IPC-normalized draft", async () => {
+    const fetcher = vi.fn(async () => ({ status: 200, text: '{"code":"200"}' }));
+    const svc = new PortalService(fetcher as any, () => undefined);
+    await expect(svc.mailSend(ok)).rejects.toThrow("보내는 사람");
+    expect(fetcher).not.toHaveBeenCalled();
+    svc.getSender = async () => ME;
+    await svc.mailSend({ ...ok, extra: "ignored" });
+    expect((fetcher.mock.calls[0] as any)[1].json.senderEmail).toBe("tester@example.com");
+    await expect(svc.mailSend({ mode: "bogus" })).rejects.toThrow();
+  });
+  it("reply/forward are sent as plain new mails (sendType normal, quoted content)", () => {
+    const r = buildDraft("reply", msg, "hong@example.com", "<p>본문</p>");
+    const b = mailSendBody(r, ME);
+    expect(b.sendType).toBe("normal");
+    expect(b.subject).toBe("RE: 견적서 송부");
+    expect(b.content).toContain("<blockquote");
+    expect(b).not.toHaveProperty("uid");
   });
 });
