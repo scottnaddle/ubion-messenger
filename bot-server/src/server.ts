@@ -1,15 +1,19 @@
+import fs from "fs";
 import http from "http";
+import os from "os";
+import path from "path";
 import WebSocket, { WebSocketServer } from "ws";
 import { Allowlist, hasScope, TokenStore, type TokenRecord } from "./auth";
 import { Audit } from "./audit";
 import { EventLog } from "./events";
 import { RateLimiter } from "./ratelimit";
+import { MultipartError, multipartBoundary, parseMultipart, sanitizeFilename, type MultipartResult } from "./multipart";
 import type { BotEvent, BotRoom, DaouPort } from "./types";
 
 export type BotServerOpts = {
   port: DaouPort; tokens: TokenStore; allowlist: Allowlist; mentionOnly?: boolean;
   heartbeatMs?: number; sendRate?: { cap: number; perSec: number }; roomRate?: { cap: number; perSec: number };
-  audit?: Audit; maxTextLen?: number; now?: () => number;
+  audit?: Audit; maxTextLen?: number; maxFileBytes?: number; now?: () => number;
   statusThrottleMs?: number; placeholderTtlMs?: number; logger?: (m: string) => void;
 };
 type Err = { status: number; code: string; message: string };
@@ -101,6 +105,11 @@ export class BotServer {
       const r = await this.send(tok, b);
       return this.json(s, r.status, r.body, r.status === 429 ? { "retry-after": String((r.body as any).error.retry_after_s) } : {});
     }
+    if (q.method === "POST" && path === "/bot/send-file") {
+      if (!hasScope(tok, "messages:send")) return this.fail(s, E(403, "forbidden_scope", "messages:send required"));
+      const r = await this.sendFile(tok, q);
+      return this.json(s, r.status, r.body, r.headers ?? {});
+    }
     if (q.method === "POST" && path === "/bot/status") {
       if (!hasScope(tok, "messages:send")) return this.fail(s, E(403, "forbidden_scope", "messages:send required"));
       let b: any; try { b = JSON.parse(await readBody(q, 16 * 1024)); } catch { return this.fail(s, E(400, "bad_request", "invalid JSON body")); }
@@ -139,6 +148,71 @@ export class BotServer {
     })();
     this.inflight.set(key, p); return p;
   }
+  async sendFile(tok: TokenRecord, q: http.IncomingMessage): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> {
+    const err = (e: Err, extra: object = {}) => ({ status: e.status, body: { error: { code: e.code, message: e.message, ...extra } } });
+    const boundary = multipartBoundary(q.headers["content-type"]);
+    if (!boundary) { q.resume(); return err(E(400, "bad_request", "multipart/form-data required")); }
+    const maxBytes = this.o.maxFileBytes ?? 20 * 1024 * 1024;
+    let dir: string | null = null;
+    try {
+      dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "ubm-upload-"));
+      let parsed: MultipartResult;
+      try {
+        parsed = await parseMultipart(q, { boundary, dir, maxBytes });
+      } catch (e) {
+        if (e instanceof MultipartError && e.code === "payload_too_large") {
+          this.audit.log({ action: "send_file", token_id: tok.id, status: "error", code: "payload_too_large" });
+          return err(E(413, "payload_too_large", "request body exceeds maxFileBytes"));
+        }
+        if (e instanceof MultipartError) return err(E(400, "bad_request", e.message));
+        throw e;
+      }
+      const room_id = parsed.fields.room_id;
+      if (!room_id) return err(E(400, "bad_request", "room_id required"));
+      if (!parsed.file) return err(E(400, "bad_request", "file required"));
+      const name = sanitizeFilename(parsed.file.name);
+      if (!name) return err(E(400, "bad_request", "file name required"));
+      const fileSize = parsed.file.size;
+      if (!this.o.allowlist.allows(room_id, tok)) {
+        this.audit.log({ action: "send_file", token_id: tok.id, room_id, file_name: name, file_size: fileSize, status: "denied", code: "room_not_allowed" });
+        return err(E(403, "room_not_allowed", "room is not allowlisted"));
+      }
+      for (const [k, rk] of [[tok.id, this.sendRl], [room_id, this.roomRl]] as const) {
+        const t = rk.take(k);
+        if (!t.ok) {
+          this.audit.log({ action: "send_file", token_id: tok.id, room_id, file_name: name, file_size: fileSize, status: "limited", code: "rate_limited" });
+          const retry_after = String(Math.ceil(t.retryAfterMs / 1000));
+          return { status: 429, body: { error: { code: "rate_limited", message: "slow down", retry_after_s: Number(retry_after) } }, headers: { "retry-after": retry_after } };
+        }
+      }
+      const data = await fs.promises.readFile(parsed.file.path);
+      let r: { message_id?: number };
+      try {
+        if (!this.o.port.sendFile) throw new Error("sendFile unsupported");
+        r = await this.o.port.sendFile(room_id, { name, data, mime: parsed.file.mime });
+      } catch {
+        this.audit.log({ action: "send_file", token_id: tok.id, room_id, file_name: name, file_size: fileSize, status: "error", code: "upstream_error" });
+        return err(E(502, "upstream_error", "DaouOffice file send failed"));
+      }
+      let text_message_id: number | null = null;
+      let text_error = false;
+      const text = parsed.fields.text ?? "";
+      if (text.trim()) {
+        try {
+          const tr = await this.o.port.sendText(room_id, text);
+          text_message_id = tr.message_id ?? null;
+        } catch { text_error = true; }
+      }
+      await this.clearPlaceholder(room_id, tok.id, "send_file");
+      this.audit.log({ action: "send_file", token_id: tok.id, room_id, file_name: name, file_size: fileSize, status: "ok", ...(text_error ? { code: "text_error" } : {}) });
+      const body: Record<string, unknown> = { ok: true, message_id: r.message_id ?? null, text_message_id, file: { name, size: data.length } };
+      if (text_error) body.text_error = true;
+      return { status: 200, body };
+    } finally {
+      if (dir) await fs.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   private logf(m: string) { try { (this.o.logger ?? ((x: string) => console.error(`[bot-status] ${x}`)))(m); } catch { /* ignore */ } }
   /** Delete the room's placeholder (if any). Never throws. */
   private async clearPlaceholder(room_id: string, token_id: string, reason: string): Promise<boolean> {

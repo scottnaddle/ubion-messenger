@@ -9,6 +9,7 @@ export interface DaouPort {
   botName(): string;
   listRooms(): Promise<BotRoom[]>;
   sendText(room_id: string, text: string): Promise<{ message_id?: number }>;
+  sendFile?(room_id: string, file: { name: string; data: Buffer; mime?: string }): Promise<{ message_id?: number }>;
   onMessage(cb: (m: InboundMessage) => void): () => void;
   deleteMessages?(room_id: string, ids: number[]): Promise<void>;
   markRead?(room_id: string, message_id: number): Promise<void>;

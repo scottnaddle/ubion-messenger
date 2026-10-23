@@ -9,6 +9,9 @@ export class NotConfiguredPort implements DaouPort {
   async sendText(_room_id: string, _text: string): Promise<{ message_id?: number }> {
     throw new Error("daou not configured");
   }
+  async sendFile(_room_id: string, _file: { name: string; data: Buffer; mime?: string }): Promise<{ message_id?: number }> {
+    throw new Error("daou not configured");
+  }
   async deleteMessages(_room_id: string, _ids: number[]): Promise<void> { throw new Error("daou not configured"); }
   onMessage(_cb: (m: InboundMessage) => void): () => void { return () => {}; }
   onRoomJoined(_cb: (r: BotRoom) => void): () => void { return () => {}; }

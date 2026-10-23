@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import fs from "fs";
+import os from "os";
 import WebSocket from "ws";
 import { Allowlist, hashToken, TokenStore } from "../src/auth";
 import { RateLimiter } from "../src/ratelimit";
@@ -13,6 +15,8 @@ class MockDaou implements DaouPort {
   botUserId() { return "99"; } botName() { return "봇"; } healthy() { return { state: "online" }; }
   async listRooms() { return [{ room_id: "room:1", room_name: "A" }, { room_id: "room:2", room_name: "Secret" }]; }
   async sendText(room_id: string, text: string) { if (this.delay) await new Promise((r) => setTimeout(r, this.delay)); if (this.failNext) { this.failNext = false; throw new Error("x"); } this.sends.push({ room_id, text }); return { message_id: this.sends.length }; }
+  files: Array<{ room_id: string; name: string; size: number; data: Buffer }> = [];
+  async sendFile(room_id: string, file: { name: string; data: Buffer; mime?: string }) { if (this.delay) await new Promise((r) => setTimeout(r, this.delay)); if (this.failNext) { this.failNext = false; throw new Error("x"); } this.files.push({ room_id, name: file.name, size: file.data.length, data: file.data }); return { message_id: 100 + this.files.length }; }
   deletes: Array<{ room_id: string; ids: number[] }> = [];
   async deleteMessages(room_id: string, ids: number[]) { this.deletes.push({ room_id, ids }); }
   onMessage(cb: (m: InboundMessage) => void) { this.mcb.push(cb); return () => {}; }
@@ -188,5 +192,81 @@ describe("status placeholder", () => {
     await setup({ statusThrottleMs: 0, logger: () => {} }); daou.deleteMessages = async () => { throw new Error("boom"); };
     await status({ room_id: "room:1", state: "thinking" });
     expect((await send({ room_id: "room:1", text: "a", client_msg_id: "f1" })).status).toBe(200);
+  });
+});
+
+const uploadDirs = () => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("ubm-upload-")).length;
+function fileForm(room_id: string | null, file: { name: string; body: string | Buffer; type?: string } | null, text?: string) {
+  const fd = new FormData();
+  if (room_id != null) fd.append("room_id", room_id);
+  if (text != null) fd.append("text", text);
+  if (file) fd.append("file", new Blob([file.body], { type: file.type ?? "application/octet-stream" }), file.name);
+  return fd;
+}
+const postFile = (fd: FormData, t = FULL) => fetch(`${base}/bot/send-file`, { method: "POST", headers: { authorization: `Bearer ${t}` }, body: fd });
+
+describe("send-file", () => {
+  it("sends file then optional text, audits name/size, cleans temp dir", async () => {
+    await setup();
+    const before = uploadDirs();
+    const r = await postFile(fileForm("room:1", { name: "hello.txt", body: "hello", type: "text/plain" }, "caption"));
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true, message_id: 101, text_message_id: 1, file: { name: "hello.txt", size: 5 } });
+    expect(daou.files).toEqual([{ room_id: "room:1", name: "hello.txt", size: 5, data: Buffer.from("hello") }]);
+    expect(daou.sends).toEqual([{ room_id: "room:1", text: "caption" }]);
+    expect(uploadDirs()).toBe(before);
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "send_file", token_id: "hermes", room_id: "room:1", file_name: "hello.txt", file_size: 5, status: "ok" }));
+  });
+  it("400 for missing file/room_id and non-multipart", async () => {
+    await setup();
+    for (const fd of [fileForm("room:1", null), fileForm(null, { name: "a.txt", body: "x" })]) {
+      const r = await postFile(fd);
+      expect(r.status).toBe(400); expect((await r.json()).error.code).toBe("bad_request");
+    }
+    const r = await fetch(`${base}/bot/send-file`, { method: "POST", headers: { authorization: `Bearer ${FULL}`, "content-type": "application/json" }, body: "{}" });
+    expect(r.status).toBe(400); expect((await r.json()).error.code).toBe("bad_request");
+    expect(daou.files).toEqual([]);
+  });
+  it("413 payload_too_large when total bytes exceed maxFileBytes, then cleans temp dir", async () => {
+    await setup({ maxFileBytes: 128 });
+    const before = uploadDirs();
+    const r = await postFile(fileForm("room:1", { name: "big.bin", body: Buffer.alloc(1024, 7) }));
+    expect(r.status).toBe(413); expect((await r.json()).error.code).toBe("payload_too_large");
+    await tick();
+    expect(uploadDirs()).toBe(before);
+    expect(daou.files).toEqual([]);
+  });
+  it("403 room_not_allowed is audited and file is not sent", async () => {
+    await setup();
+    const r = await postFile(fileForm("room:2", { name: "secret.txt", body: "x" }));
+    expect(r.status).toBe(403); expect((await r.json()).error.code).toBe("room_not_allowed");
+    expect(daou.files).toEqual([]);
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "send_file", token_id: "hermes", room_id: "room:2", file_name: "secret.txt", file_size: 1, status: "denied", code: "room_not_allowed" }));
+  });
+  it("403 forbidden_scope without messages:send", async () => {
+    await setup();
+    const r = await postFile(fileForm("room:1", { name: "a.txt", body: "x" }), RO);
+    expect(r.status).toBe(403); expect((await r.json()).error.code).toBe("forbidden_scope");
+    expect(daou.files).toEqual([]);
+  });
+  it("preserves Korean filename", async () => {
+    await setup();
+    const r = await postFile(fileForm("room:1", { name: "테스트.txt", body: "hi" }));
+    expect(r.status).toBe(200);
+    expect(daou.files[0].name).toBe("테스트.txt");
+    expect((await r.json()).file).toEqual({ name: "테스트.txt", size: 2 });
+  });
+  it("deletes the room placeholder after send-file", async () => {
+    await setup({ statusThrottleMs: 0 });
+    await status({ room_id: "room:1", state: "thinking" });
+    const r = await postFile(fileForm("room:1", { name: "a.txt", body: "x" }));
+    expect(r.status).toBe(200);
+    expect(daou.deletes).toEqual([{ room_id: "room:1", ids: [1] }]);
+  });
+  it("shares send/room rate limits and returns retry-after", async () => {
+    await setup({ sendRate: { cap: 1, perSec: 0.1 }, roomRate: { cap: 100, perSec: 100 } });
+    expect((await postFile(fileForm("room:1", { name: "a.txt", body: "x" }))).status).toBe(200);
+    const r = await postFile(fileForm("room:1", { name: "b.txt", body: "y" }));
+    expect(r.status).toBe(429); expect((await r.json()).error.code).toBe("rate_limited"); expect(r.headers.get("retry-after")).toBeTruthy();
   });
 });
