@@ -59,7 +59,7 @@ export class CorePort implements DaouPort {
   botUserId() { return this.core.user ? String(this.core.user.id) : null; }
   botName() { return (this.core.user as any)?.name ?? ""; }
   healthy() { return { state: this.state }; }
-  async listRooms(): Promise<BotRoom[]> { return (await this.core.client.listRooms()).map((r) => ({ room_id: r.key, room_name: r.name })); }
+  async listRooms(): Promise<BotRoom[]> { return (await this.core.client.listRooms()).map((r) => ({ room_id: r.key, room_name: r.name, kind: r.kind, member_count: r.memberCount ?? null })); }
   async sendText(room_id: string, text: string) { const r: any = await this.core.sendText(room_id, text); return { message_id: r?.messageId }; }
   async sendFile(room_id: string, file: { name: string; data: Buffer; mime?: string }) { const r: any = await this.core.sendFile(room_id, file); return { message_id: r?.messageId }; }
   async deleteMessages(_room_id: string, ids: number[]) { await this.core.client.deleteChatMessages(ids); }

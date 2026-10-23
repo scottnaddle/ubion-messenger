@@ -9,15 +9,24 @@ import { EventLog } from "./events";
 import { RateLimiter } from "./ratelimit";
 import { MultipartError, multipartBoundary, parseMultipart, sanitizeFilename, type MultipartResult } from "./multipart";
 import type { BotAttachment, BotEvent, BotRoom, DaouPort, InboundMessage } from "./types";
+import type { ContextStore, StoredAttachment } from "./context";
 import { mimeFor } from "./mime";
 import { ExtractError, extractText } from "./extract";
+
+export type ContextOpts = {
+  store: ContextStore; rooms: string[]; allMemberRooms: boolean; retentionDays?: number;
+  idleMinMessages?: number; idleMs?: number; idleCheckMs?: number;
+};
 
 export type BotServerOpts = {
   port: DaouPort; tokens: TokenStore; allowlist: Allowlist; mentionOnly?: boolean;
   heartbeatMs?: number; sendRate?: { cap: number; perSec: number }; roomRate?: { cap: number; perSec: number };
   audit?: Audit; maxTextLen?: number; maxFileBytes?: number; now?: () => number;
   statusThrottleMs?: number; placeholderTtlMs?: number; attachRetryMs?: number[]; logger?: (m: string) => void;
+  context?: ContextOpts;
 };
+
+type IdleState = { count: number; first_message_id: number; last_message_id: number; first_ts: string; last_ts: string; last_at: number };
 
 type AttachmentMeta = { name: string; size?: number; mime?: string; file_id: string; image?: boolean };
 type Err = { status: number; code: string; message: string };
@@ -38,15 +47,23 @@ export class BotServer {
   private messageRooms = new Map<number, string>();
   private inboundChain: Promise<void> = Promise.resolve();
   private hb: NodeJS.Timeout | null = null; private offs: Array<() => void> = [];
+  private now: () => number;
+  private ctx?: ContextOpts;
+  private idle = new Map<string, IdleState>();
+  private idleTimer: NodeJS.Timeout | null = null;
+  private pruneTimer: NodeJS.Timeout | null = null;
 
   constructor(private o: BotServerOpts) {
     this.audit = o.audit ?? new Audit();
-    const now = o.now ?? Date.now;
+    this.now = o.now ?? Date.now;
+    const now = this.now;
+    this.ctx = o.context;
     this.sendRl = new RateLimiter(o.sendRate?.cap ?? 10, o.sendRate?.perSec ?? 1, now);
     this.roomRl = new RateLimiter(o.roomRate?.cap ?? 5, o.roomRate?.perSec ?? 0.5, now);
     this.http = http.createServer((q, s) => this.route(q, s).catch(() => this.json(s, 500, { error: { code: "internal", message: "internal error" } })));
     this.http.on("upgrade", (req, sock, head) => this.upgrade(req, sock, head));
     this.offs.push(o.port.onMessage((m) => {
+      if (this.isContextRoom(m.room_id)) this.storeContext(m);
       if (m.is_mine || !o.allowlist.allows(m.room_id)) return;
       if (m.message_id) { void o.port.markRead?.(m.room_id, m.message_id).catch(() => {}); this.rememberMessage(m.message_id, m.room_id); }
       const me = o.port.botUserId();
@@ -63,11 +80,112 @@ export class BotServer {
     }));
     this.hb = setInterval(() => this.broadcastRaw({ type: "heartbeat", ts: new Date().toISOString(), last_event_id: this.lastId() }), o.heartbeatMs ?? 25_000);
     this.hb.unref();
+    if (this.ctx) {
+      this.pruneContext();
+      this.pruneTimer = setInterval(() => this.pruneContext(), 3600_000);
+      this.pruneTimer.unref();
+      this.idleTimer = setInterval(() => this.checkIdle(), this.ctx.idleCheckMs ?? 60_000);
+      this.idleTimer.unref();
+      void o.port.listRooms().then((rooms) => { for (const r of rooms) this.roomNames.set(r.room_id, r.room_name); }).catch(() => {});
+    }
   }
 
   listen(p: number, host = "127.0.0.1") { return new Promise<number>((r) => this.http.listen(p, host, () => r((this.http.address() as any).port))); }
-  async close() { for (const p of this.ph.values()) clearTimeout(p.timer); this.ph.clear(); this.offs.forEach((f) => f()); if (this.hb) clearInterval(this.hb); for (const c of this.clients) c.ws.terminate(); this.wss.close(); await new Promise((r) => this.http.close(r)); }
+  async close() {
+    for (const p of this.ph.values()) clearTimeout(p.timer); this.ph.clear();
+    this.offs.forEach((f) => f()); if (this.hb) clearInterval(this.hb);
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    if (this.pruneTimer) clearInterval(this.pruneTimer);
+    for (const c of this.clients) c.ws.terminate(); this.wss.close(); await new Promise((r) => this.http.close(r));
+  }
   private lastId() { const l = this.log.after("0"); return l && l.length ? l[l.length - 1].event_id : "0"; }
+
+  private isContextRoom(room_id: string): boolean {
+    const c = this.ctx;
+    return !!c && (c.allMemberRooms || c.rooms.includes(room_id));
+  }
+
+  private storeContext(m: InboundMessage): void {
+    this.trackIdle(m);
+    void this.persistContext(m);
+  }
+
+  private async persistContext(m: InboundMessage): Promise<void> {
+    const c = this.ctx;
+    if (!c) return;
+    let source = Array.isArray(m.attachments) ? m.attachments : [];
+    if (looksLikeFile(m) && this.o.allowlist.allows(m.room_id) && this.o.port.getAttachments) {
+      const missingIds = source.length === 0 || source.some((a) => !a.file_id);
+      if (missingIds) {
+        const fetched = await this.fetchAttachmentsWithRetry(m.room_id, m.message_id);
+        if (fetched.length) source = fetched.map((a) => ({ name: a.name, size: a.size, type: a.mime, file_id: a.file_id, image: a.image }));
+      }
+    }
+    const attachments: StoredAttachment[] = source.map((a, index) => ({
+      index,
+      name: a.name || "file",
+      size: typeof a.size === "number" ? a.size : null,
+      mime: a.type && a.type.includes("/") ? a.type : mimeFor(a.name || "file"),
+      file_id: a.file_id ?? "",
+    }));
+    try {
+      c.store.add({
+        room_id: m.room_id, message_id: m.message_id,
+        sender_id: m.sender?.id ?? "", sender_name: m.sender?.name ?? "",
+        ts: m.ts, text: m.text ?? "", attachments, is_mine: !!m.is_mine,
+      });
+    } catch { /* context must never break the message path */ }
+  }
+
+  private trackIdle(m: InboundMessage): void {
+    if (m.is_mine) return;
+    const now = this.now();
+    const parsed = Date.parse(m.ts);
+    const at = Number.isFinite(parsed) ? parsed : now;
+    const prev = this.idle.get(m.room_id);
+    if (!prev) {
+      this.idle.set(m.room_id, {
+        count: 1, first_message_id: m.message_id, last_message_id: m.message_id,
+        first_ts: m.ts, last_ts: m.ts, last_at: at,
+      });
+      return;
+    }
+    prev.count++;
+    prev.last_message_id = m.message_id;
+    prev.last_ts = m.ts;
+    prev.last_at = at;
+  }
+
+  private checkIdle(): void {
+    const c = this.ctx;
+    if (!c) return;
+    const now = this.now();
+    const min = c.idleMinMessages ?? 5;
+    const idleMs = c.idleMs ?? 20 * 60_000;
+    for (const [room_id, st] of this.idle) {
+      if (st.count < min || now - st.last_at < idleMs) continue;
+      const event_id = this.log.nextId();
+      const ev: BotEvent = {
+        type: "conversation_idle", event_id, room_id, room_name: this.roomNames.get(room_id) ?? "",
+        message_count: st.count, first_message_id: st.first_message_id, last_message_id: st.last_message_id,
+        started_at: st.first_ts, ended_at: st.last_ts, idle_minutes: Math.max(0, Math.floor((now - st.last_at) / 60_000)),
+      };
+      this.log.push(ev);
+      for (const client of this.clients) {
+        if (hasScope(client.tok, "events:read") && hasScope(client.tok, "context:read") && (!client.tok.rooms || client.tok.rooms.includes(room_id)))
+          this.sendWs(client.ws, ev);
+      }
+      this.idle.delete(room_id);
+    }
+  }
+
+  private pruneContext(): void {
+    const c = this.ctx;
+    if (!c) return;
+    const days = c.retentionDays ?? 90;
+    if (!Number.isFinite(days) || days < 0) return;
+    try { c.store.prune(days * 24 * 3600_000); } catch { /* best effort */ }
+  }
 
   private rememberMessage(message_id: number, room_id: string) {
     if (!message_id) return;
@@ -143,7 +261,11 @@ export class BotServer {
       if (after != null) {
         const back = this.log.after(after);
         if (back === null) this.sendWs(ws, { type: "resume.gap", after, last_event_id: this.lastId() });
-        else for (const ev of back) if (this.o.allowlist.allows(ev.room_id, tok)) this.sendWs(ws, ev);
+        else for (const ev of back) {
+          if (ev.type === "conversation_idle") {
+            if (hasScope(tok, "context:read") && (!tok.rooms || tok.rooms.includes(ev.room_id))) this.sendWs(ws, ev);
+          } else if (this.o.allowlist.allows(ev.room_id, tok)) this.sendWs(ws, ev);
+        }
       }
     });
   }
@@ -152,16 +274,29 @@ export class BotServer {
   private fail(s: http.ServerResponse, e: Err, h: Record<string, string> = {}) { this.json(s, e.status, { error: { code: e.code, message: e.message } }, h); }
 
   private async route(q: http.IncomingMessage, s: http.ServerResponse) {
-    const path = new URL(q.url || "/", "http://x").pathname;
+    const url = new URL(q.url || "/", "http://x");
+    const path = url.pathname;
     if (q.method === "GET" && path === "/bot/health") return this.json(s, 200, { ok: true, daou: this.o.port.healthy().state, ws_clients: this.clients.size, last_event_id: this.lastId() });
     const tok = this.o.tokens.verify(q.headers.authorization);
     if (!tok) return this.fail(s, E(401, "unauthorized", "missing or invalid bearer token"));
     const fileMatch = q.method === "GET" ? /^\/bot\/files\/(\d+)(\/text)?$/.exec(path) : null;
     if (fileMatch) return this.files(q, s, tok, Number(fileMatch[1]), !!fileMatch[2]);
     if (q.method === "GET" && path === "/bot/rooms") {
-      if (!hasScope(tok, "rooms:read")) return this.fail(s, E(403, "forbidden_scope", "rooms:read required"));
-      const rooms: BotRoom[] = (await this.o.port.listRooms()).filter((r) => { this.roomNames.set(r.room_id, r.room_name); return this.o.allowlist.allows(r.room_id, tok); });
+      const all = url.searchParams.get("all") === "1";
+      if (all) {
+        if (!hasScope(tok, "context:read")) return this.fail(s, E(403, "forbidden_scope", "context:read required"));
+      } else if (!hasScope(tok, "rooms:read")) return this.fail(s, E(403, "forbidden_scope", "rooms:read required"));
+      const rooms = (await this.o.port.listRooms())
+        .filter((r) => { this.roomNames.set(r.room_id, r.room_name); return all || this.o.allowlist.allows(r.room_id, tok); })
+        .map((r) => ({ room_id: r.room_id, room_name: r.room_name, kind: r.kind ?? "unknown", member_count: r.member_count ?? null, context: this.isContextRoom(r.room_id) }));
       return this.json(s, 200, { rooms });
+    }
+    const messagesMatch = q.method === "GET" ? /^\/bot\/rooms\/([^/]+)\/messages$/.exec(path) : null;
+    if (messagesMatch) {
+      let room_id: string;
+      try { room_id = decodeURIComponent(messagesMatch[1]); }
+      catch { return this.fail(s, E(400, "bad_request", "invalid room_id")); }
+      return this.roomMessages(url, s, tok, room_id);
     }
     if (q.method === "POST" && path === "/bot/send") {
       if (!hasScope(tok, "messages:send")) return this.fail(s, E(403, "forbidden_scope", "messages:send required"));
@@ -181,6 +316,31 @@ export class BotServer {
       return this.json(s, r.status, r.body);
     }
     return this.fail(s, E(404, "not_found", "no such endpoint"));
+  }
+
+  private roomMessages(url: URL, s: http.ServerResponse, tok: TokenRecord, room_id: string) {
+    const c = this.ctx;
+    if (!c) {
+      this.audit.log({ action: "context_read", token_id: tok.id, room_id, status: "error", code: "context_disabled" });
+      return this.fail(s, E(404, "context_disabled", "context store is not configured"));
+    }
+    if (!hasScope(tok, "context:read")) {
+      this.audit.log({ action: "context_read", token_id: tok.id, room_id, status: "denied", code: "forbidden_scope" });
+      return this.fail(s, E(403, "forbidden_scope", "context:read required"));
+    }
+    if (!this.isContextRoom(room_id) || (tok.rooms && !tok.rooms.includes(room_id))) {
+      this.audit.log({ action: "context_read", token_id: tok.id, room_id, status: "denied", code: "room_not_allowed" });
+      return this.fail(s, E(403, "room_not_allowed", "room is not available for context reads"));
+    }
+    const since = url.searchParams.get("since") ?? undefined;
+    const rawLimit = url.searchParams.get("limit");
+    const limit = rawLimit != null && /^\d+$/.test(rawLimit) ? Number(rawLimit) : undefined;
+    const messages = c.store.list(room_id, { since, limit });
+    const numeric = since != null && /^\d+$/.test(since.trim());
+    const last = messages[messages.length - 1];
+    const next_since = last ? (numeric ? String(last.message_id) : last.ts) : (since ?? null);
+    this.audit.log({ action: "context_read", token_id: tok.id, room_id, count: messages.length, status: "ok" });
+    return this.json(s, 200, { room_id, messages, next_since });
   }
 
   private fileAudit(action: string, tok: TokenRecord, room_id: string | undefined, message_id: number, att: AttachmentMeta | undefined, status: string, code?: string) {

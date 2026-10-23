@@ -5,6 +5,7 @@ import os from "os";
 import path from "path";
 import WebSocket from "ws";
 import { Allowlist, hashToken, TokenStore } from "../src/auth";
+import { MemoryContextStore, SqliteContextStore } from "../src/context";
 import { RateLimiter } from "../src/ratelimit";
 import { ReloginPolicy, mask } from "../src/session";
 import { BotServer } from "../src/server";
@@ -16,7 +17,7 @@ class MockDaou implements DaouPort {
   sends: Array<{ room_id: string; text: string }> = []; failNext = false; delay = 0;
   private mcb: Array<(m: InboundMessage) => void> = []; private rcb: Array<(r: BotRoom) => void> = [];
   botUserId() { return "99"; } botName() { return "봇"; } healthy() { return { state: "online" }; }
-  async listRooms() { return [{ room_id: "room:1", room_name: "A" }, { room_id: "room:2", room_name: "Secret" }]; }
+  async listRooms() { return [{ room_id: "room:1", room_name: "A", kind: "room", member_count: 5 }, { room_id: "room:2", room_name: "Secret", kind: "buddy", member_count: 2 }]; }
   async sendText(room_id: string, text: string) { if (this.delay) await new Promise((r) => setTimeout(r, this.delay)); if (this.failNext) { this.failNext = false; throw new Error("x"); } this.sends.push({ room_id, text }); return { message_id: this.sends.length }; }
   files: Array<{ room_id: string; name: string; size: number; data: Buffer }> = [];
   async sendFile(room_id: string, file: { name: string; data: Buffer; mime?: string }) { if (this.delay) await new Promise((r) => setTimeout(r, this.delay)); if (this.failNext) { this.failNext = false; throw new Error("x"); } this.files.push({ room_id, name: file.name, size: file.data.length, data: file.data }); return { message_id: 100 + this.files.length }; }
@@ -43,14 +44,16 @@ class MockDaou implements DaouPort {
   msg(room_id: string, text: string, extra: Partial<InboundMessage> = {}) { this.mcb.forEach((f) => f({ room_id, message_id: 1, sender: { id: "5", name: "kim" }, text, mentions: [], attachments: [], reply_to: null, ts: "t", is_mine: false, ...extra })); }
   join(r: BotRoom) { this.rcb.forEach((f) => f(r)); }
 }
-const FULL = "tok-full", RO = "tok-ro", ROOMS = "tok-rooms";
+const FULL = "tok-full", RO = "tok-ro", ROOMS = "tok-rooms", CTX = "tok-ctx", CTX_ROOM = "tok-ctx-room";
 let srv: BotServer, base: string, wsBase: string, daou: MockDaou;
 async function setup(o: Partial<ConstructorParameters<typeof BotServer>[0]> = {}) {
   daou = new MockDaou();
   srv = new BotServer({ port: daou, allowlist: new Allowlist(["room:1", "room:3"]), tokens: new TokenStore([
     { id: "hermes", sha256: hashToken(FULL), scopes: ["events:read", "messages:send", "rooms:read"] },
     { id: "ro", sha256: hashToken(RO), scopes: ["events:read"] },
-    { id: "rooms", sha256: hashToken(ROOMS), scopes: ["rooms:read"] }]), ...o });
+    { id: "rooms", sha256: hashToken(ROOMS), scopes: ["rooms:read"] },
+    { id: "ctx", sha256: hashToken(CTX), scopes: ["events:read", "context:read"] },
+    { id: "ctx-room", sha256: hashToken(CTX_ROOM), scopes: ["events:read", "context:read"], rooms: ["room:1"] }]), ...o });
   const p = await srv.listen(0); base = `http://127.0.0.1:${p}`; wsBase = `ws://127.0.0.1:${p}`;
 }
 afterEach(async () => { await srv?.close(); });
@@ -90,6 +93,171 @@ describe("allowlist", () => {
     await setup({ mentionOnly: true }); const c = await connect(FULL);
     daou.msg("room:1", "hello"); daou.msg("room:1", "@봇 help"); daou.msg("room:1", "x", { mentions: ["99"] }); await tick();
     expect(c.got.filter((e) => e.type === "message.created").map((e) => e.text)).toEqual(["@봇 help", "x"]); c.ws.close();
+  });
+});
+
+const hasSqlite = (() => { try { require("node:sqlite"); return true; } catch { return false; } })();
+const sm = (room_id: string, message_id: number, ts: string, text = `m${message_id}`, is_mine = false) => ({
+  room_id, message_id, sender_id: "5", sender_name: "kim", ts, text, attachments: [], is_mine,
+});
+
+describe("context stores", () => {
+  it("MemoryContextStore dedupes, lists with since/limit, purges, prunes, summarizes", () => {
+    let now = Date.parse("2024-01-10T00:00:00.000Z");
+    const store = new MemoryContextStore(() => now);
+    store.add(sm("room:2", 2, "2024-01-01T00:00:02.000Z", "b"));
+    store.add(sm("room:2", 1, "2024-01-01T00:00:01.000Z", "a"));
+    store.add(sm("room:2", 3, "2024-01-01T00:00:03.000Z", "c"));
+    store.add(sm("room:2", 3, "2024-01-01T00:00:03.000Z", "duplicate"));
+
+    expect(store.list("room:2").map((m) => m.text)).toEqual(["a", "b", "c"]);
+    expect(store.list("room:2", { limit: 2 }).map((m) => m.message_id)).toEqual([2, 3]);
+    expect(store.list("room:2", { since: "1" }).map((m) => m.message_id)).toEqual([2, 3]);
+    expect(store.list("room:2", { since: "2024-01-01T00:00:01.000Z" }).map((m) => m.message_id)).toEqual([2, 3]);
+    expect(store.rooms()).toEqual([{ room_id: "room:2", count: 3, last_ts: "2024-01-01T00:00:03.000Z" }]);
+    expect(store.purgeRoom("room:2")).toBe(3);
+    expect(store.list("room:2")).toEqual([]);
+
+    store.add(sm("room:1", 10, "2024-01-01T00:00:00.000Z", "old"));
+    store.add(sm("room:1", 11, "2024-01-09T00:00:00.000Z", "new"));
+    expect(store.prune(2 * 24 * 3600_000)).toBe(1);
+    expect(store.list("room:1").map((m) => m.message_id)).toEqual([11]);
+    now = Date.parse("2024-01-20T00:00:00.000Z");
+    expect(store.prune(0)).toBe(1);
+    expect(store.rooms()).toEqual([]);
+  });
+
+  (hasSqlite ? it : it.skip)("SqliteContextStore persists, dedupes, lists and purges", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ubm-ctx-"));
+    const db = path.join(dir, "nested", "context.db");
+    let store = new SqliteContextStore(db, () => Date.parse("2024-01-10T00:00:00.000Z"));
+    try {
+      store.add(sm("room:2", 1, "2024-01-01T00:00:01.000Z", "a"));
+      store.add({ ...sm("room:2", 2, "2024-01-01T00:00:02.000Z", "b"), attachments: [{ index: 0, name: "a.txt", size: 1, mime: "text/plain", file_id: "f1" }] });
+      store.add(sm("room:2", 2, "2024-01-01T00:00:02.000Z", "duplicate"));
+      store.add(sm("room:1", 3, "2024-01-01T00:00:03.000Z", "c"));
+      store.close();
+      store = new SqliteContextStore(db, () => Date.parse("2024-01-10T00:00:00.000Z"));
+      expect(store.list("room:2").map((m) => m.text)).toEqual(["a", "b"]);
+      expect(store.list("room:2")[1].attachments[0]).toEqual({ index: 0, name: "a.txt", size: 1, mime: "text/plain", file_id: "f1" });
+      expect(store.list("room:2", { since: "1" }).map((m) => m.message_id)).toEqual([2]);
+      expect(store.rooms()).toEqual([
+        { room_id: "room:1", count: 1, last_ts: "2024-01-01T00:00:03.000Z" },
+        { room_id: "room:2", count: 2, last_ts: "2024-01-01T00:00:02.000Z" },
+      ]);
+      expect(store.purgeRoom("room:2")).toBe(2);
+      expect(store.prune(0)).toBe(1);
+      expect(store.rooms()).toEqual([]);
+    } finally {
+      try { store.close(); } catch { /* already closed */ }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("context server", () => {
+  it("stores context-room messages before filtering without events or sends", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    const c = await connect(FULL);
+    daou.msg("room:2", "secret", { message_id: 10, ts: "2024-01-01T00:00:01.000Z" });
+    daou.msg("room:2", "bot", { message_id: 11, ts: "2024-01-01T00:00:02.000Z", is_mine: true });
+    daou.msg("room:1", "ok", { message_id: 12, ts: "2024-01-01T00:00:03.000Z" });
+    await tick();
+    expect(store.list("room:2").map((m) => [m.message_id, m.text, m.is_mine])).toEqual([[10, "secret", false], [11, "bot", true]]);
+    expect(c.got.filter((e) => e.type === "message.created").map((e) => e.text)).toEqual(["ok"]);
+    expect(daou.sends).toEqual([]);
+    c.ws.close();
+  });
+
+  it("keeps mention-only behaviour for context rooms", async () => {
+    const store = new MemoryContextStore();
+    await setup({ mentionOnly: true, context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    const c = await connect(FULL);
+    daou.msg("room:2", "hello", { message_id: 1, ts: "2024-01-01T00:00:01.000Z" });
+    await tick();
+    expect(store.list("room:2")).toHaveLength(1);
+    expect(c.got.filter((e) => e.type === "message.created")).toEqual([]);
+    c.ws.close();
+  });
+
+  it("stores enriched attachment metadata for an allowlisted context room", async () => {
+    const store = new MemoryContextStore();
+    await setup({ attachRetryMs: [0], context: { store, rooms: ["room:1"], allMemberRooms: false } });
+    daou.attachments.set(20, [{ name: "a.pdf", size: 9, mime: "application/pdf", file_id: "f20" }]);
+    daou.msg("room:1", "a.pdf", { message_id: 20, messageType: "SENDFILE", ts: "2024-01-01T00:00:01.000Z" });
+    await tick(100);
+    expect(store.list("room:1")[0].attachments).toEqual([{ index: 0, name: "a.pdf", size: 9, mime: "application/pdf", file_id: "f20" }]);
+  });
+
+  it("rooms include kind/member_count/context; all=1 needs context:read", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    const normal = await (await fetch(`${base}/bot/rooms`, { headers: { authorization: `Bearer ${FULL}` } })).json();
+    expect(normal.rooms).toEqual([{ room_id: "room:1", room_name: "A", kind: "room", member_count: 5, context: false }]);
+
+    const denied = await fetch(`${base}/bot/rooms?all=1`, { headers: { authorization: `Bearer ${FULL}` } });
+    expect(denied.status).toBe(403); expect((await denied.json()).error.code).toBe("forbidden_scope");
+
+    const all = await (await fetch(`${base}/bot/rooms?all=1`, { headers: { authorization: `Bearer ${CTX}` } })).json();
+    expect(all.rooms.map((r: any) => r.room_id)).toEqual(["room:1", "room:2"]);
+    expect(all.rooms[1]).toMatchObject({ room_id: "room:2", kind: "buddy", member_count: 2, context: true });
+  });
+
+  it("messages endpoint handles 401, 403 scope, 403 room, since/limit and audit", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    for (let i = 1; i <= 5; i++) store.add(sm("room:2", i, `2024-01-01T00:00:0${i}.000Z`, `secret-body-${i}`));
+
+    expect((await fetch(`${base}/bot/rooms/room%3A2/messages`)).status).toBe(401);
+    const scope = await fetch(`${base}/bot/rooms/room%3A2/messages`, { headers: { authorization: `Bearer ${FULL}` } });
+    expect(scope.status).toBe(403); expect((await scope.json()).error.code).toBe("forbidden_scope");
+
+    const room = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/messages`, { headers: { authorization: `Bearer ${CTX_ROOM}` } });
+    expect(room.status).toBe(403); expect((await room.json()).error.code).toBe("room_not_allowed");
+    const notContext = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:1")}/messages`, { headers: { authorization: `Bearer ${CTX}` } });
+    expect(notContext.status).toBe(403); expect((await notContext.json()).error.code).toBe("room_not_allowed");
+
+    let r = await (await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/messages?limit=2`, { headers: { authorization: `Bearer ${CTX}` } })).json();
+    expect(r.messages.map((m: any) => m.message_id)).toEqual([4, 5]);
+    expect(r.next_since).toBe("2024-01-01T00:00:05.000Z");
+    r = await (await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/messages?since=2&limit=2`, { headers: { authorization: `Bearer ${CTX}` } })).json();
+    expect(r.messages.map((m: any) => m.message_id)).toEqual([3, 4]);
+    expect(r.next_since).toBe("4");
+    r = await (await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/messages?since=${encodeURIComponent("2024-01-01T00:00:02.000Z")}`, { headers: { authorization: `Bearer ${CTX}` } })).json();
+    expect(r.messages.map((m: any) => m.message_id)).toEqual([3, 4, 5]);
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "context_read", token_id: "ctx", room_id: "room:2", count: 3, status: "ok" }));
+    expect(JSON.stringify(srv.audit.entries)).not.toContain("secret-body");
+  });
+
+  it("404 context_disabled when context is not configured", async () => {
+    await setup();
+    const r = await fetch(`${base}/bot/rooms/room%3A2/messages`, { headers: { authorization: `Bearer ${CTX}` } });
+    expect(r.status).toBe(404); expect((await r.json()).error.code).toBe("context_disabled");
+  });
+
+  it("emits conversation_idle after N messages once idle, only to context:read clients", async () => {
+    let now = Date.parse("2024-01-01T00:00:00.000Z");
+    const store = new MemoryContextStore(() => now);
+    await setup({ now: () => now, context: { store, rooms: ["room:1"], allMemberRooms: false, idleMinMessages: 3, idleMs: 1000, idleCheckMs: 20 } });
+    const withCtx = await connect(CTX), withoutCtx = await connect(RO);
+    await tick(20);
+    daou.msg("room:1", "a", { message_id: 1, ts: new Date(now).toISOString() });
+    daou.msg("room:1", "b", { message_id: 2, ts: new Date(now + 10).toISOString() });
+    now += 5000;
+    await tick(80);
+    expect(withCtx.got.filter((e) => e.type === "conversation_idle")).toEqual([]);
+
+    daou.msg("room:1", "c", { message_id: 3, ts: new Date(now).toISOString() });
+    now += 120_000;
+    await tick(100);
+    const ev = withCtx.got.find((e) => e.type === "conversation_idle");
+    expect(ev).toMatchObject({
+      room_id: "room:1", room_name: "A", message_count: 3, first_message_id: 1, last_message_id: 3,
+      started_at: "2024-01-01T00:00:00.000Z", idle_minutes: 2,
+    });
+    expect(withoutCtx.got.some((e) => e.type === "conversation_idle")).toBe(false);
+    withCtx.ws.close(); withoutCtx.ws.close();
   });
 });
 
