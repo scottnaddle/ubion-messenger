@@ -295,6 +295,15 @@ export function installMockIfNeeded() {
       list: async () => ({}),
       toggle: async () => ({}),
     },
+    edit: {
+      caps: async () => ({ enabled: true, selfOnly: false }),
+      edit: async (_key: string, origMessageId: number, newText: string) => {
+        const m = msgs.find((x) => x.messageId === origMessageId);
+        if (m) (m as any).deleted = true;
+        return { ok: true as const, messageId: Date.now() };
+      },
+      reply: async () => ({ ok: true as const, messageId: Date.now() }),
+    },
     openChatBot: async () => undefined,
     onEvent: () => () => undefined,
     onOpenRoom: (cb) => {

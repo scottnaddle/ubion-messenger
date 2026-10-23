@@ -95,6 +95,13 @@ const api = {
     list: (roomSeq: number, messageIds: number[]) => call<import("./core/reactions").ReactionMap>("reactions:list", roomSeq, messageIds),
     toggle: (roomSeq: number, messageId: number, emoji: string) => call<import("./core/reactions").ReactionMap>("reactions:toggle", roomSeq, messageId, emoji),
   },
+  edit: {
+    caps: () => call<import("./core/edit-reply").EditCaps>("edit:caps"),
+    edit: (key: string, origMessageId: number, newText: string) =>
+      call<{ ok: true; messageId?: number }>("msg:edit", key, origMessageId, newText),
+    reply: (key: string, target: import("./core/edit-reply").ReplyTarget, replyText: string) =>
+      call<{ ok: true; messageId?: number }>("msg:reply", key, target, replyText),
+  },
   openChatBot: (brandName?: string) => call<void>("app:openChatBot", brandName),
   onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
   onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),

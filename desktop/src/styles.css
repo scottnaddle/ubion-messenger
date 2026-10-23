@@ -156,6 +156,15 @@ input, textarea, select { font: inherit; color: inherit; }
 .msg.mine .bubble a { color: #fff; text-decoration: underline; }
 .bubble a { color: var(--accent); }
 .bubble.deleted { font-style: italic; color: var(--muted); background: transparent; border: 1px dashed var(--line); }
+.quote-block { display: flex; gap: 6px; padding: 4px 8px; margin-bottom: 6px; border-left: 3px solid var(--accent); background: var(--bg3); border-radius: 3px; font-size: 12.5px; }
+.quote-name { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.quote-text { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edited-tag { display: inline-block; margin-left: 6px; font-size: 11px; color: var(--muted); }
+.reply-bar { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-top: 1px solid var(--line); background: var(--bg2); font-size: 13px; }
+.reply-bar-name { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.reply-bar-quote { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-bar-close { margin-left: auto; }
+.edit-input { width: 100%; min-height: 88px; resize: vertical; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); color: var(--fg); font: inherit; }
 .bubble.file { display: flex; align-items: center; gap: 10px; min-width: 240px; background: var(--bg2); color: var(--fg) !important; border: 1px solid var(--line); }
 .file-ic { color: var(--accent); display: flex; } .file-info { flex: 1; min-width: 0; }
 .file-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }

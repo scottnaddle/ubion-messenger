@@ -55,6 +55,10 @@ import {
   createReactionsClient, guardReactionRoom, normalizeEmoji, normalizeMessageId, normalizeMessageIds, normalizeRoomSeq,
   reactionsCaps, REACTIONS_DISABLED_TEXT, reactionsEnabled,
 } from "./core/reactions";
+import {
+  editCaps, editEnabled, EDIT_DISABLED_TEXT, guardEditReplyTarget, normalizeEditText, normalizeReplyTarget,
+  normalizeReplyText, performEdit, performReply,
+} from "./core/edit-reply";
 import { normalizeGlobalQuery } from "../src/lib/global-search";
 import {
   activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
@@ -1751,6 +1755,35 @@ function registerIpc() {
     const r = await reactionsClient().toggle(seq, mid, e);
     if (!r.ok) throw new Error(r.message);
     return r.data;
+  });
+  // 메시지 수정 / 답장(인용): M 패턴 (delete+resend / quote). New send paths → self-only guard.
+  const EDIT_ON = editEnabled(process.env);
+  handle("edit:caps", () => editCaps(process.env));
+  handle("msg:edit", async (key: unknown, origMessageId: unknown, newText: unknown) => {
+    if (!EDIT_ON) throw new Error(EDIT_DISABLED_TEXT);
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const room = core.getRooms().find((r) => r.key === key);
+    return performEdit({
+      guard: () => guardEditReplyTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", me, selfRoomSeq: selfRoomApiSeq(), room: room ?? null }),
+      deleteByIds: (ids) => core.client.deleteChatMessages(ids),
+      sendText: (k, t) => core.sendText(k, t),
+      roomKey: String(key),
+      origMessageId: Number(origMessageId),
+      newText: normalizeEditText(newText),
+    });
+  });
+  handle("msg:reply", async (key: unknown, target: unknown, replyText: unknown) => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const room = core.getRooms().find((r) => r.key === key);
+    return performReply({
+      guard: () => guardEditReplyTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", me, selfRoomSeq: selfRoomApiSeq(), room: room ?? null }),
+      sendText: (k, t) => core.sendText(k, t),
+      roomKey: String(key),
+      target: normalizeReplyTarget(target),
+      replyText: normalizeReplyText(replyText),
+    });
   });
   handle("app:badgeOverlay", (dataUrl: string | null) => {
     if (process.platform !== "win32" || !win) return;

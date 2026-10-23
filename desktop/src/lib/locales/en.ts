@@ -534,6 +534,11 @@ const dict: Record<string, string> = {
   "상태 메시지를 입력하세요": "Enter a status message",
   "상태 메시지가 저장되었습니다": "Status message saved",
   "상태 메시지를 저장하지 못했습니다: {error}": "Couldn't save status message: {error}",
+  "수정": "Edit",
+  "메시지 수정": "Edit Message",
+  "메시지를 수정했습니다": "Message edited",
+  "수정하지 못했습니다: {error}": "Couldn't edit: {error}",
+  "(수정됨)": "(edited)",
 };
 
 export default dict;

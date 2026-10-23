@@ -28,6 +28,7 @@ import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { applyToggle } from "../lib/reactions";
+import { composeQuoteText, parseMessage, truncateQuote } from "../lib/markers";
 import { FileCard, MediaViewer } from "./FileCard";
 import { BackupModal } from "./BackupModal";
 import { EmojiPicker } from "./EmojiPicker";
@@ -102,6 +103,10 @@ export function ChatView({
   const [botDisabled, setBotDisabled] = useState(false);
   const [reactions, setReactions] = useState<ReactionMap | undefined>(undefined);
   const [reactionsOn, setReactionsOn] = useState(false);
+  const [editOn, setEditOn] = useState(true);
+  const [replyTarget, setReplyTarget] = useState<{ messageId: number; senderName: string; text: string } | null>(null);
+  const [editTarget, setEditTarget] = useState<ChatMessage | null>(null);
+  const [editText, setEditText] = useState("");
   const reactionsRoomSeq = useMemo(() => {
     try {
       return apiRoomSeq(room);
@@ -182,6 +187,10 @@ export function ChatView({
   // 이모지 리액션: server capability once, then poll per room on open/history (best effort).
   useEffect(() => {
     api().reactions.caps().then((c) => setReactionsOn(c.enabled)).catch(() => setReactionsOn(false));
+  }, []);
+  // 메시지 수정: capability once (UBM_EDIT default on).
+  useEffect(() => {
+    api().edit.caps().then((c) => setEditOn(c.enabled)).catch(() => setEditOn(false));
   }, []);
   useEffect(() => {
     if (!reactionsOn || reactionsRoomSeq == null) return;
@@ -414,6 +423,28 @@ export function ChatView({
       toast(t("삭제하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
+  const requestEdit = (m: ChatMessage) => {
+    if (!editOn || !canDeleteMessage(m, me.id) || isDeletedMessage(m)) return;
+    setEditText(m.message || "");
+    setEditTarget(m);
+  };
+  const doEdit = async () => {
+    const target = editTarget;
+    if (!target?.messageId) return;
+    const text = editText.trim();
+    if (!text) return;
+    setEditTarget(null);
+    try {
+      await api().edit.edit(room.key, target.messageId, text);
+      toast(t("메시지를 수정했습니다"), "info");
+    } catch (e) {
+      toast(t("수정하지 못했습니다: {error}", { error: (e as Error).message }));
+    }
+  };
+  const requestReply = (m: ChatMessage) => {
+    if (m.messageId == null || isDeletedMessage(m) || m.pending || m.failed) return;
+    setReplyTarget({ messageId: m.messageId, senderName: m.sendUserName, text: m.message });
+  };
 
   const sendStagedFile = async (file: StagedFile): Promise<boolean> => {
     try {
@@ -454,7 +485,12 @@ export function ChatView({
 
   const sendQueue = useRef<Promise<unknown>>(Promise.resolve());
   const sendAll = (text: string): Promise<boolean> => {
-    const run = sendQueue.current.then(() => runSend(text));
+    const rt = replyTarget;
+    const finalText = rt ? composeQuoteText(rt.senderName, rt.text, text, rt.messageId) : text;
+    const run = sendQueue.current.then(() => runSend(finalText)).then((failed) => {
+      if (!failed) setReplyTarget(null);
+      return failed;
+    });
     sendQueue.current = run.catch(() => undefined);
     return run;
   };
@@ -692,6 +728,8 @@ export function ChatView({
                     onNotice={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestNotice(m) : undefined}
                     onSave={!isDeletedMessage(m) && !m.pending && !m.failed ? () => void saveMessage(m) : undefined}
                     onRemind={!isDeletedMessage(m) && !m.pending && !m.failed ? () => setRemindTarget(m) : undefined}
+                    onEdit={editOn && canDeleteMessage(m, me.id) && !isDeletedMessage(m) ? () => requestEdit(m) : undefined}
+                    onReply={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestReply(m) : undefined}
                     reactions={reactions} onToggleReaction={toggleReaction}
                   />
                 </Fragment>
@@ -747,6 +785,16 @@ export function ChatView({
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+          {replyTarget && (
+            <div className="reply-bar">
+              <Icon name="reply" size={14} />
+              <span className="reply-bar-name">{replyTarget.senderName}</span>
+              <span className="reply-bar-quote muted">{truncateQuote(replyTarget.text)}</span>
+              <button className="icon-btn reply-bar-close" title={t("취소")} onClick={() => setReplyTarget(null)}>
+                <Icon name="close" size={12} />
+              </button>
             </div>
           )}
           <Composer
@@ -810,6 +858,29 @@ export function ChatView({
       )}
       {remindTarget && (
         <ReminderModal m={remindTarget} onPick={(p, c) => void setReminder(remindTarget, p, c)} onClose={() => setRemindTarget(null)} />
+      )}
+      {editTarget && (
+        <div className="modal-back" onClick={() => setEditTarget(null)}>
+          <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-body">
+              <p className="muted small">{t("메시지 수정")}</p>
+              <textarea
+                className="edit-input"
+                rows={4}
+                autoFocus
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void doEdit(); }
+                }}
+              />
+              <div className="approval-modal-actions">
+                <button className="link" onClick={() => setEditTarget(null)}>{t("취소")}</button>
+                <button className="primary" disabled={!editText.trim()} onClick={() => void doEdit()}>{t("저장")}</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );
@@ -911,8 +982,8 @@ function RoomMenu({
 }
 
 function MessageMenu({
-  x, y, onDelete, onNotice, onSave, onRemind, onClose,
-}: { x: number; y: number; onDelete?: () => void; onNotice?: () => void; onSave?: () => void; onRemind?: () => void; onClose: () => void }) {
+  x, y, onEdit, onReply, onDelete, onNotice, onSave, onRemind, onClose,
+}: { x: number; y: number; onEdit?: () => void; onReply?: () => void; onDelete?: () => void; onNotice?: () => void; onSave?: () => void; onRemind?: () => void; onClose: () => void }) {
   const t = useT();
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
@@ -921,6 +992,8 @@ function MessageMenu({
   }, [onClose]);
   return (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      {onReply && <button role="menuitem" onClick={() => { onClose(); onReply(); }}><Icon name="reply" size={14} /> {t("답장")}</button>}
+      {onEdit && <button role="menuitem" onClick={() => { onClose(); onEdit(); }}><Icon name="edit" size={14} /> {t("수정")}</button>}
       {onSave && <button role="menuitem" onClick={() => { onClose(); onSave(); }}><Icon name="star" size={14} /> {t("저장")}</button>}
       {onRemind && <button role="menuitem" onClick={() => { onClose(); onRemind(); }}><Icon name="clock" size={14} /> {t("나중에 알림")}</button>}
       {onNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> {t("공지로 등록")}</button>}
@@ -1016,29 +1089,31 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
-  reactions, onToggleReaction,
+  onEdit, onReply, reactions, onToggleReaction,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
-  onSave?: () => void; onRemind?: () => void;
+  onSave?: () => void; onRemind?: () => void; onEdit?: () => void; onReply?: () => void;
   reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
 }) {
   const t = useT();
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const openMenu = (e: React.MouseEvent) => {
-    if ((!onDelete && !onNotice && !onSave && !onRemind) || deleted) return;
+    if ((!onDelete && !onNotice && !onSave && !onRemind && !onEdit && !onReply) || deleted) return;
     e.preventDefault();
     setMenu({ x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 110) });
   };
+  // Parse hidden markers (edit / quote) for rendering without showing the raw marker text.
+  const parsed = useMemo(() => parseMessage(m.message || ""), [m.message]);
   // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.
   const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message }
     : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || t("삭제된 파일"), expired: true } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
-      {menu && (onDelete || onNotice || onSave || onRemind) && (
-        <MessageMenu x={menu.x} y={menu.y} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
+      {menu && (onDelete || onNotice || onSave || onRemind || onEdit || onReply) && (
+        <MessageMenu x={menu.x} y={menu.y} onEdit={onEdit} onReply={onReply} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
       )}
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
       <div className="msg-main">
@@ -1052,7 +1127,14 @@ function MessageRow({
           ) : (
             <div className="bubble-col">
               <div className="bubble" onContextMenu={openMenu}>
-                <Linkified text={m.message} memberNames={memberNames} myName={myName} />
+                {parsed.quote && (
+                  <div className="quote-block">
+                    <span className="quote-name">{parsed.quote.senderName}</span>
+                    <span className="quote-text">{parsed.quote.text}</span>
+                  </div>
+                )}
+                <Linkified text={parsed.body} memberNames={memberNames} myName={myName} />
+                {parsed.editedId != null && <span className="edited-tag">{t("(수정됨)")}</span>}
               </div>
               {!m.pending && <LinkPreview text={m.message} />}
             </div>

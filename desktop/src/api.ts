@@ -15,6 +15,7 @@ import type { Reminder, ReminderInput } from "../electron/core/reminders";
 import type { ScheduledMessage, ScheduledInput } from "../electron/core/scheduled-send";
 import type { StatusCaps } from "../electron/core/status-message";
 import type { ReactionsCaps, ReactionMap } from "../electron/core/reactions";
+import type { EditCaps, ReplyTarget } from "../electron/core/edit-reply";
 import type { Language } from "./lib/i18n-core";
 import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
@@ -143,6 +144,12 @@ export type Bridge = {
     caps(): Promise<ReactionsCaps>;
     list(roomSeq: number, messageIds: number[]): Promise<ReactionMap>;
     toggle(roomSeq: number, messageId: number, emoji: string): Promise<ReactionMap>;
+  };
+  /** 메시지 수정 / 답장(인용): M 패턴 (delete+resend / quote). Gated by UBM_EDIT (default on); self-only guard applies. */
+  edit: {
+    caps(): Promise<EditCaps>;
+    edit(key: string, origMessageId: number, newText: string): Promise<{ ok: true; messageId?: number }>;
+    reply(key: string, target: ReplyTarget, replyText: string): Promise<{ ok: true; messageId?: number }>;
   };
   openChatBot(brandName?: string): Promise<void>;
   onEvent(cb: (e: { type: string; payload: any }) => void): () => void;

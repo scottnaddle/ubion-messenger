@@ -57,6 +57,8 @@ export function Icon({ name, size = 20 }: { name: string; size?: number }) {
     bellOff: <><path d="M6 16V11a6 6 0 0 1 9.5-4.9M18 11v5l1.5 2H8" /><path d="m4 4 16 16" /></>,
     more: <><circle cx="5" cy="12" r="1.2" /><circle cx="12" cy="12" r="1.2" /><circle cx="19" cy="12" r="1.2" /></>,
     star: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9z" />,
+    reply: <><path d="M9 10 4 15l5 5" /><path d="M4 15h10a6 6 0 0 0 6-6V5" /></>,
+    edit: <><path d="M4 20h4L19.5 8.5a2 2 0 0 0-2.8-2.8L5 17.5 4 20z" /><path d="m13.5 6.5 3 3" /></>,
     flex: <path d="m13.5 2-8 12h5.5L10.5 22l8-12H13z" />,
     lock: <><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
   };
