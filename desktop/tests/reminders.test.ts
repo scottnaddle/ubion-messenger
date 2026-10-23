@@ -54,8 +54,11 @@ describe("reminders: scheduling math", () => {
   });
 
   it("내일 오전 9시 is the next 9 AM local time", () => {
-    // NOW is 2026-10-24 10:00 KST → next is 2026-10-25 09:00 KST
-    const expected = Date.parse("2026-10-25T09:00:00.000+09:00");
+    // Expected: 09:00 local time on the next local calendar day (TZ-independent).
+    const d = new Date(NOW);
+    const expected = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 9, 0, 0, 0).getTime();
+    expect(new Date(expected).getHours()).toBe(9);
+    expect(expected).toBeGreaterThan(NOW);
     expect(nextNineAm(NOW)).toBe(expected);
     expect(reminderDueAt("tomorrow9", NOW)).toBe(expected);
   });
