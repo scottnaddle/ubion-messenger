@@ -1,3 +1,4 @@
+import { sendMail, normalizeDraft } from "./mail-compose";
 /**
  * PortalService — read-only access to the DaouOffice portal home ("홈" tab).
  * - GET only, and only for whitelisted paths (see PORTAL_WHITELIST). Never POST/PUT/DELETE.
@@ -687,6 +688,11 @@ export class PortalService {
     } catch {
       throw new Error(`invalid JSON ${path}`);
     }
+  }
+
+  /** ⚠ Would SEND MAIL. Hard-disabled via MAIL_SEND_ENABLED until the real request is captured (see mail-compose.ts). */
+  async mailSend(draft: unknown): Promise<{ ok: true }> {
+    return sendMail(this.fetcher, normalizeDraft(draft));
   }
 
   async mailList(folder: string, page = 1, keyword = ""): Promise<MailListPage> {

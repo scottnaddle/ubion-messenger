@@ -4,11 +4,14 @@ import { Icon } from "./ui";
 import { sanitizeMailHtml } from "../lib/sanitize";
 import { fileIcon } from "../../electron/core/attach";
 import { mailOverview, type MailListItem, type MailListPage, type MailMessage } from "../../electron/core/mail";
+import { MailCompose } from "./MailCompose";
+import { buildDraft, type ComposeMode, type MailDraft } from "../../electron/core/mail-compose";
 import { mailUrl, type MailFolder, type MailFolders } from "../../electron/core/portal";
 
 const open = (url: string) => void api().portal.open(url).catch(() => undefined);
 const openExternal = (url: string) => void api().call("app:openExternal", url).catch(() => undefined);
-export const WRITE_URL = "/app/mail?work=write";
+export { WRITE_URL } from "./MailCompose";
+import { WRITE_URL } from "./MailCompose";
 
 /** Today → HH:mm, this year → M.D, else YYYY.M.D (Asia/Seoul via the OS locale/zone). */
 export function mailDate(s?: string, now = new Date()): string {
@@ -184,6 +187,18 @@ export function Mail() {
     }
   };
 
+  const [compose, setCompose] = useState<MailDraft | null>(null);
+  const [myEmail, setMyEmail] = useState("");
+  useEffect(() => {
+    Promise.all([api().call<{ user: { id: number } | null }>("auth:state"), api().call<{ userId: number; email: string }[]>("org:users")])
+      .then(([st, us]) => setMyEmail(us.find((u) => u.userId === st?.user?.id)?.email ?? ""))
+      .catch(() => undefined);
+  }, []);
+  const startCompose = (mode: ComposeMode) => {
+    const quoted = mode !== "new" && msg ? sanitizeMailHtml(msg.html, false).html : "";
+    setCompose(buildDraft(mode, mode === "new" ? null : msg, myEmail, quoted, msg ? fullDate(msg.dateUtc) : ""));
+  };
+
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     if (!listLoading && list && !list.lastPage && el.scrollTop + el.clientHeight > el.scrollHeight - 120) void loadPage(list.page + 1);
@@ -201,7 +216,7 @@ export function Mail() {
             <Icon name="refresh" size={18} />
           </button>
         </div>
-        <button className="primary small mail-write" onClick={() => open(WRITE_URL)} title="웹 메일에서 새 메일 쓰기">
+        <button className="primary small mail-write" onClick={() => startCompose("new")} title="새 메일 쓰기">
           <Icon name="plus" size={15} /> 메일 쓰기
         </button>
         <div className="mail-folders">
@@ -257,16 +272,19 @@ export function Mail() {
       </section>
 
       <section className="mail-pane-read">
-        {!sel && <Overview page={list} inboxUnread={inboxUnread} folders={folders} onSender={(q) => search(undefined, q)} onPick={(m) => void openMsg(m)} />}
-        {sel && msgLoading && <div className="muted small pad">불러오는 중…</div>}
-        {sel && msgErr && <div className="mail-error pad"><span>{msgErr}</span><button className="link" onClick={() => void openMsg(sel)}>다시 시도</button></div>}
-        {sel && msg && body && (
+        {compose && <MailCompose key={JSON.stringify(compose).length + compose.mode + (compose.ref?.uid ?? "")} initial={compose} onClose={() => setCompose(null)} />}
+        {!compose && !sel && <Overview page={list} inboxUnread={inboxUnread} folders={folders} onSender={(q) => search(undefined, q)} onPick={(m) => void openMsg(m)} />}
+        {!compose && sel && msgLoading && <div className="muted small pad">불러오는 중…</div>}
+        {!compose && sel && msgErr && <div className="mail-error pad"><span>{msgErr}</span><button className="link" onClick={() => void openMsg(sel)}>다시 시도</button></div>}
+        {!compose && sel && msg && body && (
           <article className="mail-read">
             <header className="mail-read-head">
               <div className="mail-read-title">
                 <h3>{msg.important && <span className="mail-imp">!</span>}{msg.subject || "(제목 없음)"}</h3>
                 <div className="mail-read-actions">
-                  <button className="link" onClick={() => open(mailUrl(msg.folder, String(msg.uid)))} title="웹 메일에서 열어 답장">↩ 웹에서 답장</button>
+                  <button className="link" onClick={() => startCompose("reply")}>↩ 답장</button>
+                  <button className="link" onClick={() => startCompose("replyAll")}>전체 답장</button>
+                  <button className="link" onClick={() => startCompose("forward")}>→ 전달</button>
                   <button className="link" onClick={() => open(mailUrl(msg.folder, String(msg.uid)))}>웹에서 열기</button>
                   <button className="icon-btn" title="닫기" onClick={() => { setSel(null); setMsg(null); }}><Icon name="close" size={16} /></button>
                 </div>

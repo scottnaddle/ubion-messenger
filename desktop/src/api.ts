@@ -35,6 +35,7 @@ export type Bridge = {
     approvalList(box: ApprovalBox, page: number, keyword?: string): Promise<ApprovalList>;
     approvalCounts(): Promise<{ todo: number; upcoming: number }>;
     approvalDoc(id: number | string): Promise<ApprovalDocumentDetail>;
+    mailSend(draft: import("../electron/core/mail-compose").MailDraft): Promise<{ ok: true }>;
     approvalAction(kind: "approve" | "return", id: number | string, comment?: string): Promise<{ ok: true }>;
     flexPending(force?: boolean): Promise<{ count: number | null; at: number; error?: string }>;
   };

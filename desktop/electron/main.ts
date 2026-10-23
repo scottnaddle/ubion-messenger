@@ -764,6 +764,7 @@ function registerIpc() {
     return core.portal.approvalList(a.box, a.page, a.keyword);
   });
   handle("portal:approvalCounts", () => core.portal.approvalCounts());
+  handle("portal:mailSend", (draft: unknown) => core.portal.mailSend(draft));
   handle("portal:approvalAction", (kind: unknown, id: unknown, comment: unknown) => core.portal.approvalAction(kind, id, comment));
   handle("portal:approvalDoc", (id: unknown) => core.portal.approvalDoc(normalizeApprovalDocId(id)));
   handle("portal:flexPending", async (force?: boolean) => refreshFlexPending(!!force));

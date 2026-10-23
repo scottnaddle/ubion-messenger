@@ -35,6 +35,7 @@ const api = {
       call<import("./core/portal").ApprovalList>("portal:approvalList", box, page, keyword),
     approvalCounts: () => call<{ todo: number; upcoming: number }>("portal:approvalCounts"),
     approvalDoc: (id: number | string) => call<import("./core/portal").ApprovalDocumentDetail>("portal:approvalDoc", id),
+    mailSend: (draft: import("./core/mail-compose").MailDraft) => call<{ ok: true }>("portal:mailSend", draft),
     approvalAction: (kind: "approve" | "return", id: number | string, comment = "") =>
       call<{ ok: true }>("portal:approvalAction", kind, id, comment),
     flexPending: (force?: boolean) => call<{ count: number | null; at: number; error?: string }>("portal:flexPending", force),
