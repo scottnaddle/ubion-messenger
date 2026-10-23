@@ -2,9 +2,13 @@ import { useMemo, useState } from "react";
 import { api, type Presence, type Room } from "../api";
 import { roomTimeLabel } from "../lib/format";
 import { roomMatchesFilter } from "../../electron/core/messages";
+import { isAuthMarkerText } from "../lib/markers";
 import type { Toast } from "../App";
 import { Avatar, Icon } from "./ui";
 import { useT } from "../lib/i18n";
+
+/** Bot auth markers are internal; never surface them as a room-list preview. */
+const roomPreview = (room: Room): string => (isAuthMarkerText(room.preview) ? "" : room.preview);
 
 export function Sidebar({
   rooms, activeKey, presence, onOpen, toast, onGlobalSearch,
@@ -24,7 +28,7 @@ export function Sidebar({
     const k = q.trim().toLowerCase();
     return rooms.filter((r) => {
       if (!roomMatchesFilter(r, filter)) return false;
-      return !k || r.name.toLowerCase().includes(k) || r.preview.toLowerCase().includes(k);
+      return !k || r.name.toLowerCase().includes(k) || roomPreview(r).toLowerCase().includes(k);
     });
   }, [rooms, q, filter]);
 
@@ -89,7 +93,7 @@ export function Sidebar({
                 <span className="room-time">{roomTimeLabel(r.createdAt)}</span>
               </div>
               <div className="room-bottom">
-                <span className="room-preview">{r.preview || "\u00a0"}</span>
+                <span className="room-preview">{roomPreview(r) || "\u00a0"}</span>
                 {r.usePin && <span className="pin" title={t("고정됨")}><Icon name="pin" size={13} /></span>}
                 {!r.usePush && <span className="muted" title={t("알림 꺼짐")}><Icon name="bellOff" size={13} /></span>}
                 {r.unread > 0 && <span className={`badge ${r.usePush ? "" : "quiet"}`}>{r.unread > 999 ? "999+" : r.unread}</span>}

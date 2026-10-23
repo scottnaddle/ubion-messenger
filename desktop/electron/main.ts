@@ -84,6 +84,7 @@ import {
 } from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
 import { createBotSettingsClient } from "./core/bot-settings";
+import { createUbmAuth, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
 import { applyMainLanguage, filterLanguagePatch, i18nCaps, tm } from "./core/i18n-main";
 import { createAwayMonitor } from "./core/away";
 import { createLockState, hashPin, validatePin, verifyPin, type PinRecord } from "./core/lock";
@@ -275,43 +276,123 @@ let locked = false;
 const lockState = createLockState({ now: () => Date.now() });
 const updater = new Updater(() => win);
 
-const botSettings = createBotSettingsClient({
-  getCookieHeader: async () => {
-    const cookies = await core.client.sessionCookies();
-    return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
+const UBM_BASE_URL = () => process.env.UBM_BOT_API_URL || "https://bot.ubion.global";
+const ubmTokenFile = () => path.join(app.getPath("userData"), "ubm-token.bin");
+
+/** OS-keychain-backed persistence for the UBION token; without safeStorage the token stays in memory only. */
+const ubmTokenStore = {
+  async load(): Promise<UbmAuthToken | null> {
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return null;
+      const parsed = JSON.parse(safeStorage.decryptString(fs.readFileSync(ubmTokenFile())));
+      if (!parsed || typeof parsed.token !== "string" || typeof parsed.expiresAt !== "string") return null;
+      const userSeq = Number(parsed.userSeq);
+      if (!Number.isSafeInteger(userSeq) || userSeq <= 0) return null;
+      return { token: parsed.token, userSeq, expiresAt: parsed.expiresAt };
+    } catch {
+      return null;
+    }
   },
+  async save(value: UbmAuthToken | null): Promise<void> {
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return;
+      const file = ubmTokenFile();
+      if (!value) {
+        try {
+          fs.unlinkSync(file);
+        } catch {
+          /* no saved token */
+        }
+        return;
+      }
+      fs.writeFileSync(file, safeStorage.encryptString(JSON.stringify(value)), { mode: 0o600 });
+      try {
+        fs.chmodSync(file, 0o600);
+      } catch {
+        /* best effort on platforms without chmod */
+      }
+    } catch {
+      /* persistence is best-effort; keep the token in memory */
+    }
+  },
+};
+
+const ubmAuth = createUbmAuth({
+  baseUrl: UBM_BASE_URL(),
+  getUserSeq: () => core.user?.id ?? 0,
+  readBotDm: async (botUserSeq) => {
+    const messages = await core.client.fetchMessages("buddy", botUserSeq, 20);
+    return messages.map((m) => m.message);
+  },
+  store: ubmTokenStore,
 });
 
 /**
  * Auth proof for our server (bot.ubion.global). NEVER forward DaouOffice session cookies to it: that would hand a
- * company credential to a third host. Until a server-issued UBION token flow exists (TODO, needs design + deploy
- * approval), use an explicitly provisioned token from UBM_BOT_USER_TOKEN; empty → requests fail closed.
+ * company credential to a third host. UBM_BOT_USER_TOKEN is an explicit deployment override; otherwise use the
+ * server-issued UBION token obtained through the bot DM challenge.
  */
 const ubmServerProof = async (): Promise<string> => {
   const t = (process.env.UBM_BOT_USER_TOKEN || "").trim();
-  if (!t) throw new Error("UBION 서버 인증이 설정되지 않았습니다");
-  return t;
+  if (t) return t;
+  return ubmAuth.getToken();
 };
 
-const statusClient = () =>
-  createStatusClient({
-    baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
-    getSessionHeader: ubmServerProof,
-  });
+const UBM_AUTH_EXPIRED = "세션이 만료되었습니다. 다시 로그인하세요.";
+const isUbmAuthFailure = (r: { ok: boolean; kind?: string; message?: string }): boolean =>
+  !r.ok && (r.kind === "auth" || r.message === UBM_AUTH_EXPIRED);
+const retryUbm = <T>(run: () => Promise<T>, isAuth: (result: T) => boolean): Promise<T> =>
+  withUbmRetry(run, () => ubmAuth.invalidate(), isAuth);
 
-const reactionsClient = () =>
-  createReactionsClient({
-    baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
+const botSettings = createBotSettingsClient({
+  baseUrl: UBM_BASE_URL(),
+  getUserSeq: () => core.user?.id ?? 0,
+  getSessionHeader: ubmServerProof,
+});
+
+const statusClient = () => {
+  const client = createStatusClient({ baseUrl: UBM_BASE_URL(), getSessionHeader: ubmServerProof });
+  return {
+    get: (userSeq: number) => retryUbm(() => client.get(userSeq), isUbmAuthFailure),
+    put: (userSeq: number, text: string) => retryUbm(() => client.put(userSeq, text), isUbmAuthFailure),
+  };
+};
+
+const reactionsClient = () => {
+  const client = createReactionsClient({
+    baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
   });
+  return {
+    list: (roomSeq: number, messageIds: number[]) =>
+      retryUbm(() => client.list(roomSeq, messageIds), isUbmAuthFailure),
+    toggle: (roomSeq: number, messageId: number, emoji: string) =>
+      retryUbm(() => client.toggle(roomSeq, messageId, emoji), isUbmAuthFailure),
+  };
+};
 
-const pollsClient = () =>
-  createPollsClient({
-    baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
+const pollsClient = () => {
+  const client = createPollsClient({
+    baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
   });
+  return {
+    create: (input: Parameters<typeof client.create>[0]) =>
+      retryUbm(() => client.create(input), isUbmAuthFailure),
+    get: (id: number) => retryUbm(() => client.get(id), isUbmAuthFailure),
+    vote: (id: number, optionIndex: number) =>
+      retryUbm(() => client.vote(id, optionIndex), isUbmAuthFailure),
+    close: (id: number) => retryUbm(() => client.close(id), isUbmAuthFailure),
+  };
+};
+
+const botSettingsWithRetry = {
+  get: (roomId: string) => retryUbm(() => botSettings.get(roomId), isUbmAuthFailure),
+  set: (roomId: string, autonomy: boolean) =>
+    retryUbm(() => botSettings.set(roomId, autonomy), isUbmAuthFailure),
+};
 
 const resPath = (f: string) =>
   app.isPackaged ? path.join(process.resourcesPath, "resources", f) : path.join(__dirname, "../../resources", f);
@@ -1166,7 +1247,10 @@ function registerIpc() {
         return { webLoginRequired: true, message: WEB_LOGIN_MESSAGE };
       }
       if (!password) throw new Error("비밀번호를 입력하세요");
-      if (core.user) await core.logout();
+      if (core.user) {
+        await core.logout();
+        await ubmAuth.logout();
+      }
       core = new MessengerCore(serverUrl);
       wireCore();
       let user;
@@ -1202,6 +1286,7 @@ function registerIpc() {
   handle("auth:logout", async () => {
     searchCache?.flush();
     await core.logout("user");
+    await ubmAuth.logout();
     mediaCache.clear();
     await clearPortalSession();
     flexAutoLoginTried = false;
@@ -1263,12 +1348,12 @@ function registerIpc() {
   handle("rooms:setPush", (key: string, usePush: boolean) => core.setRoomPush(key, !!usePush));
   handle("bot:roomSettings:get", (roomKey: unknown) => {
     if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
-    return botSettings.get(roomKey);
+    return botSettingsWithRetry.get(roomKey);
   });
   handle("bot:roomSettings:set", (roomKey: unknown, autonomy: unknown) => {
     if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
     if (typeof autonomy !== "boolean") throw new Error("자율활동 설정 값이 올바르지 않습니다");
-    return botSettings.set(roomKey, autonomy);
+    return botSettingsWithRetry.set(roomKey, autonomy);
   });
   handle("rooms:openDirect", (userId: number) => core.openDirect(userId));
   handle("rooms:createGroup", (ids: number[]) => core.createGroup(ids));

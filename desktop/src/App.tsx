@@ -19,6 +19,7 @@ import { Approval } from "./components/Approval";
 import { LockScreen } from "./components/LockScreen";
 import { Flex } from "./components/Flex";
 import { noticeStoreKey } from "../electron/core/room-notice";
+import { isAuthMarkerText } from "./lib/markers";
 import { THEME_STYLE_ID } from "../electron/core/theme";
 import { navForDigit, type NavView } from "./nav";
 import {
@@ -306,7 +307,8 @@ export function App() {
     { id: "action:settings", kind: "action", label: t("설정"), icon: "gear", keywords: "settings 단축키" },
     { id: "action:globalSearch", kind: "action", label: t("전체 대화 검색"), icon: "search", keywords: "global search" },
     ...rooms.map((r) => ({
-      id: `room:${r.key}`, kind: "room" as const, label: r.name, sublabel: r.preview || undefined,
+      id: `room:${r.key}`, kind: "room" as const, label: r.name,
+      sublabel: r.preview && !isAuthMarkerText(r.preview) ? r.preview : undefined,
       roomKey: r.key, icon: "chat", unread: r.unread,
     })),
     ...orgUsers

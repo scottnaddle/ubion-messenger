@@ -29,7 +29,7 @@ import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
 import { applyToggle } from "../lib/reactions";
-import { composeQuoteText, decodePollId, parseMessage, truncateQuote } from "../lib/markers";
+import { composeQuoteText, decodePollId, isAuthMarkerText, parseMessage, truncateQuote } from "../lib/markers";
 import { FileCard, MediaViewer } from "./FileCard";
 import { BackupModal } from "./BackupModal";
 import { EmojiPicker } from "./EmojiPicker";
@@ -651,6 +651,7 @@ export function ChatView({
     }
   };
   const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
+  const visibleMsgs = useMemo(() => msgs.filter((m) => !isAuthMarkerText(m.message)), [msgs]);
   const subtitle =
     room.kind === "buddy"
       ? [room.position, t(presence ? PRES_LABEL[presence] : PRES_LABEL.offline), statusMessage].filter(Boolean).join(" · ")
@@ -740,14 +741,14 @@ export function ChatView({
           {loading ? (
             <div className="skeletons">{Array.from({ length: 6 }, (_, i) => <div key={i} className={`sk ${i % 2 ? "r" : ""}`} />)}</div>
           ) : (
-            msgs.map((m, i) => {
-              const prev = msgs[i - 1];
+            visibleMsgs.map((m, i) => {
+              const prev = visibleMsgs[i - 1];
               const newDay = !prev || !sameDay(prev.createdAt, m.createdAt);
               const mine = m.sendUserSeq === me.id;
               const grouped =
                 !newDay && prev && prev.sendUserSeq === m.sendUserSeq &&
                 Math.abs((parseTime(m.createdAt)?.getTime() || 0) - (parseTime(prev.createdAt)?.getTime() || 0)) < 5 * 60_000;
-              const next = msgs[i + 1];
+              const next = visibleMsgs[i + 1];
               const showTime = !next || next.sendUserSeq !== m.sendUserSeq || timeLabel(next.createdAt) !== timeLabel(m.createdAt);
               return (
                 <Fragment key={m.messageId ?? m.clientId ?? i}>
