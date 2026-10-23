@@ -56,17 +56,20 @@ input, textarea, select { font: inherit; color: inherit; }
 
 /* layout */
 .app { display: flex; height: 100%; }
-.rail { width: 64px; background: var(--rail); color: var(--rail-fg); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0 14px; flex: none; }
+.rail { width: 72px; background: var(--rail); color: var(--rail-fg); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0 14px; flex: none; }
 .rail-drag { height: 0; }
 [data-platform="darwin"] .rail { padding-top: 38px; -webkit-app-region: drag; }
 [data-platform="darwin"] .rail > * { -webkit-app-region: no-drag; }
 .rail .logo-mark { margin-bottom: 12px; }
-.rail-btn { position: relative; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; color: var(--rail-fg); }
+.rail-btn { position: relative; width: 50px; height: 50px; border-radius: 14px; display: grid; place-items: center; color: var(--rail-fg); }
 .rail-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
 .rail-btn.on { background: rgba(255,255,255,.14); color: #fff; }
-.rail-badge { position: absolute; top: -3px; right: -8px; z-index: 1; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; display: grid; place-items: center; border: 2px solid var(--rail); }
+.rail-badge { position: absolute; top: -2px; right: -6px; z-index: 1; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; padding: 0 5px; display: grid; place-items: center; border: 2px solid var(--rail); }
 .rail-spacer { flex: 1; }
-.rail-me { margin-top: 6px; }
+.rail-me { position: relative; margin-top: 6px; width: 50px; height: 50px; border-radius: 14px; display: grid; place-items: center; outline: none; }
+.rail-me:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.rail-tip { position: fixed; z-index: 1000; transform: translateY(-50%); display: flex; align-items: center; gap: 8px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); box-shadow: var(--shadow); font-size: .82rem; line-height: 1.2; white-space: nowrap; pointer-events: none; -webkit-app-region: no-drag; }
+.rail-tip-key { color: var(--muted); font-size: .92em; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .panes { flex: 1; display: flex; min-height: 0; }
 .banner { padding: 7px 14px; font-size: .88em; text-align: center; font-weight: 500; }

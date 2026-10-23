@@ -7,6 +7,7 @@ import { People } from "./components/People";
 import { SettingsModal } from "./components/SettingsModal";
 import { drawBadge } from "./lib/badge";
 import { Avatar, Icon } from "./components/ui";
+import { RailButton, RailProfile } from "./components/RailTooltip";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { Home } from "./components/Home";
 import { Menu } from "./components/Menu";
@@ -217,38 +218,38 @@ export function App() {
       <nav className="rail">
         <div className="rail-drag" />
         <div className="logo-mark" title="UBION Messenger">U</div>
-        <button className={`rail-btn ${view === "home" ? "on" : ""}`} title="홈 (⌘1)" onClick={() => setView("home")}>
-          <Icon name="home" />
+        <RailButton id="home" active={view === "home"} onClick={() => setView("home")}>
+          <Icon name="home" size={23} />
           {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
-        </button>
-        <button className={`rail-btn ${view === "chats" ? "on" : ""}`} title="메시지 (⌘K)" onClick={() => setView("chats")}>
-          <Icon name="chat" />
+        </RailButton>
+        <RailButton id="chats" active={view === "chats"} onClick={() => setView("chats")}>
+          <Icon name="chat" size={23} />
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
-        </button>
-        <button className={`rail-btn ${view === "mail" ? "on" : ""}`} title="메일 (⌘3)" onClick={() => setView("mail")}>
-          <Icon name="mail" />
-        </button>
-        <button className={`rail-btn ${view === "flex" ? "on" : ""}`} title="플렉스 (⌘4)" onClick={() => setView("flex")}>
-          <Icon name="flex" />
+        </RailButton>
+        <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
+          <Icon name="mail" size={23} />
+        </RailButton>
+        <RailButton id="flex" active={view === "flex"} onClick={() => setView("flex")}>
+          <Icon name="flex" size={23} />
           {flexPending != null && flexPending > 0 && <span className="rail-badge">{flexPending > 99 ? "99+" : flexPending}</span>}
-        </button>
-        <button className={`rail-btn ${view === "people" ? "on" : ""}`} title="조직도 (⌘N · ⌘5)" onClick={() => setView("people")}>
-          <Icon name="people" />
-        </button>
-        <button className={`rail-btn ${view === "menu" ? "on" : ""}`} title="앱 (⌘6)" onClick={() => setView("menu")}>
-          <Icon name="grid" />
-        </button>
-        <button className={`rail-btn ${view === "approval" ? "on" : ""}`} title="전자결재" onClick={() => setView("approval")}>
-          <Icon name="approval" />
+        </RailButton>
+        <RailButton id="people" active={view === "people"} onClick={() => setView("people")}>
+          <Icon name="people" size={23} />
+        </RailButton>
+        <RailButton id="menu" active={view === "menu"} onClick={() => setView("menu")}>
+          <Icon name="grid" size={23} />
+        </RailButton>
+        <RailButton id="approval" active={view === "approval"} onClick={() => setView("approval")}>
+          <Icon name="approval" size={23} />
           {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
-        </button>
+        </RailButton>
         <div className="rail-spacer" />
-        <button className="rail-btn" title="설정 (⌘,)" onClick={() => setShowSettings(true)}>
-          <Icon name="gear" />
-        </button>
-        <div className="rail-me" title={user.name}>
+        <RailButton id="settings" onClick={() => setShowSettings(true)}>
+          <Icon name="gear" size={23} />
+        </RailButton>
+        <RailProfile name={user.name} className="rail-me">
           <Avatar name={user.name} src={user.thumbnail} size={32} presence={conn === "online" ? "online" : "offline"} />
-        </div>
+        </RailProfile>
       </nav>
       <div className="main">
         <UpdateBanner />
