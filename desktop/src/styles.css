@@ -686,3 +686,5 @@ input, textarea, select { font: inherit; color: inherit; }
 .ctx-menu button.ctx-reaction-more { padding: 4px 6px; font-size: 12px; color: var(--muted); }
 .ctx-menu button.ctx-disabled { cursor: default; opacity: .6; }
 .ctx-menu button.ctx-disabled:hover { background: none; }
+
+.reaction-pop.floating, .emoji-pop.floating { position: static; inset: auto; z-index: auto; }

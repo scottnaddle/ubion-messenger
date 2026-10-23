@@ -4,6 +4,7 @@ import { formatReactionTooltip, reactionChips } from "../lib/reactions";
 import { loadRecentEmoji, pushRecentEmoji, saveRecentEmoji } from "../lib/emoticon";
 import { useT } from "../lib/i18n";
 import { EmojiPicker } from "./EmojiPicker";
+import { Floating } from "./Floating";
 
 /**
  * 이모지 리액션: chips beside the bubble (own reaction highlighted) + a hover "+" button.
@@ -25,6 +26,19 @@ export function ReactionBar({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>(() => loadRecentEmoji());
   const addRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLSpanElement>(null);
+  // Palette lives in a body portal now: close it on an outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: Event) => {
+      if (e instanceof KeyboardEvent) { if (e.key === "Escape") setOpen(false); return; }
+      const n = e.target as Node | null;
+      if (popRef.current?.contains(n) || addRef.current?.contains(n)) return;
+      setOpen(false);
+    };
+    window.addEventListener("mousedown", h); window.addEventListener("keydown", h);
+    return () => { window.removeEventListener("mousedown", h); window.removeEventListener("keydown", h); };
+  }, [open]);
   const chips = reactionChips(map, messageId, me);
   useEffect(() => {
     if (pickerRequest > 0) { setOpen(false); setPickerOpen(true); }
@@ -70,7 +84,8 @@ export function ReactionBar({
         <span aria-hidden="true">☺+</span>
       </button>
       {open && (
-        <span className="reaction-pop" role="menu" aria-label={t("리액션")}>
+        <Floating anchor={addRef}>
+        <span ref={popRef} className="reaction-pop floating" role="menu" aria-label={t("리액션")}>
           {REACTION_EMOJI.map((e) => (
             <button key={e} type="button" className="reaction-cell" title={e} aria-label={e}
               onClick={() => pick(e)}>{e}</button>
@@ -79,9 +94,12 @@ export function ReactionBar({
             {t("더보기")}
           </button>
         </span>
+        </Floating>
       )}
       {pickerOpen && (
-        <EmojiPicker recent={recent} onPick={pick} onClose={() => setPickerOpen(false)} anchor={addRef} />
+        <Floating anchor={addRef}>
+          <EmojiPicker recent={recent} onPick={pick} onClose={() => setPickerOpen(false)} anchor={addRef} floating />
+        </Floating>
       )}
     </div>
   );

@@ -5,11 +5,13 @@ import { useT } from "../lib/i18n";
 
 /** Composer emoji popover. Closes on outside mousedown, Esc, or window blur. */
 export function EmojiPicker({
-  recent, onPick, onClose, anchor,
+  recent, onPick, onClose, anchor, floating = false,
 }: {
   recent: string[]; onPick: (emoji: string) => void; onClose: () => void;
   /** The toggle button: clicks on it are left to its own handler (so it can close the picker). */
   anchor: React.RefObject<HTMLElement | null>;
+  /** Rendered inside a positioned portal (reactions): drop the composer's absolute placement. */
+  floating?: boolean;
 }) {
   const t = useT();
   const cats = pickerCategories(recent);
@@ -40,7 +42,7 @@ export function EmojiPicker({
   }, [onClose, anchor]);
 
   return (
-    <div className="emoji-pop" ref={ref} role="dialog" aria-label={t("이모티콘")}>
+    <div className={`emoji-pop${floating ? " floating" : ""}`} ref={ref} role="dialog" aria-label={t("이모티콘")}>
       <div className="emoji-tabs" role="tablist">
         {cats.map((c) => (
           <button key={c.id} type="button" role="tab" aria-selected={c.id === current.id}
