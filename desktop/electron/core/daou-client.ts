@@ -13,7 +13,7 @@ type ReqInit = {
   contentType?: string;
   retry?: boolean;
 };
-type Res = { status: number; text: string; buffer: Buffer; contentType: string };
+type Res = { status: number; text: string; buffer: Buffer; contentType: string; rawStatus?: number; location?: string };
 
 export class HttpError extends Error {
   /** true → the account must finish login on the server's web page (OTP / 2-step / pending step). */
@@ -102,6 +102,7 @@ export class DaouClient {
       }
     );
     const d = diagnose(res.status, res.text, "/api/login");
+    const ctx = ` ct=${res.contentType.split(";")[0]}${res.location ? ` location=${res.location.split(/[?#]/)[0].slice(0, 120)}` : ""}${res.rawStatus !== res.status ? ` raw=${res.rawStatus}` : ""}`;
     let body: any = null;
     try {
       body = JSON.parse(res.text);
@@ -112,13 +113,13 @@ export class DaouClient {
       .filter(([k, v]) => v === true && /otp|pwd|password|change|expire|lock|device|captcha/i.test(k) && k !== "useSkipPwdChange")
       .map(([k]) => k);
     if (res.status !== 200 || (body && body.code && String(body.code) !== "200")) {
-      throw new HttpError(res.status === 200 ? 401 : res.status, userMessage(d, classify(d, flags)), diagLine(d));
+      throw new HttpError(res.status === 200 ? 401 : res.status, userMessage(d, classify(d, flags)), diagLine(d) + ctx);
     }
     // 200 but redirected to a pending step (pw change / OTP / device approval): session is not usable yet.
     if (isPendingRedirect(d.redirect) || flags.length) {
       const issue = classify(d, flags) ?? "unknown";
       const web = needsWebLogin({ phase: "login", status: 200, issue, pendingRedirect: isPendingRedirect(d.redirect), flags });
-      const err = new HttpError(403, (web ? WEB_LOGIN_MESSAGE + "\n" : "") + userMessage(d, issue), diagLine(d) + (flags.length ? ` flags=${flags.join(",")}` : ""));
+      const err = new HttpError(403, (web ? WEB_LOGIN_MESSAGE + "\n" : "") + userMessage(d, issue), diagLine(d) + ctx + (flags.length ? ` flags=${flags.join(",")}` : ""));
       err.webLogin = web;
       throw err;
     }
@@ -468,7 +469,7 @@ export class DaouClient {
         if (next.origin === new URL(url).origin) return this.rawRequest(next.pathname + next.search, init);
       }
       const status = res.status >= 300 && res.status < 400 ? 401 : res.status;
-      return { status, text: buf.toString("utf8"), buffer: buf, contentType: res.headers.get("content-type") || "application/octet-stream" };
+      return { status, rawStatus: res.status, location: loc || undefined, text: buf.toString("utf8"), buffer: buf, contentType: res.headers.get("content-type") || "application/octet-stream" };
     } finally {
       clearTimeout(timer);
     }

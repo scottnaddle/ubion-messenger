@@ -3,6 +3,31 @@ import { HttpError } from "../../desktop/electron/core/daou-client";
 import type { BotRoom, DaouPort, InboundMessage } from "./types";
 import { mask, ReloginPolicy } from "./session";
 
+const SECRETISH = /(pass(word)?|pwd|token|cookie|session|sso|auth|key|secret|otp|ticket)=([^&\s"';]+)/gi;
+/** Remove query strings from URLs and mask key=value secrets; collapse whitespace; cap length. */
+export function sanitize(s: unknown, max = 300): string {
+  return String(s ?? "")
+    .replace(/(https?:\/\/[^\s"'?#]+)[?#][^\s"']*/gi, "$1?…")
+    .replace(/([?&;]|\b)(\/[^\s?"']*)\?[^\s"']+/g, "$1$2?…")
+    .replace(SECRETISH, "$1=***")
+    .replace(/GOSSOcookie[^;\s]*/gi, "GOSSOcookie=***")
+    .replace(/\s+/g, " ").trim().slice(0, max);
+}
+/** One-line, secret-free description of a login failure: kind, name, code/cause chain, HTTP status, server diag. */
+export function describeError(e: unknown): string {
+  const parts: string[] = [];
+  const err = e as any;
+  parts.push(`type=${e instanceof HttpError ? "HttpError" : err?.name || typeof e}`);
+  if (e instanceof HttpError) { parts.push(`status=${e.status}`); if (e.webLogin) parts.push("webLogin=true"); if (e.diag) parts.push(`diag=[${sanitize(e.diag)}]`); }
+  if (err?.code) parts.push(`code=${err.code}`);
+  if (err?.name === "AbortError") parts.push("timeout=30s");
+  let c = err?.cause, depth = 0;
+  while (c && depth++ < 3) { parts.push(`cause=${c.name || "Error"}${c.code ? `/${c.code}` : ""}:${sanitize(c.message, 120)}`); c = c.cause; }
+  parts.push(`msg=${sanitize(err?.message ?? e, 200)}`);
+  if (!(e instanceof HttpError) && err?.stack) parts.push(`at=${sanitize(String(err.stack).split("\n").slice(1, 3).join(" | "), 200)}`);
+  return parts.join(" ");
+}
+
 /** Real DaouPort over the desktop MessengerCore (REST + BOSH). Logs in as the dedicated bot account only. */
 export class CorePort implements DaouPort {
   core: MessengerCore; private policy = new ReloginPolicy(); private known = new Set<string>(); state = "offline";
@@ -13,13 +38,15 @@ export class CorePort implements DaouPort {
     this.core.on("loggedOut", () => this.schedule("net"));
   }
   async start() {
+    let phase = "login";
     try {
       this.log(`login as ${mask(this.cfg.username)}`);
       await this.core.login({ serverUrl: this.cfg.serverUrl, username: this.cfg.username, password: this.cfg.password });
+      phase = "post-login(listRooms)"; this.log("login ok");
       this.policy.onSuccess(); (await this.listRooms()).forEach((r) => this.known.add(r.room_id));
     } catch (e) {
-      const auth = e instanceof HttpError && (e.webLogin || e.status === 401 || e.status === 403);
-      this.log(`login failed (${auth ? "auth" : "net"})`); this.schedule(auth ? "auth" : "net");
+      const auth = e instanceof HttpError && (e.webLogin || e.status === 401 || e.status === 403 || e.status === 423);
+      this.log(`login failed (${auth ? "auth" : "net"}) phase=${phase} ${describeError(e)}`); this.schedule(auth ? "auth" : "net");
     }
   }
   private schedule(kind: "auth" | "net") {
