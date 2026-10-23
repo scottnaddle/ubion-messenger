@@ -2,6 +2,7 @@ import { resolveSaveTarget, type SaveMode } from "./core/save-path";
 import {
   app,
   BrowserWindow,
+  desktopCapturer,
   dialog,
   session,
   ipcMain,
@@ -12,7 +13,9 @@ import {
   powerMonitor,
   protocol,
   safeStorage,
+  screen,
   shell,
+  systemPreferences,
   Tray,
 } from "electron";
 import type { WebContents } from "electron";
@@ -34,6 +37,10 @@ import { shouldNotify } from "./core/room-push";
 import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { backupFileName, historyClearEnabled, normalizeBackupFileType } from "./core/backup";
 import { maskSecrets } from "./core/mask";
+import {
+  CAPTURE_OVERLAY_DONE, CAPTURE_OVERLAY_IMAGE, CAPTURE_START, captureFileName, captureOverlayUrl, capturePermissionError,
+  captureScale, captureThumbnailSize, normalizeCropRect, pickScreenSource, type CaptureResult,
+} from "./core/capture";
 import { chatBotUrl, isChatBotUrl } from "./core/chatbot";
 import { isMentioningMe } from "../src/lib/mention";
 import { createBotSettingsClient } from "./core/bot-settings";
@@ -636,6 +643,82 @@ function createWindow() {
   else win.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 
+// ---------- 화면 캡쳐 ----------
+let captureBusy = false;
+
+/** Grab the display under the cursor, let the user drag a region on a frozen overlay, return PNG bytes (null = cancelled). */
+async function captureScreenRegion(): Promise<CaptureResult | null> {
+  const status = process.platform === "darwin" ? systemPreferences.getMediaAccessStatus("screen") : undefined;
+  const denied = capturePermissionError(process.platform, status);
+  if (denied) throw new Error(denied);
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const sources = await desktopCapturer.getSources({
+    types: ["screen"],
+    thumbnailSize: captureThumbnailSize(display.size, display.scaleFactor),
+  });
+  const source = pickScreenSource(sources, display.id);
+  const image = source?.thumbnail;
+  if (!image || image.isEmpty()) {
+    throw new Error(process.platform === "darwin" ? capturePermissionError("darwin")! : "화면을 캡쳐하지 못했습니다");
+  }
+  const imgSize = image.getSize();
+  const scale = captureScale(imgSize, display.bounds, display.scaleFactor);
+  const { x, y, width, height } = display.bounds;
+  const overlay = new BrowserWindow({
+    x, y, width, height,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    enableLargerThanScreen: true,
+    alwaysOnTop: true,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/capture.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  overlay.setAlwaysOnTop(true, "screen-saver");
+  overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  overlay.webContents.on("will-navigate", (e) => e.preventDefault());
+  const rect = await new Promise<unknown>((resolve) => {
+    const onDone = (e: Electron.IpcMainEvent, r: unknown) => {
+      if (e.sender !== overlay.webContents) return;
+      resolve(r);
+      if (!overlay.isDestroyed()) overlay.close();
+    };
+    ipcMain.on(CAPTURE_OVERLAY_DONE, onDone);
+    overlay.on("closed", () => {
+      ipcMain.removeListener(CAPTURE_OVERLAY_DONE, onDone);
+      resolve(null);
+    });
+    overlay.webContents.once("did-finish-load", () => {
+      // JPEG is only the frozen backdrop; the crop below comes from the full-quality capture.
+      overlay.webContents.send(CAPTURE_OVERLAY_IMAGE, "data:image/jpeg;base64," + image.toJPEG(90).toString("base64"));
+      overlay.setBounds(display.bounds);
+      overlay.show();
+      overlay.focus();
+    });
+    overlay.loadURL(captureOverlayUrl()).catch((e) => {
+      console.warn("capture overlay failed:", maskSecrets(String((e as Error)?.message ?? e)));
+      if (!overlay.isDestroyed()) overlay.close();
+    });
+  });
+  const crop = normalizeCropRect(rect, imgSize, scale);
+  if (!crop) return null;
+  const png = image.crop(crop).toPNG();
+  return { name: captureFileName(), type: "image/png", data: new Uint8Array(png), width: crop.width, height: crop.height };
+}
+
 function applyLoginItem() {
   if (process.platform === "linux") return;
   app.setLoginItemSettings({ openAtLogin: settings.launchAtLogin, openAsHidden: true, args: ["--hidden"] });
@@ -908,9 +991,23 @@ function registerIpc() {
       await core.sendFile(key, { name: path.basename(p), data: fs.readFileSync(p), mime: guessMime(p) });
     }
   });
-  handle("files:sendBuffer", (key: string, name: string, data: ArrayBuffer, mime?: string) =>
-    core.sendFile(key, { name, data: Buffer.from(data), mime })
-  );
+  handle("files:sendBuffer", (key: string, name: string, data: ArrayBuffer, mime?: string) => {
+    // Pasted/captured images: in safe mode (UBM_SELF_ONLY) only the 나 room may receive them.
+    if (process.env.UBM_SELF_ONLY === "1") guardedRoomSeq(key);
+    return core.sendFile(key, { name, data: Buffer.from(data), mime });
+  });
+  handle(CAPTURE_START, async () => {
+    if (captureBusy) throw new Error("이미 화면 캡쳐 중입니다");
+    captureBusy = true;
+    try {
+      return await captureScreenRegion();
+    } catch (e) {
+      console.warn("screen capture failed:", maskSecrets(String((e as Error)?.message ?? e)));
+      throw e;
+    } finally {
+      captureBusy = false;
+    }
+  });
   handle("files:pick", async () => {
     const r = await dialog.showOpenDialog(win!, { properties: ["openFile", "multiSelections"] });
     return r.canceled ? [] : r.filePaths;

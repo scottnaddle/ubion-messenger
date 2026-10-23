@@ -6,6 +6,7 @@ import type {
 } from "../electron/core/portal";
 import type { BotSettingsResult } from "../electron/core/bot-settings";
 import type { BackupFileType, BackupItem } from "../electron/core/backup";
+import type { CaptureResult } from "../electron/core/capture";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
 
 export type LockStatus = { enabled: boolean; locked: boolean; timeoutMin: number };
@@ -42,6 +43,8 @@ export type Bridge = {
   forwardToMembers(memberSeqs: number[], cryptIds: string[], roomType: "single" | "group"): Promise<{ ok: true; count: number }>;
   registerNotice(key: string, messageId: number): Promise<Room>;
   setRoomPush(key: string, usePush: boolean): Promise<void>;
+  /** 화면 캡쳐: region-select overlay; null when cancelled (Esc). */
+  captureScreen(): Promise<CaptureResult | null>;
   backup: {
     config(): Promise<{ historyClearEnabled: boolean }>;
     request(key: string, from: string, to: string, fileType: BackupFileType): Promise<{ ok: true }>;

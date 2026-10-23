@@ -22,6 +22,7 @@ const api = {
     call<{ ok: true; count: number }>("msg:forwardMembers", memberSeqs, cryptIds, roomType),
   registerNotice: (key: string, messageId: number) => call<import("./core/types").Room>("room:notice", key, messageId),
   setRoomPush: (key: string, usePush: boolean) => call<void>("rooms:setPush", key, usePush),
+  captureScreen: () => call<import("./core/capture").CaptureResult | null>("capture:start"),
   backup: {
     config: () => call<{ historyClearEnabled: boolean }>("backup:config"),
     request: (key: string, from: string, to: string, fileType: "TXT" | "HTML") => call<{ ok: true }>("backup:request", key, from, to, fileType),

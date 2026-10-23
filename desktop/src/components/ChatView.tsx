@@ -396,6 +396,23 @@ export function ChatView({
     }
   };
 
+  const capturing = useRef(false);
+  const captureScreen = async () => {
+    if (capturing.current) return;
+    capturing.current = true;
+    try {
+      const shot = await api().captureScreen();
+      if (!shot) return;
+      const file = new File([shot.data], shot.name, { type: shot.type, lastModified: Date.now() });
+      // Staged only: the user still has to press 보내기.
+      stageFiles([{ name: file.name, size: file.size, lastModified: file.lastModified, type: file.type, file }]);
+    } catch (e) {
+      toast(`화면 캡쳐 실패: ${(e as Error).message}`);
+    } finally {
+      capturing.current = false;
+    }
+  };
+
   const stagePasted = (files: File[]) => {
     stageFiles(files.map((f) => ({
       name: f.name && f.name !== "image.png" ? f.name : `캡처_${new Date().toISOString().replace(/[:.]/g, "-")}.png`,
@@ -625,6 +642,7 @@ export function ChatView({
             hasFiles={staged.length > 0}
             onSend={sendAll}
             onPick={() => void pickStaged()}
+            onCapture={() => void captureScreen()}
             onPasteFiles={stagePasted}
             onEscapeTray={escapeTray}
           />
@@ -831,10 +849,10 @@ function MessageRow({
 }
 
 function Composer({
-  roomKey, meId, isGroup, hasFiles, onSend, onPick, onPasteFiles, onEscapeTray,
+  roomKey, meId, isGroup, hasFiles, onSend, onPick, onCapture, onPasteFiles, onEscapeTray,
 }: {
   roomKey: string; meId: number; isGroup: boolean; hasFiles: boolean;
-  onSend: (t: string) => Promise<boolean>; onPick: () => void; onPasteFiles: (files: File[]) => void;
+  onSend: (t: string) => Promise<boolean>; onPick: () => void; onCapture: () => void; onPasteFiles: (files: File[]) => void;
   onEscapeTray: () => boolean;
 }) {
   const [text, setText] = useState("");
@@ -938,6 +956,7 @@ function Composer({
         </div>
       )}
       <button className="icon-btn" title="파일 첨부" onClick={onPick}><Icon name="clip" /></button>
+      <button className="icon-btn" title="화면 캡쳐" aria-label="화면 캡쳐" onClick={onCapture}><Icon name="capture" /></button>
       <textarea
         ref={ta}
         rows={1}

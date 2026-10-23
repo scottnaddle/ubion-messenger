@@ -1,5 +1,6 @@
 /** Mock bridge for headless UI screenshots / browser preview (only when window.ubion is absent). Fake data only. */
 import type { Bridge } from "./api";
+import { captureFileName } from "../electron/core/capture";
 
 export function installMockIfNeeded() {
   if ((window as any).ubion) return;
@@ -121,6 +122,16 @@ export function installMockIfNeeded() {
         };
       }
       return room as any;
+    },
+    captureScreen: async () => {
+      if (new URLSearchParams(location.search).get("capturefail")) throw new Error("화면 캡쳐 권한이 없습니다 (mock)");
+      const c = document.createElement("canvas");
+      c.width = 320; c.height = 180;
+      const g = c.getContext("2d")!;
+      g.fillStyle = "#2b6cff"; g.fillRect(0, 0, c.width, c.height);
+      g.fillStyle = "#fff"; g.font = "20px sans-serif"; g.fillText("mock capture", 20, 96);
+      const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b!), "image/png"));
+      return { name: captureFileName(), type: "image/png" as const, data: new Uint8Array(await blob.arrayBuffer()), width: c.width, height: c.height };
     },
     setRoomPush: async (key: string, usePush: boolean) => {
       const room = rooms.find((r) => r.key === key);
