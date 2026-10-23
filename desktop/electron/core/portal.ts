@@ -135,18 +135,20 @@ export const PORTAL_WHITELIST: RegExp[] = [
 ];
 
 /**
- * Native 결재/반려. ⚠ UNVERIFIED against coco.ubion.co.kr: the approval web bundle is only served to
- * authenticated sessions, and DaouOffice's public OpenAPI (api.daouoffice.com) has no approve/return call.
- * Paths follow the existing /api/approval/document/{id} family; method + body shape are best-effort and
- * isolated here so a single edit fixes them once Scott captures the real request (DevTools → Network).
+ * Native 결재/반려.
+ * APPROVE — VERIFIED by Scott in Chrome DevTools (2026-10-23, doc 120738):
+ *   PUT /api/approval/document/{docId}/approval  (application/json → 200)
+ *   {"<docId>":{}, activityId, apprAction:"APPROVAL", apprFlowVersionId, arbtAddReferrer:false, comment, docVersionId, userApprSetting:{…}}
+ * RETURN (반려) — ⚠ UNVERIFIED best guess: same path/body with apprAction:"RETURN" (DaouOffice term), comment required.
+ * activityId / apprFlowVersionId / docVersionId are read from GET /api/approval/document/{id}; the exact field
+ * locations are NOT yet confirmed by a saved response, so several candidate locations are tried and the action
+ * fails closed (nothing sent) if any id is missing or ambiguous.
  */
 export type ApprovalActionKind = "approve" | "return";
 export const APPROVAL_ACTION_METHOD = "PUT";
-export const APPROVAL_ACTION_PATHS: Record<ApprovalActionKind, (id: string) => string> = {
-  approve: (id) => `/api/approval/document/${id}/approve`,
-  return: (id) => `/api/approval/document/${id}/return`,
-};
-export const APPROVAL_ACTION_WHITELIST: RegExp[] = [/^\/api\/approval\/document\/\d+\/(approve|return)$/];
+export const APPROVAL_ACTION_PATH = (id: string) => `/api/approval/document/${id}/approval`;
+export const APPROVAL_ACTION_WHITELIST: RegExp[] = [/^\/api\/approval\/document\/\d+\/approval$/];
+export const APPR_ACTION: Record<ApprovalActionKind, string> = { approve: "APPROVAL", return: "RETURN" /* unverified */ };
 export const APPROVAL_COMMENT_MAX = 1000;
 
 export function normalizeApprovalActionArgs(kind: unknown, id: unknown, comment: unknown = "") {
@@ -158,8 +160,54 @@ export function normalizeApprovalActionArgs(kind: unknown, id: unknown, comment:
   return { kind: kind as ApprovalActionKind, id: did, comment: c };
 }
 
-export function approvalActionBody(comment: string) {
-  return { comment };
+export type ApprovalActionContext = { activityId: number; apprFlowVersionId: number; docVersionId: number };
+
+const posInt = (v: unknown): number | null => {
+  const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
+  return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : null;
+};
+const firstId = (...c: unknown[]) => { for (const v of c) { const n = posInt(v); if (n) return n; } return null; };
+const WAITING = /^(WAIT|WAITING|ING|PROGRESS|IN_PROGRESS|STANDBY|CURRENT)$/i;
+
+/**
+ * Pull the three ids the approve PUT needs out of the raw GET /api/approval/document/{id} body.
+ * activityId = the activity of the current user (userId === me) that is waiting; must be exactly one.
+ * Throws a user-facing message instead of guessing.
+ */
+export function extractApprovalActionContext(body: any, myUserId: number | null): ApprovalActionContext {
+  const data = body?.data ?? {};
+  const d = data?.document ?? {};
+  const flow = data?.apprFlow ?? {};
+  const docVersionId = firstId(d?.docVersionId, data?.docVersionId, d?.versionId, d?.docVersion?.id);
+  const apprFlowVersionId = firstId(flow?.apprFlowVersionId, data?.apprFlowVersionId, d?.apprFlowVersionId, flow?.versionId, flow?.apprFlowVersion?.id);
+  let activityId = firstId(data?.activityId, data?.currentActivity?.id, data?.currentActivityId, data?.myActivity?.id);
+  if (!activityId) {
+    const acts = arr(flow?.activityGroups ?? data?.activityGroups).flatMap((g: any) => arr(g?.activities));
+    const mine = acts.filter((a: any) => {
+      const uid = posInt(a?.userId ?? a?.user?.id);
+      return myUserId != null && uid === myUserId && WAITING.test(String(a?.status ?? ""));
+    });
+    const ids = [...new Set(mine.map((a: any) => firstId(a?.id, a?.activityId)).filter(Boolean))] as number[];
+    if (ids.length > 1) throw new Error("결재선에서 내 결재 단계를 하나로 특정할 수 없습니다. 웹에서 처리해 주세요.");
+    activityId = ids[0] ?? null;
+  }
+  const missing = [!activityId && "activityId", !apprFlowVersionId && "apprFlowVersionId", !docVersionId && "docVersionId"].filter(Boolean);
+  if (missing.length) throw new Error(`결재 정보(${missing.join(", ")})를 문서에서 찾지 못해 처리하지 않았습니다. 웹에서 처리해 주세요.`);
+  return { activityId: activityId!, apprFlowVersionId: apprFlowVersionId!, docVersionId: docVersionId! };
+}
+
+/** Body exactly as observed from the web client, incl. the odd `"<docId>": {}` key. We never navigate → useNextApproval:false. */
+export function approvalActionBody(docId: string, kind: ApprovalActionKind, ctx: ApprovalActionContext, comment: string) {
+  return {
+    [docId]: {},
+    activityId: ctx.activityId,
+    apprAction: APPR_ACTION[kind],
+    apprFlowVersionId: ctx.apprFlowVersionId,
+    arbtAddReferrer: false,
+    comment,
+    docVersionId: ctx.docVersionId,
+    userApprSetting: { useNextApproval: false },
+  };
 }
 
 /** DaouOffice wraps results as {code:"200", message, data}; a non-200 code in a 200 response is a failure. */
@@ -674,12 +722,14 @@ export class PortalService {
   }
 
   /** ⚠ MUTATES server state (결재/반려). Only called from an explicit, confirmed user action. */
+  /** ⚠ MUTATES server state (결재/반려). Only called from an explicit, confirmed user action. Re-reads the doc first (fresh versions). */
   async approvalAction(kind: unknown, id: unknown, comment: unknown = ""): Promise<{ ok: true }> {
     const a = normalizeApprovalActionArgs(kind, id, comment);
-    const path = APPROVAL_ACTION_PATHS[a.kind](a.id);
+    const path = APPROVAL_ACTION_PATH(a.id);
     if (!APPROVAL_ACTION_WHITELIST.some((r) => r.test(path))) throw new Error("approval action path not allowed");
-    this.log(`approval ${a.kind} doc=${a.id} comment=${a.comment ? `${a.comment.length}ch` : "none"}`);
-    const res = await this.fetcher(path, { method: APPROVAL_ACTION_METHOD, json: approvalActionBody(a.comment) });
+    const ctx = extractApprovalActionContext(await this.get(`/api/approval/document/${a.id}`), this.getUserId());
+    this.log(`approval ${APPR_ACTION[a.kind]} doc=${a.id} activity=${ctx.activityId} comment=${a.comment ? `${a.comment.length}ch` : "none"}`);
+    const res = await this.fetcher(path, { method: APPROVAL_ACTION_METHOD, json: approvalActionBody(a.id, a.kind, ctx, a.comment) });
     return parseApprovalActionResult(res.status, res.text);
   }
 
