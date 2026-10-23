@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type ConnState, type Presence, type Room, type SessionUser, type Settings } from "./api";
+import { api, type ConnState, type LockStatus, type Presence, type Room, type SessionUser, type Settings } from "./api";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
@@ -13,6 +13,7 @@ import { Home } from "./components/Home";
 import { Menu } from "./components/Menu";
 import { Mail } from "./components/Mail";
 import { Approval } from "./components/Approval";
+import { LockScreen } from "./components/LockScreen";
 import { Flex } from "./components/Flex";
 import { noticeStoreKey } from "../electron/core/room-notice";
 import { navForDigit, type NavView } from "./nav";
@@ -38,6 +39,7 @@ export function App() {
   const [botStatuses, setBotStatuses] = useState<BotStatusMap>({});
   const [view, setView] = useState<NavView | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
+  const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [portalBadge, setPortalBadge] = useState({ approval: 0, noti: 0, mail: 0 });
@@ -90,6 +92,19 @@ export function App() {
       setBooting(false);
     })();
   }, [toast]);
+
+  // messenger lock state (main owns the actual lock)
+  useEffect(() => {
+    let alive = true;
+    api().call<LockStatus>("lock:status").then((s) => { if (alive) setLockStatus(s); }).catch(() => undefined);
+    const off = api().onLockChanged((s) => {
+      setLockStatus((prev) => prev ? { ...prev, ...s } : { enabled: true, locked: !!s.locked, timeoutMin: 0 });
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
 
   // core events
   useEffect(() => {
@@ -215,6 +230,13 @@ export function App() {
 
   if (booting || !settings) return <div className="splash"><div className="logo-mark big">U</div></div>;
 
+  const lockScreen = lockStatus?.locked ? (
+    <LockScreen
+      name={user?.name || settings.username || ""}
+      onUnlocked={() => setLockStatus((s) => (s ? { ...s, locked: false } : s))}
+    />
+  ) : null;
+
   if (!user)
     return (
       <>
@@ -229,6 +251,7 @@ export function App() {
           }}
         />
         <Toasts toasts={toasts} />
+        {lockScreen}
       </>
     );
 
@@ -349,6 +372,7 @@ export function App() {
         />
       )}
       <Toasts toasts={toasts} />
+      {lockScreen}
     </div>
   );
 }

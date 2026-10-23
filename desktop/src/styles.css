@@ -531,3 +531,20 @@ input, textarea, select { font: inherit; color: inherit; }
 .mail-item .mail-check { margin: 4px 6px 0 0; align-self: flex-start; }
 .mail-item.checked { background: rgba(59,91,219,.07); }
 .link.danger { color: var(--danger, #e03131); }
+
+/* v1.0.19 bot autonomy / away / lock */
+.bot-autonomy { border-top: 1px solid var(--line); margin-top: 2px; padding: 8px 10px 4px; max-width: 260px; }
+.bot-autonomy-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.bot-autonomy-title { display: block; font-size: 13px; }
+.bot-autonomy-desc { display: block; line-height: 1.35; margin-top: 2px; }
+.bot-autonomy-error, .lock-error { color: var(--danger, #e03131); font-size: .78em; margin-top: 6px; line-height: 1.35; }
+.menu-item:disabled { opacity: .5; cursor: default; }
+.menu-item:disabled:hover { border-color: var(--line); }
+.lock-screen { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; background: rgba(10, 14, 24, .72); backdrop-filter: blur(6px); }
+.lock-card { width: 340px; max-width: calc(100vw - 32px); background: var(--bg); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 28px 26px 24px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.lock-card h2 { margin: 2px 0 0; font-size: 1.15em; }
+.lock-card p { margin: 0 0 6px; }
+.lock-card input { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg3); color: var(--fg); font-size: 1.1em; letter-spacing: .25em; text-align: center; }
+.lock-card .primary { width: 100%; margin-top: 4px; }
+.lock-icon { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft, rgba(58,91,220,.12)); color: var(--accent); }
+.lock-cooldown { color: var(--danger, #e03131); font-size: .85em; }

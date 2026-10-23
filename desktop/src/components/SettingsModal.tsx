@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type SessionUser, type Settings } from "../api";
+import { api, type LockStatus, type SessionUser, type Settings } from "../api";
 import { Avatar, Icon } from "./ui";
 import { useUpdateStatus } from "./UpdateBanner";
 
@@ -7,8 +7,15 @@ export function SettingsModal({
   settings, user, onChange, onClose, onLogout,
 }: { settings: Settings; user: SessionUser; onChange: (s: Settings) => void; onClose: () => void; onLogout: () => void }) {
   const [info, setInfo] = useState<{ version: string; platform: string; encryption: boolean } | null>(null);
+  const [lock, setLock] = useState<LockStatus | null>(null);
+  const [lockCurrentPin, setLockCurrentPin] = useState("");
+  const [lockNewPin, setLockNewPin] = useState("");
+  const [lockConfirmPin, setLockConfirmPin] = useState("");
+  const [lockError, setLockError] = useState("");
+  const [lockBusy, setLockBusy] = useState(false);
   useEffect(() => {
     api().call("app:info").then(setInfo).catch(() => undefined);
+    api().call<LockStatus>("lock:status").then(setLock).catch(() => undefined);
     const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -17,6 +24,57 @@ export function SettingsModal({
   const set = async (patch: Partial<Settings>) => {
     onChange({ ...settings, ...patch });
     onChange(await api().call<Settings>("settings:set", patch));
+  };
+
+  const refreshLock = async () => {
+    try {
+      setLock(await api().call<LockStatus>("lock:status"));
+    } catch {
+      /* status is best effort */
+    }
+  };
+  const lockUnsupported = !!info && !info.encryption;
+  const saveLockPin = async () => {
+    setLockError("");
+    if (lockNewPin !== lockConfirmPin) {
+      setLockError("PIN이 일치하지 않습니다.");
+      return;
+    }
+    if (!/^\d{4,12}$/.test(lockNewPin)) {
+      setLockError("PIN은 4~12자리 숫자입니다.");
+      return;
+    }
+    setLockBusy(true);
+    try {
+      await api().call("lock:setPin", lockNewPin, lock?.enabled ? lockCurrentPin : undefined);
+      setLockCurrentPin("");
+      setLockNewPin("");
+      setLockConfirmPin("");
+      await refreshLock();
+    } catch (e) {
+      setLockError((e as Error).message);
+    } finally {
+      setLockBusy(false);
+    }
+  };
+  const disableLock = async () => {
+    setLockError("");
+    if (!lockCurrentPin) {
+      setLockError("현재 PIN을 입력하세요.");
+      return;
+    }
+    setLockBusy(true);
+    try {
+      await api().call("lock:disable", lockCurrentPin);
+      setLockCurrentPin("");
+      setLockNewPin("");
+      setLockConfirmPin("");
+      await refreshLock();
+    } catch (e) {
+      setLockError((e as Error).message);
+    } finally {
+      setLockBusy(false);
+    }
   };
 
   const Toggle = ({ k, label, desc, disabled }: { k: keyof Settings; label: string; desc?: string; disabled?: boolean }) => (
@@ -75,6 +133,64 @@ export function SettingsModal({
               <option value="external">외부 브라우저</option>
             </select>
           </div>
+          <h4>부재 설정</h4>
+          <div className="row">
+            <div>
+              <div>PC 메신저 부재 설정</div>
+              <div className="muted tiny">※ 설정한 시간 동안 PC를 사용하지 않으면 모바일 앱으로 알림을 전송하며 자리비움 상태로 전환합니다.</div>
+            </div>
+            <select value={settings.awayMinutes} onChange={(e) => set({ awayMinutes: Number(e.target.value) as Settings["awayMinutes"] })}>
+              <option value={1}>1분 후</option>
+              <option value={5}>5분 후</option>
+              <option value={10}>10분 후</option>
+              <option value={15}>15분 후</option>
+              <option value={0}>설정 안 함</option>
+            </select>
+          </div>
+          <Toggle k="mobileNotice" label="PC 미사용 시 모바일로 알림" desc="자리비움 상태가 되면 모바일 앱으로 알림을 전송합니다 (모바일 푸시 동작은 서버 정책에 따름)" />
+          <h4>메신저 잠금</h4>
+          <div className="row">
+            <div>
+              <div>자동 잠금</div>
+              <div className="muted tiny">설정한 시간 동안 PC를 사용하지 않으면 메신저를 잠급니다.</div>
+            </div>
+            <select value={settings.lockTimeoutMin} onChange={(e) => set({ lockTimeoutMin: Number(e.target.value) as Settings["lockTimeoutMin"] })}>
+              <option value={0}>사용 안 함</option>
+              <option value={1}>1분 후</option>
+              <option value={5}>5분 후</option>
+              <option value={10}>10분 후</option>
+              <option value={30}>30분 후</option>
+              <option value={60}>60분 후</option>
+            </select>
+          </div>
+          {lockUnsupported ? (
+            <div className="muted tiny">OS 보안 저장소를 사용할 수 없어 잠금을 설정할 수 없습니다.</div>
+          ) : (
+            <>
+              {lock?.enabled && (
+                <div className="row">
+                  <div>현재 PIN</div>
+                  <input type="password" inputMode="numeric" autoComplete="off" value={lockCurrentPin} onChange={(e) => setLockCurrentPin(e.target.value)} />
+                </div>
+              )}
+              <div className="row">
+                <div>{lock?.enabled ? "새 PIN" : "PIN"}</div>
+                <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={lockNewPin} onChange={(e) => setLockNewPin(e.target.value.replace(/\D/g, ""))} />
+              </div>
+              <div className="row">
+                <div>{lock?.enabled ? "새 PIN 확인" : "PIN 확인"}</div>
+                <input type="password" inputMode="numeric" autoComplete="new-password" maxLength={12} value={lockConfirmPin} onChange={(e) => setLockConfirmPin(e.target.value.replace(/\D/g, ""))} />
+              </div>
+              <div className="row">
+                <div className="muted tiny">{lock?.enabled ? "PIN을 변경하거나 잠금을 해제할 수 있습니다." : "PIN을 설정하면 앱 시작 시 잠금 화면이 표시됩니다."}</div>
+                <div className="row-actions">
+                  <button className="primary small" disabled={lockBusy} onClick={() => void saveLockPin()}>{lock?.enabled ? "PIN 변경" : "잠금 설정"}</button>
+                  {lock?.enabled && <button className="danger-btn" disabled={lockBusy} onClick={() => void disableLock()}>잠금 해제</button>}
+                </div>
+              </div>
+            </>
+          )}
+          {lockError && <div className="lock-error">{lockError}</div>}
           <h4>시스템</h4>
           <Toggle k="launchAtLogin" label="로그인 시 자동 실행" desc="트레이에 숨긴 상태로 시작합니다" />
           <Toggle k="closeToTray" label="창을 닫으면 트레이로 최소화" />

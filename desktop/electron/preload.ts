@@ -31,6 +31,7 @@ const api = {
   onOpenSettings: (cb: () => void) => sub("nav:settings", cb),
   onFocus: (cb: (f: boolean) => void) => sub("window:focus", cb),
   onBadge: (cb: (n: number) => void) => sub("badge:changed", cb),
+  onLockChanged: (cb: (s: { locked: boolean }) => void) => sub("lock:changed", cb),
   onUpdate: (cb: (s: any) => void) => sub("update:status", cb),
   portal: {
     get: (widgetId?: string) => call("portal:get", widgetId),

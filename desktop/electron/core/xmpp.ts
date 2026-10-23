@@ -18,6 +18,13 @@ export type XmppEvents = {
   botStatus: (p: ParsedBotStatus) => void;
 };
 
+/** Presence stanza for the two states this client uses. Away also carries <show>away</show>. */
+export function presenceStanza(status: "online:on" | "away:on"): string {
+  return status === "away:on"
+    ? "<presence><show>away</show><status>away:on</status></presence>"
+    : "<presence><status>online:on</status></presence>";
+}
+
 export function xmlUnescape(s: string): string {
   return s
     .replace(/&lt;/g, "<")
@@ -140,7 +147,7 @@ export class XmppClient extends EventEmitter {
 
   setStatus(status: "online:on" | "away:on") {
     this.status = status;
-    if (this.online) this.write(`<presence><status>${status}</status></presence>`);
+    if (this.online) this.write(presenceStanza(status));
   }
 
   private write(s: string) {
@@ -278,7 +285,7 @@ export class XmppClient extends EventEmitter {
           this.phase = "online";
           this.backoff = 1000;
           this.sock?.setTimeout(0);
-          this.write(`<presence><status>${this.status}</status></presence>`);
+          this.write(presenceStanza(this.status as "online:on" | "away:on"));
           // XEP-0280: also receive copies of chats routed to / sent from other resources (official app)
           this.write("<iq type='set' id='carbons1'><enable xmlns='urn:xmpp:carbons:2'/></iq>");
           this.startPing();

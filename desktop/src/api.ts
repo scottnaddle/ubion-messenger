@@ -4,7 +4,11 @@ import type {
 import type {
   ApprovalBox, ApprovalDocumentDetail, ApprovalList, MailFolders, MailListPage, MailMessage, MenuEntry,
 } from "../electron/core/portal";
-export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState };
+import type { BotSettingsResult } from "../electron/core/bot-settings";
+export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
+
+export type LockStatus = { enabled: boolean; locked: boolean; timeoutMin: number };
+export type UnlockResult = { ok: true } | { ok: false; error: string; cooldownMs?: number };
 
 /** Metadata returned by the pick-only IPC; the file is uploaded by path when the tray is sent. */
 export type PickedStagingFile = {
@@ -24,6 +28,9 @@ export type Settings = {
   notificationSound: boolean; launchAtLogin: boolean; closeToTray: boolean; downloadDir: string; askSaveLocation: boolean; lastSaveDir?: string;
   fontSize: number; autoUpdate: boolean; portalPostNotify: boolean; portalOpenMode: "external" | "inapp"; portalOpenModeChosen?: boolean;
   flexAutoLogin?: boolean;
+  awayMinutes: 0 | 1 | 5 | 10 | 15;
+  mobileNotice: boolean;
+  lockTimeoutMin: 0 | 1 | 5 | 10 | 30 | 60;
   hasSavedPassword?: boolean;
 };
 
@@ -43,6 +50,7 @@ export type Bridge = {
   onOpenSettings(cb: () => void): () => void;
   onFocus(cb: (f: boolean) => void): () => void;
   onBadge(cb: (n: number) => void): () => void;
+  onLockChanged(cb: (s: { locked: boolean }) => void): () => void;
   onUpdate(cb: (s: UpdateStatus) => void): () => void;
   portal: {
     get(widgetId?: string): Promise<any>;

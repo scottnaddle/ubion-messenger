@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, media, type ChatMessage, type PickedStagingResult, type Presence, type Room, type SessionUser } from "../api";
+import {
+  api, media, type BotSettingsResult, type ChatMessage, type PickedStagingResult, type Presence, type Room, type SessionUser,
+} from "../api";
 import {
   filterMembers, findMentionTrigger, insertMention, parseMentionTokens,
   type MentionMember, type MentionTrigger,
@@ -20,6 +22,7 @@ import {
 import type { NoticeStatus } from "../../electron/core/types";
 import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
+import { isBotGroupRoom } from "../lib/bot-room";
 import { FileCard, MediaViewer } from "./FileCard";
 import { LinkPreview } from "./LinkPreview";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
@@ -74,7 +77,13 @@ export function ChatView({
   const [noticeStatus, setNoticeStatus] = useState<NoticeStatus>("normal");
   const [roomMenu, setRoomMenu] = useState<{ x: number; y: number } | null>(null);
   const [roomMembers, setRoomMembers] = useState<MentionCandidate[]>([]);
+  const [botAutonomy, setBotAutonomy] = useState(false);
+  const [botLoading, setBotLoading] = useState(false);
+  const [botSaving, setBotSaving] = useState(false);
+  const [botError, setBotError] = useState("");
+  const [botDisabled, setBotDisabled] = useState(false);
   const isGroupRoom = room.kind === "room" && !room.isSelf;
+  const botRoom = isBotGroupRoom(room, roomMembers);
   const memberNames = useMemo(() => roomMembers.map((m) => m.name), [roomMembers]);
   const listRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
@@ -151,6 +160,37 @@ export function ChatView({
     loadRoomMembers(room.key).then((list) => { if (alive) setRoomMembers(list); });
     return () => { alive = false; };
   }, [room.key, isGroupRoom]);
+
+  // 유비온봇 자율활동: only group rooms the bot is a member of; default OFF until GET resolves.
+  useEffect(() => {
+    let alive = true;
+    setBotAutonomy(false);
+    setBotError("");
+    setBotDisabled(false);
+    if (!botRoom) {
+      setBotLoading(false);
+      return () => { alive = false; };
+    }
+    setBotLoading(true);
+    api()
+      .call<BotSettingsResult>("bot:roomSettings:get", room.key)
+      .then((r) => {
+        if (!alive) return;
+        if (r.ok) {
+          setBotAutonomy(r.settings.autonomy);
+        } else {
+          setBotAutonomy(false);
+          setBotError(r.message);
+          setBotDisabled(r.kind === "auth" || r.kind === "forbidden" || r.kind === "unavailable");
+        }
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setBotError((e as Error).message);
+      })
+      .finally(() => { if (alive) setBotLoading(false); });
+    return () => { alive = false; };
+  }, [room.key, botRoom]);
 
   const notice = room.notice;
   const noticeKey = notice?.messageId != null ? noticeStoreKey(notice.messageId) : "";
@@ -392,6 +432,28 @@ export function ChatView({
   }, [clearStaged]);
 
   const canSend = room.kind !== "pubsub" && room.kind !== "unknown";
+  const toggleBotAutonomy = async () => {
+    if (botLoading || botSaving || botDisabled) return;
+    const next = !botAutonomy;
+    setBotAutonomy(next);
+    setBotSaving(true);
+    setBotError("");
+    try {
+      const r = await api().call<BotSettingsResult>("bot:roomSettings:set", room.key, next);
+      if (!r.ok) {
+        setBotAutonomy(!next);
+        setBotError(r.message);
+        setBotDisabled(r.kind === "auth" || r.kind === "forbidden" || r.kind === "unavailable");
+      } else {
+        setBotAutonomy(r.settings.autonomy);
+      }
+    } catch (e) {
+      setBotAutonomy(!next);
+      setBotError((e as Error).message);
+    } finally {
+      setBotSaving(false);
+    }
+  };
   const toggleRoomPush = async () => {
     const next = !room.usePush;
     setRoomMenu(null);
@@ -574,6 +636,8 @@ export function ChatView({
         <RoomMenu
           x={roomMenu.x} y={roomMenu.y} usePush={room.usePush}
           onToggle={() => void toggleRoomPush()} onClose={() => setRoomMenu(null)}
+          showBot={botRoom} botAutonomy={botAutonomy} botBusy={botLoading || botSaving}
+          botDisabled={botDisabled} botError={botError} onToggleBot={() => void toggleBotAutonomy()}
         />
       )}
       {confirmDelete && (
@@ -638,7 +702,12 @@ function MentionedText({ text, memberNames, myName }: { text: string; memberName
 
 function RoomMenu({
   x, y, usePush, onToggle, onClose,
-}: { x: number; y: number; usePush: boolean; onToggle: () => void; onClose: () => void }) {
+  showBot, botAutonomy, botBusy, botDisabled, botError, onToggleBot,
+}: {
+  x: number; y: number; usePush: boolean; onToggle: () => void; onClose: () => void;
+  showBot: boolean; botAutonomy: boolean; botBusy: boolean; botDisabled: boolean;
+  botError: string; onToggleBot: () => void;
+}) {
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
@@ -649,6 +718,26 @@ function RoomMenu({
       <button role="menuitem" onClick={() => { onClose(); onToggle(); }}>
         <Icon name={usePush ? "bellOff" : "bell"} size={14} /> {usePush ? "알림 끄기" : "알림 켜기"}
       </button>
+      {showBot && (
+        <div className="bot-autonomy">
+          <label className="bot-autonomy-row">
+            <span>
+              <span className="bot-autonomy-title">유비온봇 자율활동</span>
+              <span className="muted tiny bot-autonomy-desc">켜면 유비온봇이 호출 없이도 대화 흐름을 보고 참여할 수 있습니다.</span>
+            </span>
+            <input
+              type="checkbox"
+              className="switch"
+              checked={botAutonomy}
+              disabled={botBusy || botDisabled}
+              aria-label="유비온봇 자율활동"
+              onChange={onToggleBot}
+            />
+          </label>
+          {botBusy && <div className="muted tiny">불러오는 중…</div>}
+          {botError && <div className="bot-autonomy-error">{botError}</div>}
+        </div>
+      )}
     </div>
   );
 }

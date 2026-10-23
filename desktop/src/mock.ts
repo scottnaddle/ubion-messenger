@@ -37,10 +37,21 @@ export function installMockIfNeeded() {
     userId: id, name: ["김하늘", "이서준", "박지우", "최유나", "정도윤", "한소희"][i], position: ["책임", "선임", "수석", "주임", "책임", "선임"][i],
     email: `user${id}@example.com`, thumbnail: "", departmentIds: [i % 2 ? 20 : 21],
   }));
-  const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", hasSavedPassword: true };
+  const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", awayMinutes: 10, mobileNotice: true, lockTimeoutMin: 0, hasSavedPassword: true };
   const mockSaved: Record<string, number> = {};
   const mockDeleted: string[] = [];
+  const mockBotAutonomy: Record<string, boolean> = {};
   const handlers: Record<string, (...a: any[]) => any> = {
+    "bot:roomSettings:get": (key: string) => ({ ok: true, settings: { roomId: key, autonomy: !!mockBotAutonomy[key] } }),
+    "bot:roomSettings:set": (key: string, autonomy: boolean) => {
+      mockBotAutonomy[key] = !!autonomy;
+      return { ok: true, settings: { roomId: key, autonomy: !!autonomy } };
+    },
+    "lock:status": () => ({ enabled: false, locked: false, timeoutMin: mockSettings.lockTimeoutMin || 0 }),
+    "lock:setPin": () => ({ ok: true, enabled: true }),
+    "lock:disable": () => ({ ok: true, enabled: false }),
+    "lock:lockNow": () => ({ ok: true, locked: true }),
+    "lock:unlock": () => ({ ok: true }),
     "settings:get": () => ({ ...mockSettings }),
     "settings:set": (patch: any) => Object.assign(mockSettings, patch),
     "settings:pickDownloadDir": () => "/Users/hong/Documents/UBION 받은파일",
@@ -127,6 +138,7 @@ export function installMockIfNeeded() {
     onOpenSettings: () => () => undefined,
     onFocus: () => () => undefined,
     onBadge: () => () => undefined,
+    onLockChanged: () => () => undefined,
     onUpdate: () => () => undefined,
     portal: {
       get: async () => portalSnap,

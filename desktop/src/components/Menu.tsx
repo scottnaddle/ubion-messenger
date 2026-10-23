@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, type LockStatus } from "../api";
 import { Icon } from "./ui";
 import type { BoardPost, MenuEntry, PortalBadge } from "../../electron/core/portal";
 
@@ -32,6 +32,7 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
   const [items, setItems] = useState<MenuEntry[] | null>(null);
   const [source, setSource] = useState<"server" | "static">("server");
   const [boardNew, setBoardNew] = useState(0);
+  const [lock, setLock] = useState<LockStatus | null>(null);
   const [err, setErr] = useState("");
 
   const load = (force = false) =>
@@ -43,6 +44,7 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
       const today = new Date().toDateString();
       setBoardNew(((w?.data?.items || []) as BoardPost[]).filter((p) => p.createdAt && new Date(p.createdAt).toDateString() === today).length);
     }).catch(() => undefined);
+    api().call<LockStatus>("lock:status").then(setLock).catch(() => undefined);
   }, []);
 
   const click = (m: MenuEntry) => {
@@ -85,6 +87,20 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
           </div>
         </section>
       ))}
+      <section className="menu-group">
+        <h4 className="muted small">앱</h4>
+        <div className="menu-grid">
+          <button
+            className="menu-item"
+            disabled={!lock?.enabled}
+            title={lock?.enabled ? "메신저 잠금" : "설정에서 PIN을 먼저 설정하세요"}
+            onClick={() => api().call("lock:lockNow").catch((e) => setErr((e as Error).message))}
+          >
+            <span className="menu-ic"><Icon name="lock" size={22} /></span>
+            <span className="menu-name">메신저 잠금</span>
+          </button>
+        </div>
+      </section>
       <section className="menu-group">
         <h4 className="muted small">문의</h4>
         <div className="menu-grid">

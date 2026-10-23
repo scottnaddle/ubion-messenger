@@ -34,6 +34,12 @@ import { shouldNotify } from "./core/room-push";
 import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { chatBotUrl, isChatBotUrl } from "./core/chatbot";
 import { isMentioningMe } from "../src/lib/mention";
+import { createBotSettingsClient } from "./core/bot-settings";
+import { createAwayMonitor } from "./core/away";
+import { createLockState, hashPin, validatePin, verifyPin, type PinRecord } from "./core/lock";
+import {
+  LOCK_STORAGE_UNAVAILABLE, clearLockRecord, loadLockRecord, lockStorageAvailable, saveLockRecord,
+} from "./lock-store";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import { guessMime } from "./core/mime";
 import {
@@ -70,13 +76,54 @@ const savedPaths = new Set<string>();
 let core = new MessengerCore(settings.serverUrl);
 let unsubscribe: Array<() => void> = [];
 let startHidden = false;
+let awayMonitor: ReturnType<typeof createAwayMonitor> | null = null;
+let lockRecord: PinRecord | null = null;
+let locked = false;
+const lockState = createLockState({ now: () => Date.now() });
 const updater = new Updater(() => win);
+
+const botSettings = createBotSettingsClient({
+  getCookieHeader: async () => {
+    const cookies = await core.client.sessionCookies();
+    return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
+  },
+});
 
 const resPath = (f: string) =>
   app.isPackaged ? path.join(process.resourcesPath, "resources", f) : path.join(__dirname, "../../resources", f);
 
 function send(channel: string, payload: unknown) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+function setLocked(next: boolean) {
+  if (locked === next) return;
+  locked = next;
+  send("lock:changed", { locked });
+}
+
+function lockNow(): boolean {
+  if (!lockRecord) return false;
+  lockState.reset();
+  setLocked(true);
+  return true;
+}
+
+function maybeAutoLock() {
+  if (locked || !lockRecord || !settings.lockTimeoutMin) return;
+  if (powerMonitor.getSystemIdleTime() >= settings.lockTimeoutMin * 60) lockNow();
+}
+
+function startAwayMonitor() {
+  awayMonitor?.stop();
+  awayMonitor = createAwayMonitor({
+    getIdleSec: () => powerMonitor.getSystemIdleTime(),
+    setAway: (away) => core.setAway(away),
+    getConfig: () => ({ awayMinutes: settings.awayMinutes, mobileNotice: settings.mobileNotice }),
+    intervalMs: 15_000,
+    onTick: maybeAutoLock,
+  });
+  awayMonitor.start();
 }
 
 function errMsg(e: unknown): string {
@@ -514,11 +561,13 @@ function maybeNotify(m: MessengerEventMap["message"]) {
   if (viewing || !Notification.isSupported()) return;
   const base = room && room.kind !== "buddy" ? `${room.name} · ${m.sendUserName}` : m.sendUserName || APP_NAME;
   const title = mentioned ? `[멘션] ${base}` : base;
-  const body = settings.notificationPreview
-    ? m.attach
-      ? `📎 ${m.attach.name}`
-      : m.message.slice(0, 140)
-    : "새 메시지가 도착했습니다";
+  const body = locked
+    ? "새 메시지"
+    : settings.notificationPreview
+      ? m.attach
+        ? `📎 ${m.attach.name}`
+        : m.message.slice(0, 140)
+      : "새 메시지가 도착했습니다";
   const n = new Notification({ title, body, silent: !settings.notificationSound });
   n.on("click", () => {
     showWindow();
@@ -610,6 +659,8 @@ function registerIpc() {
     if ("launchAtLogin" in patch) applyLoginItem();
     if ("theme" in patch) nativeTheme.themeSource = settings.theme;
     if ("autoUpdate" in patch) updater.schedule(settings.autoUpdate);
+    if ("awayMinutes" in patch || "mobileNotice" in patch) startAwayMonitor();
+    if ("lockTimeoutMin" in patch) maybeAutoLock();
     if (patch.rememberMe === false) {
       clearPassword();
       settings.autoLogin = false;
@@ -683,11 +734,65 @@ function registerIpc() {
     updateBadge();
   });
 
+  handle("lock:status", () => ({ enabled: !!lockRecord, locked, timeoutMin: settings.lockTimeoutMin }));
+  handle("lock:setPin", (newPin: unknown, currentPin?: unknown) => {
+    if (!validatePin(newPin)) throw new Error("PIN은 4~12자리 숫자로 설정하세요.");
+    if (lockRecord) {
+      if (!validatePin(currentPin)) throw new Error("현재 PIN을 입력하세요.");
+      if (!verifyPin(currentPin, lockRecord)) throw new Error("현재 PIN이 올바르지 않습니다.");
+    }
+    if (!lockStorageAvailable()) throw new Error(LOCK_STORAGE_UNAVAILABLE);
+    const rec = hashPin(newPin);
+    if (!saveLockRecord(rec)) throw new Error(LOCK_STORAGE_UNAVAILABLE);
+    lockRecord = rec;
+    lockState.reset();
+    return { ok: true, enabled: true };
+  });
+  handle("lock:disable", (currentPin: unknown) => {
+    if (!lockRecord) return { ok: true, enabled: false };
+    if (!validatePin(currentPin) || !verifyPin(currentPin, lockRecord)) {
+      throw new Error("PIN이 올바르지 않습니다.");
+    }
+    clearLockRecord();
+    lockRecord = null;
+    lockState.reset();
+    setLocked(false);
+    return { ok: true, enabled: false };
+  });
+  handle("lock:lockNow", () => {
+    if (!lockRecord) throw new Error("설정에서 PIN을 먼저 설정하세요.");
+    return { ok: lockNow(), locked };
+  });
+  handle("lock:unlock", (pin: unknown) => {
+    if (!locked || !lockRecord) {
+      setLocked(false);
+      return { ok: true };
+    }
+    if (!validatePin(pin)) return { ok: false, error: "PIN은 4~12자리 숫자입니다." };
+    const result = lockState.attempt(pin, lockRecord);
+    if (result.ok) {
+      setLocked(false);
+      return { ok: true };
+    }
+    return result.cooldownMs
+      ? { ok: false, error: "PIN이 올바르지 않습니다.", cooldownMs: result.cooldownMs }
+      : { ok: false, error: "PIN이 올바르지 않습니다." };
+  });
+
   handle("rooms:list", () => core.getRooms());
   handle("rooms:refresh", () => core.refreshRooms());
   handle("rooms:setActive", (key: string | null) => core.setActiveRoom(key));
   handle("rooms:pin", (key: string, pin: boolean) => core.setPin(key, pin));
   handle("rooms:setPush", (key: string, usePush: boolean) => core.setRoomPush(key, !!usePush));
+  handle("bot:roomSettings:get", (roomKey: unknown) => {
+    if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
+    return botSettings.get(roomKey);
+  });
+  handle("bot:roomSettings:set", (roomKey: unknown, autonomy: unknown) => {
+    if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
+    if (typeof autonomy !== "boolean") throw new Error("자율활동 설정 값이 올바르지 않습니다");
+    return botSettings.set(roomKey, autonomy);
+  });
   handle("rooms:openDirect", (userId: number) => core.openDirect(userId));
   handle("rooms:createGroup", (ids: number[]) => core.createGroup(ids));
   handle("msg:history", async (key: string, before?: number) => {
@@ -936,6 +1041,7 @@ app.on("second-instance", showWindow);
 app.on("activate", showWindow);
 app.on("before-quit", () => {
   quitting = true;
+  awayMonitor?.stop();
   core.shutdown();
 });
 app.on("window-all-closed", () => {
@@ -955,22 +1061,22 @@ app.whenReady().then(async () => {
         ])
       : null
   );
+  lockRecord = loadLockRecord();
+  locked = !!lockRecord;
+  lockState.reset();
   registerMediaProtocol();
   registerIpc();
   wireCore();
   createTray();
   startHidden = process.argv.includes("--hidden") || !!app.getLoginItemSettings().wasOpenedAsHidden;
   createWindow();
+  if (locked) win?.webContents.once("did-finish-load", () => send("lock:changed", { locked: true }));
 
   updater.schedule(settings.autoUpdate);
+  startAwayMonitor();
   powerMonitor.on("resume", () => (core.reconnect(), void core.sync("resume")));
   powerMonitor.on("unlock-screen", () => core.reconnect());
-  let away = false;
-  setInterval(() => {
-    const idle = powerMonitor.getSystemIdleTime() > 600;
-    if (idle !== away) {
-      away = idle;
-      core.setAway(idle);
-    }
-  }, 30_000);
+  powerMonitor.on("lock-screen", () => {
+    if (lockRecord) lockNow();
+  });
 });

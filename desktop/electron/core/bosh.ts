@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { handleOnlineStanza, splitStanzas, xmlUnescape } from "./xmpp";
+import { handleOnlineStanza, presenceStanza, splitStanzas, xmlUnescape } from "./xmpp";
 
 /**
  * XMPP over BOSH (XEP-0124/0206) on HTTPS — the transport the DaouOffice web client uses
@@ -99,7 +99,7 @@ export class BoshClient extends EventEmitter {
 
   setStatus(status: "online:on" | "away:on") {
     this.status = status;
-    if (this.online) this.write(`<presence><status>${status}</status></presence>`);
+    if (this.online) this.write(presenceStanza(status));
   }
 
   private reset() {
@@ -172,7 +172,7 @@ export class BoshClient extends EventEmitter {
       this.backoff = 1000;
       this.failuresBeforeOnline = 0;
       this.everOnline = true;
-      this.queue.push(`<presence><status>${this.status}</status></presence>`, "<iq type='set' id='carbons1'><enable xmlns='urn:xmpp:carbons:2'/></iq>");
+      this.queue.push(presenceStanza(this.status as "online:on" | "away:on"), "<iq type='set' id='carbons1'><enable xmlns='urn:xmpp:carbons:2'/></iq>");
       this.emit("state", "online");
       this.pump(g);
     } catch (e) {

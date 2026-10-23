@@ -34,6 +34,12 @@ export type Settings = {
   portalLastPostId?: number;
   /** accountKey()s (host|loginid, no secrets) that need the web-login window (OTP / 2-step). */
   webLoginAccounts?: string[];
+  /** 자리비움 전환까지 기다리는 시간(분). 0 = 설정 안 함. */
+  awayMinutes: 0 | 1 | 5 | 10 | 15;
+  /** 부재 시 모바일 알림 선호(로컬 저장 전용, 서버 정책에 따라 동작). */
+  mobileNotice: boolean;
+  /** 자동 잠금까지의 유휴 시간(분). 0 = 자동 잠금 안 함. */
+  lockTimeoutMin: 0 | 1 | 5 | 10 | 30 | 60;
 };
 
 export const DEFAULTS: Settings = {
@@ -55,6 +61,9 @@ export const DEFAULTS: Settings = {
   portalOpenMode: "inapp",
   xmppTcpFallback: false,
   flexAutoLogin: true,
+  awayMinutes: 10,
+  mobileNotice: true,
+  lockTimeoutMin: 0,
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");
