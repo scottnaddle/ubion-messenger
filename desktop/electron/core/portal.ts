@@ -134,6 +134,46 @@ export const PORTAL_WHITELIST: RegExp[] = [
   /^\/api\/approval\/document\/\d+\/comment$/,
 ];
 
+/**
+ * Native 결재/반려. ⚠ UNVERIFIED against coco.ubion.co.kr: the approval web bundle is only served to
+ * authenticated sessions, and DaouOffice's public OpenAPI (api.daouoffice.com) has no approve/return call.
+ * Paths follow the existing /api/approval/document/{id} family; method + body shape are best-effort and
+ * isolated here so a single edit fixes them once Scott captures the real request (DevTools → Network).
+ */
+export type ApprovalActionKind = "approve" | "return";
+export const APPROVAL_ACTION_METHOD = "PUT";
+export const APPROVAL_ACTION_PATHS: Record<ApprovalActionKind, (id: string) => string> = {
+  approve: (id) => `/api/approval/document/${id}/approve`,
+  return: (id) => `/api/approval/document/${id}/return`,
+};
+export const APPROVAL_ACTION_WHITELIST: RegExp[] = [/^\/api\/approval\/document\/\d+\/(approve|return)$/];
+export const APPROVAL_COMMENT_MAX = 1000;
+
+export function normalizeApprovalActionArgs(kind: unknown, id: unknown, comment: unknown = "") {
+  if (kind !== "approve" && kind !== "return") throw new Error("invalid approval action");
+  const did = normalizeApprovalDocId(id);
+  const c = typeof comment === "string" ? comment.trim() : "";
+  if (c.length > APPROVAL_COMMENT_MAX) throw new Error(`의견은 ${APPROVAL_COMMENT_MAX}자 이내로 입력하세요`);
+  if (kind === "return" && !c) throw new Error("반려 사유를 입력하세요");
+  return { kind: kind as ApprovalActionKind, id: did, comment: c };
+}
+
+export function approvalActionBody(comment: string) {
+  return { comment };
+}
+
+/** DaouOffice wraps results as {code:"200", message, data}; a non-200 code in a 200 response is a failure. */
+export function parseApprovalActionResult(status: number, text: string): { ok: true } {
+  let body: any = null;
+  try { body = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+  const code = body?.code != null ? String(body.code) : String(status);
+  if (status >= 200 && status < 300 && (code === "200" || code === String(status))) return { ok: true };
+  const msg = typeof body?.message === "string" && body.message ? body.message : `HTTP ${status}`;
+  const e = new Error(msg) as Error & { status?: number };
+  e.status = status;
+  throw e;
+}
+
 export function isApprovalBox(v: unknown): v is ApprovalBox {
   return typeof v === "string" && (APPROVAL_BOXES as readonly string[]).includes(v);
 }
@@ -631,6 +671,16 @@ export class PortalService {
       this.get("/api/approval/upcoming/count"),
     ]);
     return { todo: parseApprovalCount(todo), upcoming: parseApprovalCount(upcoming) };
+  }
+
+  /** ⚠ MUTATES server state (결재/반려). Only called from an explicit, confirmed user action. */
+  async approvalAction(kind: unknown, id: unknown, comment: unknown = ""): Promise<{ ok: true }> {
+    const a = normalizeApprovalActionArgs(kind, id, comment);
+    const path = APPROVAL_ACTION_PATHS[a.kind](a.id);
+    if (!APPROVAL_ACTION_WHITELIST.some((r) => r.test(path))) throw new Error("approval action path not allowed");
+    this.log(`approval ${a.kind} doc=${a.id} comment=${a.comment ? `${a.comment.length}ch` : "none"}`);
+    const res = await this.fetcher(path, { method: APPROVAL_ACTION_METHOD, json: approvalActionBody(a.comment) });
+    return parseApprovalActionResult(res.status, res.text);
   }
 
   async approvalDoc(id: number | string): Promise<ApprovalDocumentDetail> {

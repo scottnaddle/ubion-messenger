@@ -426,3 +426,9 @@ input, textarea, select { font: inherit; color: inherit; }
 .mail-ov-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .mail-pane-list .mail-search .link { white-space: nowrap; flex: none; }
 .mail-pane-list .mail-search input { min-width: 0; flex: 1; }
+
+.approval-action-modal { width: 440px; }
+.approval-action-modal h3 { margin: 18px 0 4px; }
+.approval-comment-input { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; font: inherit; resize: vertical; background: var(--bg); color: inherit; }
+.approval-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.approval-toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 8px 16px; border-radius: 8px; z-index: 60; }

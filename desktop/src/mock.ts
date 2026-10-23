@@ -126,6 +126,11 @@ export function installMockIfNeeded() {
         page: { page: 0, offset: 20, total: 1, totalPage: 1, lastPage: true },
       }),
       approvalCounts: async () => ({ todo: 1, upcoming: 0 }),
+      approvalAction: async (kind: "approve" | "return", _id: number | string, comment = "") => {
+        await new Promise((r) => setTimeout(r, 150));
+        if (kind === "return" && !comment.trim()) throw new Error("반려 사유를 입력하세요");
+        return { ok: true as const };
+      },
       approvalDoc: async () => ({
         document: {
           id: 11, formName: "지출결의서", title: "10월 법인카드 정산", docStatusName: "진행중",

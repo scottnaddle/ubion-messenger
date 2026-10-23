@@ -168,10 +168,42 @@ export function Approval() {
     if (sel) void openDoc(sel);
   };
 
-  const ask = (kind: "승인" | "반려") => {
+  const [action, setAction] = useState<null | { kind: "approve" | "return"; docId: number }>(null);
+  const [comment, setComment] = useState("");
+  const [acting, setActing] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [toast, setToast] = useState("");
+
+  const ask = (kind: "approve" | "return") => {
     if (!detail) return;
-    if (!window.confirm(`${kind}하시겠습니까?\n웹 결재 화면에서 처리합니다.`)) return;
-    open(docUrl(detail.document.id));
+    setAction({ kind, docId: detail.document.id });
+    setComment("");
+    setActionError("");
+  };
+
+  const submitAction = async () => {
+    if (!action || acting) return;
+    const label = action.kind === "approve" ? "승인" : "반려";
+    if (action.kind === "return" && !comment.trim()) {
+      setActionError("반려 사유를 입력하세요");
+      return;
+    }
+    setActing(true);
+    setActionError("");
+    try {
+      await api().portal.approvalAction(action.kind, action.docId, comment.trim());
+      setAction(null);
+      setToast(`${label} 처리되었습니다`);
+      setTimeout(() => setToast(""), 3000);
+      setSel(null);
+      setDetail(null);
+      void loadCounts();
+      void loadList();
+    } catch (e) {
+      setActionError(`${label} 실패: ${(e as Error).message || "알 수 없는 오류"}`);
+    } finally {
+      setActing(false);
+    }
   };
 
   const totalPage = Math.max(1, list?.page.totalPage || Math.ceil((list?.page.total || 0) / (list?.page.offset || 20)));
@@ -258,8 +290,8 @@ export function Approval() {
               </div>
               <div className="approval-actions">
                 {canAct(detail) && <>
-                  <button className="primary small" onClick={() => ask("승인")}>승인</button>
-                  <button className="danger-btn" onClick={() => ask("반려")}>반려</button>
+                  <button className="primary small" onClick={() => ask("approve")}>승인</button>
+                  <button className="danger-btn" onClick={() => ask("return")}>반려</button>
                 </>}
                 <button className="link" onClick={() => open(docUrl(detail.document.id))}>웹에서 열기</button>
               </div>
@@ -305,6 +337,31 @@ export function Approval() {
           </>
         )}
       </section>
+      {toast && <div className="approval-toast" role="status">{toast}</div>}
+      {action && (
+        <div className="modal-back" onClick={() => !acting && setAction(null)}>
+          <div className="modal approval-action-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-body">
+              <h3>{action.kind === "approve" ? "결재 승인" : "결재 반려"}</h3>
+              <p className="muted small">{detail?.document.title || "(제목 없음)"}</p>
+              <label className="small">
+                {action.kind === "approve" ? "의견 (선택)" : "반려 사유 (필수)"}
+                <textarea className="approval-comment-input" rows={4} maxLength={1000} value={comment} autoFocus
+                  placeholder={action.kind === "approve" ? "의견을 입력하세요" : "반려 사유를 입력하세요"}
+                  onChange={(e) => setComment(e.target.value)} disabled={acting} />
+              </label>
+              {actionError && <div className="error small">{actionError}</div>}
+              <div className="approval-modal-actions">
+                <button className="link" onClick={() => setAction(null)} disabled={acting}>취소</button>
+                <button className={action.kind === "approve" ? "primary small" : "danger-btn"} onClick={() => void submitAction()}
+                  disabled={acting || (action.kind === "return" && !comment.trim())}>
+                  {acting ? "처리 중…" : action.kind === "approve" ? "승인" : "반려"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 {
   "name": "ubion-messenger",
   "productName": "UBION Messenger",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "description": "UBION Messenger — DaouOffice desktop client",
   "main": "out/main/index.js",
   "author": "UBION",
