@@ -1,3 +1,4 @@
+import { uploadMailAttachment, type Uploader, type UploadedAttach } from "./mail-attach";
 import { sendMail, type MailSender, normalizeDraft } from "./mail-compose";
 /**
  * PortalService — read-only access to the DaouOffice portal home ("홈" tab).
@@ -692,6 +693,14 @@ export class PortalService {
 
   /** ⚠ SENDS MAIL (verified request shape, see mail-compose.ts). Sender from the logged-in session. */
   getSender: () => Promise<MailSender | null> = async () => null;
+  uploader: Uploader | null = null;
+  /** Uploads one compose attachment (verified request, see mail-attach.ts). */
+  async mailUpload(name: unknown, data: unknown, mime?: unknown): Promise<UploadedAttach> {
+    if (!this.uploader) throw new Error("로그인이 필요합니다");
+    const bytes = data instanceof Uint8Array ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : null;
+    if (!bytes) throw new Error("invalid attachment data");
+    return uploadMailAttachment(this.uploader, { name: String(name ?? "file").split(/[\\/]/).pop() || "file", data: bytes, mime: typeof mime === "string" ? mime : undefined });
+  }
   async mailSend(draft: unknown): Promise<{ ok: true }> {
     const d = normalizeDraft(draft);
     return sendMail(this.fetcher, d, await this.getSender());

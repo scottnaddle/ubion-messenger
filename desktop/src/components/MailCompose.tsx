@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Person } from "../api";
 import { Icon } from "./ui";
 import type { MailAddr } from "../../electron/core/mail";
+import { MAIL_ATTACH_MAX_BYTES, MAIL_ATTACH_MAX_MB, tooBigMessage } from "../../electron/core/mail-attach";
 import {
   MAIL_SEND_ENABLED, draftAsText, isDraftDirty, isEmail, parseRecipients, validateDraft,
   type ComposeAttachment, type MailDraft,
@@ -91,11 +92,28 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
   const dirty = () => isDraftDirty(current(), initial);
   const discard = () => (dirty() ? setConfirmDiscard(true) : onClose());
 
-  const pickFiles = (files: FileList | null) => {
+  const [dragOver, setDragOver] = useState(false);
+  const patchAttach = (key: string, p: Partial<ComposeAttachment>) =>
+    setD((x) => ({ ...x, attachments: x.attachments.map((a) => (a.key === key ? { ...a, ...p } : a)) }));
+  const pickFiles = (files: FileList | File[] | null) => {
     if (!files) return;
-    const add: ComposeAttachment[] = [...files].map((f) => ({ name: f.name, size: f.size, path: api().pathForFile?.(f) || undefined }));
-    set({ attachments: [...d.attachments, ...add] });
+    setErr("");
+    for (const f of [...files]) {
+      const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      if (f.size > MAIL_ATTACH_MAX_BYTES) { setErr(tooBigMessage(f.name)); continue; }
+      setD((x) => ({ ...x, attachments: [...x.attachments, { key, name: f.name, size: f.size, status: "uploading" }] }));
+      void (async () => {
+        try {
+          const up = await api().portal.mailUpload(f.name, await f.arrayBuffer(), f.type || undefined);
+          patchAttach(key, { status: "done", uploaded: up, size: up.fileSize || f.size });
+        } catch (e) {
+          patchAttach(key, { status: "error", error: (e as Error).message || "업로드 실패" });
+        }
+      })();
+    }
   };
+  const uploading = d.attachments.some((a) => a.status === "uploading");
+  const totalSize = d.attachments.reduce((n, a) => n + (a.size || 0), 0);
 
   const continueOnWeb = async () => {
     const cur = current();
@@ -110,7 +128,8 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
     const cur = current();
     const v = validateDraft(cur);
     if (v) { setErr(v); return; }
-    if (cur.attachments.length) { setErr("첨부파일 발송은 다음 버전에서 지원됩니다. 첨부를 제거해 주세요."); return; }
+    if (cur.attachments.some((a) => a.status === "uploading")) { setErr("첨부파일 업로드가 끝난 뒤 보내 주세요"); return; }
+    if (cur.attachments.some((a) => !a.uploaded)) { setErr("업로드에 실패한 첨부파일을 제거해 주세요"); return; }
     if (!cur.subject.trim() && !allowEmptySubject) { setConfirmNoSubject(true); return; }
     setConfirmNoSubject(false); setSending(true); setErr("");
     try { await api().portal.mailSend(cur); (onSent ?? onClose)(); }
@@ -119,11 +138,15 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
   };
 
   return (
-    <article className="mail-compose">
+    <article className={`mail-compose ${dragOver ? "drag-over" : ""}`}
+      onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
+      onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); setDragOver(false); pickFiles(e.dataTransfer.files); }}>
+      {dragOver && <div className="compose-drop">여기에 놓으면 첨부됩니다 (파일당 최대 {MAIL_ATTACH_MAX_MB}MB)</div>}
       <header className="mail-compose-head">
         <h3>{TITLES[d.mode]}</h3>
         <div className="mail-compose-actions">
-          <button className="primary small" disabled={!MAIL_SEND_ENABLED || sending} onClick={() => void send()}>{sending ? "보내는 중…" : "보내기"}</button>
+          <button className="primary small" disabled={!MAIL_SEND_ENABLED || sending || uploading} title={uploading ? "첨부파일 업로드 중" : undefined} onClick={() => void send()}>{sending ? "보내는 중…" : "보내기"}</button>
           {!MAIL_SEND_ENABLED && <button className="link" onClick={() => void continueOnWeb()} title="내용을 복사하고 웹 메일 쓰기를 엽니다"><Icon name="external" size={13} /> 웹에서 이어 쓰기</button>}
           <button className="link" onClick={discard}>취소</button>
         </div>
@@ -151,18 +174,23 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
         <button className="icon-btn" title="글머리 기호" onMouseDown={(e) => { e.preventDefault(); fmt("insertUnorderedList"); }}>•</button>
         <button className="icon-btn" title="번호 매기기" onMouseDown={(e) => { e.preventDefault(); fmt("insertOrderedList"); }}>1.</button>
         <span className="spacer" />
-        <button className="link small" disabled title="다음 버전에서 지원" onClick={() => fileRef.current?.click()}><Icon name="clip" size={13} /> 파일 첨부 (다음 버전)</button>
+        <button className="link small" onClick={() => fileRef.current?.click()}><Icon name="clip" size={13} /> 파일 첨부</button>
         <input ref={fileRef} type="file" multiple hidden onChange={(e) => { pickFiles(e.target.files); e.target.value = ""; }} />
       </div>
       {d.attachments.length > 0 && (
         <div className="compose-attaches">
+          <div className="muted tiny">첨부 {d.attachments.length}개 · {fmtSize(totalSize)}{uploading ? " · 업로드 중…" : ""}</div>
           {d.attachments.map((a, i) => (
-            <span key={`${a.name}/${i}`} className="compose-chip">
-              {a.name} <span className="muted tiny">{fmtSize(a.size)}</span>
-              <button type="button" aria-label={`${a.name} 삭제`} onClick={() => set({ attachments: d.attachments.filter((_, j) => j !== i) })}>×</button>
-            </span>
+            <div key={a.key ?? `${a.name}/${i}`} className={`compose-attach ${a.status ?? ""}`}>
+              <Icon name="clip" size={13} />
+              <span className="ca-name ellipsis" title={a.name}>{a.name}</span>
+              <span className="muted tiny">{fmtSize(a.size)}</span>
+              {a.status === "uploading" && <span className="ca-progress" aria-label="업로드 중"><span /></span>}
+              {a.status === "done" && <span className="ca-ok tiny">완료</span>}
+              {a.status === "error" && <span className="error tiny" title={a.error}>{a.error || "실패"}</span>}
+              <button type="button" className="icon-btn" aria-label={`${a.name} 삭제`} onClick={() => setD((x) => ({ ...x, attachments: x.attachments.filter((_, j) => j !== i) }))}>×</button>
+            </div>
           ))}
-          <span className="muted tiny">첨부파일 발송은 다음 버전에서 지원됩니다</span>
         </div>
       )}
       <div ref={editor} className="compose-body" contentEditable suppressContentEditableWarning onInput={syncBody} onBlur={syncBody} />

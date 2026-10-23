@@ -5,10 +5,11 @@
  *   POST /api/mail/message/send  (method assumed POST — JSON body observed)
  *   body: see mailSendBody() — every key/default copied from the capture; addresses are
  *   comma-separated `"Name" <email>` strings, sender comes from the logged-in session.
- * Attachments (web: XHR `upload?dext=test`, payload unknown) are NOT supported → attachList "".
+ * Attachments: uploaded first via mail-attach.ts (verified), referenced in attachList.
  * Reply/forward are sent as new mails (quoted original + RE:/FW: subject); no server-side ref fields.
  */
 import { sanitizeHtmlToText } from "./mail-text";
+import { attachListString, type UploadedAttach } from "./mail-attach";
 import type { MailAddr, MailMessage } from "./mail";
 
 export const MAIL_SEND_ENABLED = true;
@@ -17,7 +18,7 @@ export const MAIL_SEND_PATH = "/api/mail/message/send"; // verified (capture)
 export const MAIL_SEND_WHITELIST: RegExp[] = [/^\/api\/mail\/message\/send$/];
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
-export type ComposeAttachment = { name: string; size: number; path?: string };
+export type ComposeAttachment = { name: string; size: number; key?: string; status?: "uploading" | "done" | "error"; error?: string; uploaded?: UploadedAttach };
 export type MailDraft = {
   mode: ComposeMode; to: MailAddr[]; cc: MailAddr[]; bcc: MailAddr[]; subject: string; html: string;
   attachments: ComposeAttachment[]; ref?: { folder: string; uid: number };
@@ -107,7 +108,7 @@ export const fmtSendAddrs = (l: MailAddr[]) => l.map(fmtSendAddr).join(", ");
 /** Body exactly as captured from the web "보내기" (keys + defaults). */
 export function mailSendBody(d: MailDraft, sender: MailSender) {
   return {
-    attachList: "", attachSign: true, attachsign: true, bannerDisplay: false,
+    attachList: attachListString(d.attachments.flatMap((a) => (a.uploaded ? [a.uploaded] : []))), attachSign: true, attachsign: true, bannerDisplay: false,
     bcc: fmtSendAddrs(d.bcc), bigAttachContent: "", bigAttachLinks: null, bigAttachMode: false,
     cc: fmtSendAddrs(d.cc), charset: "UTF-8", content: `<div class='TerraceMsg'>${d.html}</div>`,
     massMode: false, receiveNoti: true, saveSent: true, sendAttachCheckResult: false, sendEmailCheckResult: false,
@@ -135,7 +136,12 @@ export function normalizeDraft(v: unknown): MailDraft {
   if (!modes.includes(o.mode)) throw new Error("invalid compose mode");
   return {
     mode: o.mode, to: addrs(o.to), cc: addrs(o.cc), bcc: addrs(o.bcc), subject: String(o.subject ?? ""), html: String(o.html ?? ""),
-    attachments: (Array.isArray(o.attachments) ? o.attachments : []).map((a: any) => ({ name: String(a?.name ?? ""), size: Number(a?.size) || 0 })),
+    attachments: (Array.isArray(o.attachments) ? o.attachments : []).map((a: any) => {
+      const u = a?.uploaded;
+      const uploaded = u && typeof u.filePath === "string" && typeof u.hostId === "string" && u.filePath && u.hostId
+        ? { filePath: u.filePath, fileName: String(u.fileName ?? a?.name ?? ""), fileSize: Number(u.fileSize) || 0, hostId: u.hostId } : undefined;
+      return { name: String(a?.name ?? ""), size: Number(a?.size) || 0, status: uploaded ? "done" as const : a?.status === "uploading" ? "uploading" as const : "error" as const, uploaded };
+    }),
     ref: o.ref && Number.isInteger(o.ref.uid) ? { folder: String(o.ref.folder), uid: o.ref.uid } : undefined,
   };
 }
@@ -147,7 +153,8 @@ export async function sendMail(fetcher: Fetcher, d: MailDraft, sender: MailSende
   if (!enabled) throw new Error("앱 내 메일 발송이 꺼져 있습니다");
   const err = validateDraft(d);
   if (err) throw new Error(err);
-  if (d.attachments.length) throw new Error("첨부파일 발송은 다음 버전에서 지원됩니다");
+  if (d.attachments.some((a) => a.status === "uploading")) throw new Error("첨부파일 업로드가 끝난 뒤 보내 주세요");
+  if (d.attachments.some((a) => !a.uploaded)) throw new Error("업로드에 실패한 첨부파일이 있습니다. 제거하거나 다시 첨부해 주세요");
   if (!sender || !isEmail(sender.email)) throw new Error("보내는 사람 정보를 확인할 수 없습니다. 다시 로그인해 주세요.");
   if (!MAIL_SEND_WHITELIST.some((r) => r.test(MAIL_SEND_PATH))) throw new Error("mail send path not allowed");
   const res = await fetcher(MAIL_SEND_PATH, { method: MAIL_SEND_METHOD, json: mailSendBody(d, sender) });

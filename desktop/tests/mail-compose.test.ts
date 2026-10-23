@@ -96,7 +96,8 @@ describe("send (fake network only)", () => {
   it("validates, refuses attachments / missing sender before any request", async () => {
     const fetcher = vi.fn();
     await expect(sendMail(fetcher as any, { ...ok, to: [] }, ME)).rejects.toThrow("받는 사람");
-    await expect(sendMail(fetcher as any, { ...ok, attachments: [{ name: "a.pdf", size: 1 }] }, ME)).rejects.toThrow("다음 버전");
+    await expect(sendMail(fetcher as any, { ...ok, attachments: [{ name: "a.pdf", size: 1, status: "uploading" }] }, ME)).rejects.toThrow("업로드가 끝난 뒤");
+    await expect(sendMail(fetcher as any, { ...ok, attachments: [{ name: "a.pdf", size: 1, status: "error" }] }, ME)).rejects.toThrow("실패한 첨부");
     await expect(sendMail(fetcher as any, ok, null)).rejects.toThrow("보내는 사람");
     await expect(sendMail(fetcher as any, ok, { name: "x", email: "" })).rejects.toThrow("보내는 사람");
     expect(fetcher).not.toHaveBeenCalled();

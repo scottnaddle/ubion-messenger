@@ -138,6 +138,11 @@ export function installMockIfNeeded() {
         page: { page: 0, offset: 20, total: 1, totalPage: 1, lastPage: true },
       }),
       approvalCounts: async () => ({ todo: 1, upcoming: 0 }),
+      mailUpload: async (name: string, data: ArrayBuffer) => {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (name.includes("실패")) throw new Error("첨부 업로드 실패 (mock)");
+        return { filePath: "/202643/MOCK" + Math.random().toString(16).slice(2, 10).toUpperCase(), fileName: name, fileSize: data.byteLength, hostId: "TU9DSw" };
+      },
       mailSend: async (d: any) => { await new Promise((r) => setTimeout(r, 300)); if (String(d?.subject).includes("실패")) throw new Error("수신자 주소를 확인해 주세요 (mock code 500)"); return { ok: true as const }; },
       approvalAction: async (kind: "approve" | "return", _id: number | string, comment = "") => {
         await new Promise((r) => setTimeout(r, 150));

@@ -121,6 +121,10 @@ export class MessengerCore {
     this.portal = new PortalService((path, init) => this.client.request(path, init?.method === "POST" || init?.method === "PUT" ? { method: init.method, json: init.json } : { method: "GET" }), (e, p) => this.emit(e, p as any));
     this.em.setMaxListeners(50);
     this.portal.getUserId = () => this.client.user?.id ?? null;
+    this.portal.uploader = async (path, body, contentType) => {
+      const r = await this.client.request(path, { method: "POST", body: Buffer.from(body.buffer, body.byteOffset, body.byteLength), contentType });
+      return { status: r.status, text: r.text };
+    };
     this.portal.getSender = async () => {
       const u = this.client.user;
       if (!u) return null;

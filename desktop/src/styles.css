@@ -467,3 +467,16 @@ input, textarea, select { font: inherit; color: inherit; }
 .toast-action { all: unset; cursor: pointer; font-weight: 600; text-decoration: underline; white-space: nowrap; }
 .row-actions { display: flex; gap: 8px; }
 .download-dir { word-break: break-all; }
+
+/* v1.0.14 compose attachments */
+.mail-compose { position: relative; }
+.mail-compose.drag-over { outline: 2px dashed var(--accent, #3b5bdb); outline-offset: -6px; }
+.compose-drop { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; background: rgba(59,91,219,.08); font-weight: 600; pointer-events: none; }
+.compose-attaches { display: flex; flex-direction: column; align-items: flex-start; flex-wrap: nowrap; justify-content: flex-start; gap: 4px; padding: 8px 18px; border-bottom: 1px solid var(--line); }
+.compose-attach { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.compose-attach .ca-name { max-width: 320px; }
+.compose-attach.error .ca-name { color: var(--danger, #e03131); }
+.ca-ok { color: #2f9e44; }
+.ca-progress { width: 90px; height: 4px; border-radius: 2px; background: rgba(0,0,0,.08); overflow: hidden; position: relative; }
+.ca-progress span { position: absolute; inset: 0; width: 40%; background: var(--accent, #3b5bdb); animation: ca-move 1s linear infinite; }
+@keyframes ca-move { from { left: -40%; } to { left: 100%; } }
