@@ -4,6 +4,7 @@ import { Allowlist, hashToken, TokenStore } from "../src/auth";
 import { RateLimiter } from "../src/ratelimit";
 import { ReloginPolicy, mask } from "../src/session";
 import { BotServer } from "../src/server";
+import { NotConfiguredPort, daouConfigured } from "../src/not-configured-port";
 import type { BotRoom, DaouPort, InboundMessage } from "../src/types";
 
 class MockDaou implements DaouPort {
@@ -104,6 +105,26 @@ describe("send", () => {
     const st = []; for (let i = 0; i < 3; i++) st.push((await send({ room_id: "room:1", text: "x", client_msg_id: `r${i}` })).status);
     expect(st).toEqual([200, 200, 429]);
     const r = await send({ room_id: "room:1", text: "x", client_msg_id: "r9" }); expect(r.headers.get("retry-after")).toBeTruthy();
+  });
+});
+
+describe("degraded mode", () => {
+  it("daouConfigured rejects missing, blank, and placeholder credentials", () => {
+    expect(daouConfigured("bot", "secret")).toBe(true);
+    expect(daouConfigured()).toBe(false);
+    expect(daouConfigured("bot", "")).toBe(false);
+    expect(daouConfigured("   ", "secret")).toBe(false);
+    expect(daouConfigured("bot", "  \t ")).toBe(false);
+    expect(daouConfigured("bot", "CHANGEME")).toBe(false);
+    expect(daouConfigured("changeMe-value", "secret")).toBe(false);
+    expect(daouConfigured("bot", "my-placeholder")).toBe(false);
+    expect(daouConfigured("PLACEHOLDER", "secret")).toBe(false);
+  });
+  it("health reports not_configured with 200", async () => {
+    await setup({ port: new NotConfiguredPort() });
+    const r = await fetch(`${base}/bot/health`);
+    expect(r.status).toBe(200);
+    expect((await r.json()).daou).toBe("not_configured");
   });
 });
 
