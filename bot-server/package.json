@@ -1,0 +1,2 @@
+{ "name": "daou-bot-server", "private": true, "version": "0.1.0", "type": "commonjs",
+  "scripts": { "typecheck": "tsc --noEmit -p .", "test": "vitest run", "start": "tsx src/main.ts" } }
