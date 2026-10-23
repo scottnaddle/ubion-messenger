@@ -3,6 +3,8 @@ import { normalizeAttach } from "./attach";
 import type { AttachModel, ChatMessage, Department, RoomMember, LoginOptions, Person, Room, RoomKind, SessionUser } from "./types";
 import { canonMessageId, ensureTimestamp } from "./messages";
 import { chatDeleteBody, isDeletedMessage, normalizeChatDeleteIds, parseIsMessageDeletable } from "./chat-delete";
+import { PATH_KIND, roomPushPath, ROOM_PUSH_METHOD } from "./room-push";
+import { favoriteBody, favoritePath, parseFavorites } from "./favorites";
 import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
 import { fromElectronCookie, needsWebLogin, onSessionExpired, WEB_LOGIN_MESSAGE, type ElectronCookieIn } from "./web-login";
 
@@ -24,7 +26,6 @@ export class HttpError extends Error {
   }
 }
 
-const PATH_KIND: Record<string, string> = { buddy: "chat/buddies", room: "chat/rooms", pubsub: "chat/pubsubs" };
 const ROOM_TYPE: Record<string, string> = { buddy: "single", room: "room", pubsub: "pubsub" };
 
 /**
@@ -152,6 +153,7 @@ export class DaouClient {
       companyId: Number(data.companyId ?? data.companies?.[0]?.id),
       thumbnail: data.thumbnail,
       position: data.position,
+      brandName: data.brandName ? String(data.brandName) : undefined,
       isMessageDeletable: parseIsMessageDeletable(data),
     };
     this.companies = data.companies || [];
@@ -319,6 +321,46 @@ export class DaouClient {
     await this.request(`/api/chat/${base}/${room.seq}?roomType=${ROOM_TYPE[room.kind]}&userSeq=${uid}`, { method: "PUT" });
   }
 
+  /** ⚠ MUTATES server state: PUT /api/{chat/buddies|chat/rooms|chat/pubsubs}/{seq}/push?userSeq=<me>&usePush=true|false, no body. */
+  async setRoomPush(kind: RoomKind, roomSeq: number, usePush: boolean): Promise<void> {
+    const uid = this.requireUser().id;
+    const res = await this.request(roomPushPath(kind, roomSeq, uid, usePush), {
+      method: ROOM_PUSH_METHOD,
+      contentType: "application/json",
+    });
+    if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `알림 설정 실패 (HTTP ${res.status})`);
+  }
+
+  // ---------- favorites ----------
+  async listFavorites(): Promise<Person[]> {
+    const uid = this.requireUser().id;
+    return parseFavorites(await this.getJson(favoritePath(uid)));
+  }
+  getFavorites(): Promise<Person[]> {
+    return this.listFavorites();
+  }
+
+  /** ⚠ MUTATES server state: POST /api/user/favorite?userSeq=<me> {"ids":[id]}. */
+  async addFavorite(id: unknown): Promise<{ ok: true }> {
+    return this.mutateFavorite("POST", id);
+  }
+  /** ⚠ MUTATES server state: DELETE /api/user/favorite?userSeq=<me> {"ids":[id]}. */
+  async removeFavorite(id: unknown): Promise<{ ok: true }> {
+    return this.mutateFavorite("DELETE", id);
+  }
+
+  private async mutateFavorite(method: "POST" | "DELETE", id: unknown): Promise<{ ok: true }> {
+    const uid = this.requireUser().id;
+    const body = JSON.stringify(favoriteBody(id));
+    const res = await this.request(favoritePath(uid), {
+      method,
+      body: Buffer.from(body, "utf8"),
+      contentType: "application/json",
+    });
+    if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `즐겨찾기 ${method === "POST" ? "추가" : "삭제"} 실패 (HTTP ${res.status})`);
+    return { ok: true };
+  }
+
   // ---------- org ----------
   async listUsers(): Promise<Person[]> {
     const cid = this.requireUser().companyId;
@@ -461,8 +503,8 @@ export class DaouClient {
       headers["Content-Type"] = "application/json";
     } else if (init.body) {
       body = init.body;
-      if (init.contentType) headers["Content-Type"] = init.contentType;
     }
+    if (init.contentType) headers["Content-Type"] = init.contentType;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), body && body.length > 1e6 ? 300_000 : 30_000);
     try {

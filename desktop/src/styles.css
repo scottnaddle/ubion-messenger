@@ -111,6 +111,10 @@ input, textarea, select { font: inherit; color: inherit; }
 .dept-select { padding: 0 12px 8px; }
 .dept-select select { width: 100%; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
 .person .pick { margin: 0; accent-color: var(--accent); }
+.fav-section { padding: 0 6px 8px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.fav-section h4 { margin: 0 10px 4px; }
+.fav-btn.on { color: var(--accent); }
+.fav-btn.on svg { fill: currentColor; }
 .group-bar { margin: 0 12px 8px; display: flex; align-items: center; gap: 10px; background: var(--accent-soft); padding: 6px 10px; border-radius: 8px; font-size: .9em; }
 .group-bar span { flex: 1; }
 .profile-card { border-top: 1px solid var(--line); padding: 12px 14px; display: flex; gap: 12px; align-items: center; background: var(--bg); }

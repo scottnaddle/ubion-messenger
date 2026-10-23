@@ -29,6 +29,8 @@ import {
   FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY, parseFlexTodoTotal, flexProgressCountFromText,
 } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
+import { shouldNotify } from "./core/room-push";
+import { chatBotUrl, isChatBotUrl } from "./core/chatbot";
 import { isMentioningMe } from "../src/lib/mention";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import {
@@ -494,11 +496,13 @@ function notifyNewPostSummary(p: MessengerEventMap["portalNewPostSummary"]) {
 
 // ---------- notifications ----------
 function maybeNotify(m: MessengerEventMap["message"]) {
-  if (m.isMine || !settings.notifications) return;
+  if (!settings.notifications) return;
   const room = core.getRooms().find((r) => r.key === m.roomKey);
   const mentioned = !!room && room.kind === "room" && !room.isSelf &&
     isMentioningMe(m.message || "", core.user?.name || "");
-  if (!m.usePush && !mentioned) return;
+  // Prefer the live room state: it changes immediately after the user toggles notifications.
+  const usePush = m.usePush && (room?.usePush ?? true);
+  if (!shouldNotify({ usePush, mentioned, isMine: m.isMine })) return;
   const viewing = win?.isFocused() && core.activeRoomKey === m.roomKey;
   if (viewing || !Notification.isSupported()) return;
   const base = room && room.kind !== "buddy" ? `${room.name} · ${m.sendUserName}` : m.sendUserName || APP_NAME;
@@ -675,6 +679,7 @@ function registerIpc() {
   handle("rooms:refresh", () => core.refreshRooms());
   handle("rooms:setActive", (key: string | null) => core.setActiveRoom(key));
   handle("rooms:pin", (key: string, pin: boolean) => core.setPin(key, pin));
+  handle("rooms:setPush", (key: string, usePush: boolean) => core.setRoomPush(key, !!usePush));
   handle("rooms:openDirect", (userId: number) => core.openDirect(userId));
   handle("rooms:createGroup", (ids: number[]) => core.createGroup(ids));
   handle("msg:history", async (key: string, before?: number) => {
@@ -766,6 +771,9 @@ function registerIpc() {
   handle("org:users", (force?: boolean) => core.users(force));
   handle("org:departments", () => core.departments());
   handle("org:presence", () => core.allPresence());
+  handle("favorites:list", () => core.client.listFavorites());
+  handle("favorites:add", (id: unknown) => core.client.addFavorite(id));
+  handle("favorites:remove", (id: unknown) => core.client.removeFavorite(id));
   handle("app:badgeOverlay", (dataUrl: string | null) => {
     if (process.platform !== "win32" || !win) return;
     win.setOverlayIcon(dataUrl ? nativeImage.createFromDataURL(dataUrl) : null, dataUrl ? "읽지 않은 메시지" : "");
@@ -795,6 +803,11 @@ function registerIpc() {
   handle("portal:flexPending", async (force?: boolean) => refreshFlexPending(!!force));
   handle("app:openExternal", (url: string) => {
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
+  });
+  handle("app:openChatBot", (brandName?: unknown) => {
+    const target = chatBotUrl(brandName ?? core.user?.brandName);
+    if (!isChatBotUrl(target)) throw new Error("허용되지 않은 주소입니다");
+    return shell.openExternal(target);
   });
 }
 

@@ -85,6 +85,20 @@ export function Menu({ badge, unreadChats, onLocal }: Props) {
           </div>
         </section>
       ))}
+      <section className="menu-group">
+        <h4 className="muted small">문의</h4>
+        <div className="menu-grid">
+          <button
+            className="menu-item"
+            title="챗봇 문의 — 외부 브라우저에서 열림"
+            onClick={() => api().openChatBot().catch(() => setErr("챗봇 문의를 열지 못했습니다"))}
+          >
+            <span className="menu-ic"><Icon name="chat" size={22} /></span>
+            <span className="menu-name">챗봇 문의</span>
+            <span className="menu-ext"><Icon name="external" size={12} /></span>
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

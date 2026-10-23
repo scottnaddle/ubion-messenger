@@ -17,6 +17,11 @@ function sub(ch: string, cb: (p: any) => void) {
 const api = {
   call,
   deleteChatMessages: (ids: number[]) => call<{ ok: true; count: number }>("msg:delete", ids),
+  setRoomPush: (key: string, usePush: boolean) => call<void>("rooms:setPush", key, usePush),
+  listFavorites: () => call<import("./core/types").Person[]>("favorites:list"),
+  addFavorite: (id: number) => call<{ ok: true }>("favorites:add", id),
+  removeFavorite: (id: number) => call<{ ok: true }>("favorites:remove", id),
+  openChatBot: (brandName?: string) => call<void>("app:openChatBot", brandName),
   onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
   onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),
   onOpenSettings: (cb: () => void) => sub("nav:settings", cb),

@@ -252,7 +252,7 @@ export function App() {
               ) : view === "menu" ? (
                 <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} />
               ) : view === "chats" ? (
-                <Sidebar rooms={rooms} activeKey={activeKey} presence={presence} onOpen={setActiveKey} />
+                <Sidebar rooms={rooms} activeKey={activeKey} presence={presence} onOpen={setActiveKey} toast={toast} />
               ) : (
                 <People
                   presence={presence}

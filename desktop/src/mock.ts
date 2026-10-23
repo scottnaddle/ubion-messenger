@@ -95,6 +95,14 @@ export function installMockIfNeeded() {
       for (const m of msgs) if (m.messageId != null && ids.includes(m.messageId)) (m as any).deleted = true;
       return { ok: true as const, count: ids.length };
     },
+    setRoomPush: async (key: string, usePush: boolean) => {
+      const room = rooms.find((r) => r.key === key);
+      if (room) room.usePush = usePush;
+    },
+    listFavorites: async () => users.slice(0, 2),
+    addFavorite: async () => ({ ok: true as const }),
+    removeFavorite: async () => ({ ok: true as const }),
+    openChatBot: async () => undefined,
     onEvent: () => () => undefined,
     onOpenRoom: (cb) => {
       const r = new URLSearchParams(location.search).get("room");

@@ -2,11 +2,15 @@ import { useMemo, useState } from "react";
 import { api, type Presence, type Room } from "../api";
 import { roomTimeLabel } from "../lib/format";
 import { roomMatchesFilter } from "../../electron/core/messages";
+import type { Toast } from "../App";
 import { Avatar, Icon } from "./ui";
 
 export function Sidebar({
-  rooms, activeKey, presence, onOpen,
-}: { rooms: Room[]; activeKey: string | null; presence: Record<number, Presence>; onOpen: (k: string) => void }) {
+  rooms, activeKey, presence, onOpen, toast,
+}: {
+  rooms: Room[]; activeKey: string | null; presence: Record<number, Presence>;
+  onOpen: (k: string) => void; toast: (t: string, k?: Toast["kind"]) => void;
+}) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"all" | "unread" | "dm" | "group">("all");
   const [refreshing, setRefreshing] = useState(false);
@@ -85,6 +89,15 @@ export function Sidebar({
         <div className="ctx" style={{ left: menu.x, top: menu.y }}>
           <button onClick={() => api().call("rooms:pin", menu.room.key, !menu.room.usePin)}>
             {menu.room.usePin ? "상단 고정 해제" : "상단 고정"}
+          </button>
+          <button
+            onClick={() =>
+              api().setRoomPush(menu.room.key, !menu.room.usePush).catch((e) =>
+                toast(`알림 설정을 변경하지 못했습니다: ${(e as Error).message}`)
+              )
+            }
+          >
+            {menu.room.usePush ? "알림 끄기" : "알림 켜기"}
           </button>
           <button onClick={() => api().call("msg:markRead", menu.room.key)}>읽음으로 표시</button>
         </div>

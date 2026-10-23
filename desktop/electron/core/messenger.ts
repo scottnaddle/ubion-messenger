@@ -104,6 +104,8 @@ export class MessengerCore {
   log: (msg: string) => void = (m) => console.log(`[core] ${m}`);
   private em = new EventEmitter();
   private rooms = new Map<string, Room>();
+  /** Optimistic per-room notification toggles; kept until the server reports the same value. */
+  private roomPushOverrides = new Map<string, boolean>();
   private presence = new Map<number, Map<string, Presence>>();
   private usersCache: Person[] | null = null;
   private deptCache: Department[] | null = null;
@@ -199,6 +201,7 @@ export class MessengerCore {
     this.transport = null;
     await this.client.logout();
     this.rooms.clear();
+    this.roomPushOverrides.clear();
     this.presence.clear();
     this.lastIds.clear();
     this.emitted.clear();
@@ -481,6 +484,13 @@ export class MessengerCore {
 
   async refreshRooms(): Promise<Room[]> {
     const list = await this.client.listRooms();
+    // A refresh racing an in-flight toggle must not revert the optimistic value.
+    for (const [key, desired] of this.roomPushOverrides) {
+      const room = list.find((r) => r.key === key);
+      if (!room) continue;
+      if (room.usePush === desired) this.roomPushOverrides.delete(key);
+      else room.usePush = desired;
+    }
     this.rooms = new Map(list.map((r) => [r.key, r]));
     if (this.activeRoomKey && this.focused) {
       const a = this.rooms.get(this.activeRoomKey);
@@ -610,6 +620,29 @@ export class MessengerCore {
     await this.client.setPin(room, pin);
     room.usePin = pin;
     this.emitRooms();
+  }
+
+  /** Per-room notification toggle; updates local state immediately so the UI/list reflects it. */
+  async setRoomPush(key: string, usePush: boolean): Promise<void> {
+    const room = this.rooms.get(key);
+    if (!room) throw new Error("알 수 없는 대화방입니다");
+    const previous = room.usePush;
+    this.roomPushOverrides.set(key, usePush);
+    room.usePush = usePush;
+    this.emitRooms();
+    try {
+      await this.client.setRoomPush(room.kind, room.seq, usePush);
+    } catch (e) {
+      if (this.roomPushOverrides.get(key) === usePush) {
+        this.roomPushOverrides.delete(key);
+        const current = this.rooms.get(key);
+        if (current) {
+          current.usePush = previous;
+          this.emitRooms();
+        }
+      }
+      throw e;
+    }
   }
 }
 

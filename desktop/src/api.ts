@@ -18,6 +18,11 @@ export type Settings = {
 export type Bridge = {
   call<T = any>(ch: string, ...args: unknown[]): Promise<T>;
   deleteChatMessages(ids: number[]): Promise<{ ok: true; count: number }>;
+  setRoomPush(key: string, usePush: boolean): Promise<void>;
+  listFavorites(): Promise<Person[]>;
+  addFavorite(id: number): Promise<{ ok: true }>;
+  removeFavorite(id: number): Promise<{ ok: true }>;
+  openChatBot(brandName?: string): Promise<void>;
   onEvent(cb: (e: { type: string; payload: any }) => void): () => void;
   onOpenRoom(cb: (key: string) => void): () => void;
   onOpenSettings(cb: () => void): () => void;

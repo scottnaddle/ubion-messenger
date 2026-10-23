@@ -59,6 +59,7 @@ export function ChatView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
+  const [roomMenu, setRoomMenu] = useState<{ x: number; y: number } | null>(null);
   const [roomMembers, setRoomMembers] = useState<MentionCandidate[]>([]);
   const isGroupRoom = room.kind === "room" && !room.isSelf;
   const memberNames = useMemo(() => roomMembers.map((m) => m.name), [roomMembers]);
@@ -237,6 +238,16 @@ export function ChatView({
   };
 
   const canSend = room.kind !== "pubsub" && room.kind !== "unknown";
+  const toggleRoomPush = async () => {
+    const next = !room.usePush;
+    setRoomMenu(null);
+    try {
+      await api().setRoomPush(room.key, next);
+      toast(next ? "이 대화방의 알림을 켰습니다" : "이 대화방의 알림을 껐습니다", "info");
+    } catch (e) {
+      toast(`알림 설정을 변경하지 못했습니다: ${(e as Error).message}`);
+    }
+  };
   const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
   const subtitle =
     room.kind === "buddy"
@@ -260,6 +271,17 @@ export function ChatView({
         </div>
         <button className={`icon-btn ${searchOpen ? "on" : ""}`} title="대화 내용 검색" onClick={() => setSearchOpen((s) => !s)}>
           <Icon name="search" size={18} />
+        </button>
+        <button
+          className={`icon-btn ${roomMenu ? "on" : ""}`}
+          title="대화방 메뉴"
+          onClick={(e) => {
+            if (roomMenu) return setRoomMenu(null);
+            const r = e.currentTarget.getBoundingClientRect();
+            setRoomMenu({ x: Math.max(8, Math.min(r.right - 170, window.innerWidth - 178)), y: r.bottom + 4 });
+          }}
+        >
+          <Icon name="more" size={18} />
         </button>
       </header>
       <div className="chat-body">
@@ -307,6 +329,12 @@ export function ChatView({
       )}
       {dragOver && <div className="drop-hint">여기에 놓아 파일 보내기</div>}
       {viewer?.attach && <MediaViewer m={viewer} onClose={() => setViewer(null)} toast={toast} />}
+      {roomMenu && (
+        <RoomMenu
+          x={roomMenu.x} y={roomMenu.y} usePush={room.usePush}
+          onToggle={() => void toggleRoomPush()} onClose={() => setRoomMenu(null)}
+        />
+      )}
       {confirmDelete && (
         <div className="modal-back" onClick={() => setConfirmDelete(null)}>
           <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
@@ -351,6 +379,23 @@ function MentionedText({ text, memberNames, myName }: { text: string; memberName
         )
       )}
     </>
+  );
+}
+
+function RoomMenu({
+  x, y, usePush, onToggle, onClose,
+}: { x: number; y: number; usePush: boolean; onToggle: () => void; onClose: () => void }) {
+  useEffect(() => {
+    const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
+    window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
+    return () => { window.removeEventListener("mousedown", h); window.removeEventListener("keydown", h); window.removeEventListener("blur", h); };
+  }, [onClose]);
+  return (
+    <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      <button role="menuitem" onClick={() => { onClose(); onToggle(); }}>
+        <Icon name={usePush ? "bellOff" : "bell"} size={14} /> {usePush ? "알림 끄기" : "알림 켜기"}
+      </button>
+    </div>
   );
 }
 

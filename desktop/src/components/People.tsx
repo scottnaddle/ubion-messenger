@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Department, type Person, type Presence, type SessionUser } from "../api";
 import { Avatar, Icon } from "./ui";
 import type { Toast } from "../App";
@@ -14,19 +14,43 @@ export function People({
   const [dept, setDept] = useState<number | "all" | "online">("all");
   const [sel, setSel] = useState<Person | null>(null);
   const [picked, setPicked] = useState<number[]>([]);
+  const [favorites, setFavorites] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([api().call<Person[]>("org:users"), api().call<Department[]>("org:departments")])
-      .then(([u, d]) => {
+    Promise.all([
+      api().call<Person[]>("org:users"),
+      api().call<Department[]>("org:departments"),
+      api().listFavorites().catch(() => [] as Person[]),
+    ])
+      .then(([u, d, f]) => {
         setUsers(u);
         setDepts(d);
+        setFavorites(f);
       })
       .catch((e) => toast(e.message))
       .finally(() => setLoading(false));
   }, [toast]);
 
   const deptName = useMemo(() => new Map(depts.map((d) => [d.id, d.name])), [depts]);
+  const favoriteIds = useMemo(() => new Set(favorites.map((u) => u.userId)), [favorites]);
+  const toggleFavorite = useCallback(async (u: Person) => {
+    const on = favoriteIds.has(u.userId);
+    try {
+      if (on) await api().removeFavorite(u.userId);
+      else await api().addFavorite(u.userId);
+      setFavorites((prev) =>
+        on
+          ? prev.filter((x) => x.userId !== u.userId)
+          : prev.some((x) => x.userId === u.userId) ? prev : [...prev, u]
+      );
+      toast(on ? "즐겨찾기에서 삭제했습니다" : "즐겨찾기에 추가했습니다", "info");
+      // Reconcile in the background; a failed refetch must not surface as a mutation error.
+      api().listFavorites().then(setFavorites).catch(() => undefined);
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  }, [favoriteIds, toast]);
   const deptCounts = useMemo(() => {
     const m = new Map<number, number>();
     users.forEach((u) => u.departmentIds.forEach((d) => m.set(d, (m.get(d) || 0) + 1)));
@@ -88,6 +112,32 @@ export function People({
           <button className="primary small" onClick={createGroup}>그룹 대화 만들기</button>
         </div>
       )}
+      {favorites.length > 0 && (
+        <section className="fav-section">
+          <h4 className="muted small">즐겨찾기</h4>
+          {favorites.map((u) => (
+            <div
+              key={u.userId}
+              className={`person fav ${sel?.userId === u.userId ? "active" : ""}`}
+              onClick={() => setSel(u)}
+              onDoubleClick={() => openDm(u)}
+            >
+              <Avatar name={u.name} src={u.thumbnail} size={32} presence={presence[u.userId] || "offline"} />
+              <div className="room-body">
+                <div className="room-name">{u.name} <span className="muted small">{u.position}</span></div>
+                <div className="room-preview">{u.departmentIds.map((d) => deptName.get(d)).filter(Boolean).join(", ")}</div>
+              </div>
+              <button
+                className="icon-btn fav-btn on"
+                title="즐겨찾기 해제"
+                onClick={(e) => { e.stopPropagation(); void toggleFavorite(u); }}
+              >
+                <Icon name="star" size={16} />
+              </button>
+            </div>
+          ))}
+        </section>
+      )}
       <div className="room-list">
         {loading && <div className="muted pad small">불러오는 중…</div>}
         {shown.map((u) => (
@@ -106,6 +156,13 @@ export function People({
               <div className="room-name">{u.name} <span className="muted small">{u.position}</span></div>
               <div className="room-preview">{u.departmentIds.map((d) => deptName.get(d)).filter(Boolean).join(", ")}</div>
             </div>
+            <button
+              className={`icon-btn fav-btn ${favoriteIds.has(u.userId) ? "on" : ""}`}
+              title={favoriteIds.has(u.userId) ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+              onClick={(e) => { e.stopPropagation(); void toggleFavorite(u); }}
+            >
+              <Icon name="star" size={16} />
+            </button>
             <button className="icon-btn" title="1:1 대화" onClick={(e) => { e.stopPropagation(); void openDm(u); }}>
               <Icon name="chat" size={17} />
             </button>
@@ -122,6 +179,13 @@ export function People({
             {sel.email && <div className="small">{sel.email}</div>}
             {sel.directTel && <div className="small muted">☎ {sel.directTel}</div>}
           </div>
+          <button
+            className={`icon-btn fav-btn ${favoriteIds.has(sel.userId) ? "on" : ""}`}
+            title={favoriteIds.has(sel.userId) ? "즐겨찾기 해제" : "즐겨찾기 추가"}
+            onClick={() => void toggleFavorite(sel)}
+          >
+            <Icon name="star" size={18} />
+          </button>
           <button className="primary small" onClick={() => openDm(sel)}>대화하기</button>
         </div>
       )}

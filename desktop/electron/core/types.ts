@@ -70,6 +70,8 @@ export type SessionUser = {
   companyId?: number;
   thumbnail?: string;
   position?: string;
+  /** /api/user/session brandName (DO_INSTALL | DO_SOLUTION | DO_SAAS). */
+  brandName?: string;
   /** /api/user/session isMessageDeletable; undefined = allowed (older server). */
   isMessageDeletable?: boolean;
 };
