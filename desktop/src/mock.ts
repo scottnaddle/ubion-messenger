@@ -39,6 +39,7 @@ export function installMockIfNeeded() {
   }));
   const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", hasSavedPassword: true };
   const mockSaved: Record<string, number> = {};
+  const mockDeleted: string[] = [];
   const handlers: Record<string, (...a: any[]) => any> = {
     "settings:get": () => ({ ...mockSettings }),
     "settings:set": (patch: any) => Object.assign(mockSettings, patch),
@@ -103,6 +104,7 @@ export function installMockIfNeeded() {
         defaultFolders: [
           { id: "1", name: "받은편지함", fullName: "Inbox", encName: "Inbox", depth: 0, newCnt: 2, unseenCnt: 2, totalCnt: 120 },
           { id: "2", name: "보낸편지함", fullName: "Sent", encName: "Sent", depth: 0, newCnt: 0, unseenCnt: 0, totalCnt: 88 },
+          { id: "4", name: "휴지통", fullName: "Trash", encName: "Trash", depth: 0, newCnt: 0, unseenCnt: 0, totalCnt: 12 },
         ],
         userFolders: [{ id: "3", name: "업무", fullName: "Inbox/업무", encName: "Inbox%2F%EC%97%85%EB%AC%B4", depth: 1, newCnt: 0, unseenCnt: 1, totalCnt: 7 }],
         userSharedFolders: [], userTags: [],
@@ -118,7 +120,7 @@ export function installMockIfNeeded() {
             dateUtc: new Date(Date.now() - i * 5.5 * 3600_000).toISOString(), seen: i > 3 && i !== 6, hasAttach: i % 3 === 2,
             flagged: i === 5, answered: false, important: i === 1 || i === 9, size: "24KB",
           };
-        }).filter((m) => !keyword || m.subject.includes(keyword) || m.from.address.includes(keyword) || m.from.name.includes(keyword));
+        }).filter((m) => !mockDeleted.includes(`${folder}/${m.uid}`)).filter((m) => !keyword || m.subject.includes(keyword) || m.from.address.includes(keyword) || m.from.name.includes(keyword));
         const size = 20, items = all.slice((page - 1) * size, page * size);
         return { folder, folderName: folder === "Inbox" ? "받은편지함" : folder, items, page, pageSize: size, total: all.length, unread: 3, lastPage: page * size >= all.length, search: !!keyword };
       },
@@ -142,6 +144,13 @@ export function installMockIfNeeded() {
         await new Promise((r) => setTimeout(r, 1500));
         if (name.includes("실패")) throw new Error("첨부 업로드 실패 (mock)");
         return { filePath: "/202643/MOCK" + Math.random().toString(16).slice(2, 10).toUpperCase(), fileName: name, fileSize: data.byteLength, hostId: "TU9DSw" };
+      },
+      mailCaps: async () => ({ delete: true }),
+      mailDelete: async (folder: string, uids: number[]) => {
+        await new Promise((r) => setTimeout(r, 400));
+        if (new URLSearchParams(location.search).get("delfail")) throw new Error("메일 삭제 실패 (mock code 500)");
+        mockDeleted.push(...uids.map((u) => `${folder}/${u}`));
+        return { ok: true as const, count: uids.length };
       },
       mailSend: async (d: any) => { await new Promise((r) => setTimeout(r, 300)); if (String(d?.subject).includes("실패")) throw new Error("수신자 주소를 확인해 주세요 (mock code 500)"); return { ok: true as const }; },
       approvalAction: async (kind: "approve" | "return", _id: number | string, comment = "") => {

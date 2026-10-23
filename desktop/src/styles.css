@@ -480,3 +480,12 @@ input, textarea, select { font: inherit; color: inherit; }
 .ca-progress { width: 90px; height: 4px; border-radius: 2px; background: rgba(0,0,0,.08); overflow: hidden; position: relative; }
 .ca-progress span { position: absolute; inset: 0; width: 40%; background: var(--accent, #3b5bdb); animation: ca-move 1s linear infinite; }
 @keyframes ca-move { from { left: -40%; } to { left: 100%; } }
+
+/* v1.0.14 mail delete */
+.mail-bulk { display: flex; align-items: center; gap: 10px; padding: 4px 12px 6px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.mail-bulk .spacer { flex: 1; }
+.mail-check-all { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.mail-item { cursor: pointer; }
+.mail-item .mail-check { margin: 4px 6px 0 0; align-self: flex-start; }
+.mail-item.checked { background: rgba(59,91,219,.07); }
+.link.danger { color: var(--danger, #e03131); }

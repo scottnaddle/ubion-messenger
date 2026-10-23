@@ -3,6 +3,7 @@ import { api } from "../api";
 import { Icon } from "./ui";
 import { sanitizeMailHtml } from "../lib/sanitize";
 import { fileIcon } from "../../electron/core/attach";
+import { applyMailDelete, isTrashFolder } from "../../electron/core/mail";
 import { mailOverview, type MailListItem, type MailListPage, type MailMessage } from "../../electron/core/mail";
 import { MailCompose } from "./MailCompose";
 import { buildDraft, type ComposeMode, type MailDraft } from "../../electron/core/mail-compose";
@@ -189,6 +190,50 @@ export function Mail() {
 
   const [compose, setCompose] = useState<MailDraft | null>(null);
   const [toast, setToast] = useState("");
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [confirmDel, setConfirmDel] = useState<number[] | null>(null);
+  const [canDelete, setCanDelete] = useState(false);
+  useEffect(() => { api().portal.mailCaps().then((c) => setCanDelete(!!c.delete)).catch(() => undefined); }, []);
+  useEffect(() => { setChecked(new Set()); }, [folder, query]);
+  const inTrash = isTrashFolder(folder, curFolder?.name);
+  const toggleCheck = (uid: number) => setChecked((s) => { const n = new Set(s); n.has(uid) ? n.delete(uid) : n.add(uid); return n; });
+  const allChecked = items.length > 0 && items.every((m) => checked.has(m.uid));
+  const askDelete = (uids: number[]) => { if (canDelete && uids.length) setConfirmDel(uids); };
+  const bumpUnread = (fname: string, d: number) => setFolders((fs) => fs && ({
+    ...fs,
+    defaultFolders: fs.defaultFolders.map((f) => (f.fullName === fname ? { ...f, unseenCnt: Math.max(0, f.unseenCnt + d), totalCnt: Math.max(0, f.totalCnt + (d === 0 ? 0 : 0)) } : f)),
+    userFolders: fs.userFolders.map((f) => (f.fullName === fname ? { ...f, unseenCnt: Math.max(0, f.unseenCnt + d) } : f)),
+  }));
+  const doDelete = async (uids: number[]) => {
+    setConfirmDel(null);
+    const f = folder, prevItems = items, prevList = list, prevSel = sel, prevMsg = msg;
+    const { remaining, unreadRemoved, next } = applyMailDelete(items, f, uids, sel?.uid ?? null);
+    setItems(remaining); setChecked(new Set());
+    setList((l) => l && { ...l, total: Math.max(0, l.total - uids.length), unread: Math.max(0, l.unread - unreadRemoved) });
+    if (unreadRemoved) bumpUnread(f, -unreadRemoved);
+    if (sel && uids.includes(sel.uid)) { if (next) void openMsg(next); else { setSel(null); setMsg(null); } }
+    try {
+      await api().portal.mailDelete(f, uids);
+      setToast(inTrash ? `${uids.length}통을 영구 삭제했습니다` : `${uids.length}통을 휴지통으로 이동했습니다`);
+      void api().portal.refresh().catch(() => undefined);
+      void loadFolders();
+    } catch (e) {
+      setItems(prevItems); setList(prevList); setSel(prevSel); setMsg(prevMsg);
+      if (unreadRemoved) bumpUnread(f, unreadRemoved);
+      setToast(`삭제하지 못했습니다: ${(e as Error).message}`);
+    }
+  };
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "Delete" && !(e.key === "Backspace" && e.metaKey)) return;
+      const t = e.target as HTMLElement;
+      if (compose || confirmDel || t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      const uids = checked.size ? [...checked] : sel ? [sel.uid] : [];
+      if (uids.length) { e.preventDefault(); askDelete(uids); }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  });
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2500); return () => clearTimeout(t); }, [toast]);
   const onSent = () => {
     setCompose(null); setToast("메일을 보냈습니다");
@@ -255,12 +300,22 @@ export function Mail() {
           <b className="ellipsis">{query ? `“${query}” 검색 결과` : curFolder?.name || list?.folderName || folder}</b>
           <span className="muted small">{list ? `${list.total.toLocaleString()}통${!query && list.unread ? ` · 안 읽음 ${list.unread.toLocaleString()}` : ""}` : ""}</span>
         </div>
+        {canDelete && items.length > 0 && (
+          <div className="mail-bulk">
+            <label className="mail-check-all"><input type="checkbox" checked={allChecked} onChange={() => setChecked(allChecked ? new Set() : new Set(items.map((m) => m.uid)))} /> 전체 선택</label>
+            {checked.size > 0 && <span className="small">{checked.size}통 선택</span>}
+            <span className="spacer" />
+            <button className="link small danger" disabled={!checked.size} onClick={() => askDelete([...checked])} title="삭제 (Delete)"><Icon name="trash" size={14} /> {inTrash ? "영구 삭제" : "삭제"}</button>
+          </div>
+        )}
         <div className="mail-items" onScroll={onScroll}>
           {listErr && <div className="mail-error"><span>{listErr}</span><button className="link" onClick={() => void loadPage(list ? list.page + (items.length ? 1 : 0) : 1)}>다시 시도</button></div>}
           {listLoading && !items.length && <div className="muted small pad">불러오는 중…</div>}
           {list && !items.length && !listLoading && !listErr && <div className="muted small pad">{query ? "검색 결과가 없습니다" : "메일이 없습니다"}</div>}
           {items.map((m) => (
-            <button key={`${m.folder}/${m.uid}`} className={`mail-item ${m.seen ? "" : "unread"} ${sel?.uid === m.uid && sel.folder === m.folder ? "active" : ""}`} onClick={() => void openMsg(m)}>
+            <div key={`${m.folder}/${m.uid}`} role="button" tabIndex={0} className={`mail-item ${m.seen ? "" : "unread"} ${sel?.uid === m.uid && sel.folder === m.folder ? "active" : ""} ${checked.has(m.uid) ? "checked" : ""}`}
+              onClick={() => void openMsg(m)} onKeyDown={(e) => { if (e.key === "Enter") void openMsg(m); }}>
+              {canDelete && <input type="checkbox" className="mail-check" aria-label="선택" checked={checked.has(m.uid)} onClick={(e) => e.stopPropagation()} onChange={() => toggleCheck(m.uid)} />}
               <span className="mail-dot" aria-label={m.seen ? "" : "안 읽음"} />
               <div className="mail-item-main">
                 <div className="mail-item-top">
@@ -271,7 +326,7 @@ export function Mail() {
                 <div className="mail-subject ellipsis">{m.important && <span className="mail-imp">!</span>}{m.subject || "(제목 없음)"}</div>
                 <div className="mail-snippet ellipsis muted small">{m.preview}</div>
               </div>
-            </button>
+            </div>
           ))}
           {list && !list.lastPage && items.length > 0 && (
             <button className="link mail-more" disabled={listLoading} onClick={() => void loadPage(list.page + 1)}>{listLoading ? "불러오는 중…" : "더 보기"}</button>
@@ -282,6 +337,20 @@ export function Mail() {
       <section className="mail-pane-read">
         {compose && <MailCompose key={JSON.stringify(compose).length + compose.mode + (compose.ref?.uid ?? "")} initial={compose} onClose={() => setCompose(null)} onSent={onSent} />}
         {toast && <div className="approval-toast" role="status">{toast}</div>}
+        {confirmDel && (
+          <div className="modal-back" onClick={() => setConfirmDel(null)}>
+            <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-body">
+                <h3>{inTrash ? `${confirmDel.length}통을 영구 삭제할까요?` : `${confirmDel.length}통을 삭제할까요?`}</h3>
+                <p className="muted small">{inTrash ? "영구 삭제하면 복구할 수 없습니다." : "삭제하면 휴지통으로 이동합니다."}</p>
+                <div className="approval-modal-actions">
+                  <button className="link" onClick={() => setConfirmDel(null)}>취소</button>
+                  <button className="danger-btn" autoFocus onClick={() => void doDelete(confirmDel)}>{inTrash ? "영구 삭제" : "삭제"}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {!compose && !sel && <Overview page={list} inboxUnread={inboxUnread} folders={folders} onSender={(q) => search(undefined, q)} onPick={(m) => void openMsg(m)} />}
         {!compose && sel && msgLoading && <div className="muted small pad">불러오는 중…</div>}
         {!compose && sel && msgErr && <div className="mail-error pad"><span>{msgErr}</span><button className="link" onClick={() => void openMsg(sel)}>다시 시도</button></div>}
@@ -294,6 +363,7 @@ export function Mail() {
                   <button className="link" onClick={() => startCompose("reply")}>↩ 답장</button>
                   <button className="link" onClick={() => startCompose("replyAll")}>전체 답장</button>
                   <button className="link" onClick={() => startCompose("forward")}>→ 전달</button>
+                  {canDelete && <button className="link danger" title="삭제 (Delete)" onClick={() => askDelete([msg.uid])}><Icon name="trash" size={14} /> {inTrash ? "영구 삭제" : "삭제"}</button>}
                   <button className="link" onClick={() => open(mailUrl(msg.folder, String(msg.uid)))}>웹에서 열기</button>
                   <button className="icon-btn" title="닫기" onClick={() => { setSel(null); setMsg(null); }}><Icon name="close" size={16} /></button>
                 </div>

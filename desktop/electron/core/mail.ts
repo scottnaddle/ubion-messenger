@@ -9,7 +9,7 @@
  *  - POST /api/mail/message/read  JSON {folder, uid} → data.msgContent{uid, subject, from, fromPersonal, dateUtc,
  *      htmlContent, priority, flaged, toList[{personal,address}], ccList?, attachList[{path,fileName,size,fileType,fsize}]}
  *      ⚠ marks the message as read on the server (normal mail behaviour; only on explicit user selection).
- * Never send/delete/move: no such endpoint is whitelisted.
+ * MAIL_POST_WHITELIST covers list/read only; send (mail-compose.ts) and delete (deleteMail) are separate, dedicated calls.
  */
 export type MailAddr = { name: string; address: string };
 export type MailListItem = {
@@ -132,4 +132,55 @@ export function mailOverview(page: MailListPage | null, inboxUnread: number) {
     recentSenders: [...senders.values()].sort((a, b) => b.count - a.count).slice(0, 6),
     importantItems: items.filter((m) => m.important || m.flagged).slice(0, 5),
   };
+}
+
+// ---------------- delete (v1.0.14) ----------------
+/**
+ * The ONE mail delete request — VERIFIED from Scott's capture (2026-10-23):
+ *   POST /api/mail/message/delete, JSON {"folderNames":["Inbox"],"uids":["67572"]} → 200 JSON.
+ * Web moves to 휴지통; the same call from 휴지통 is assumed to delete permanently.
+ */
+export const MAIL_DELETE_METHOD = "POST";
+export const MAIL_DELETE_PATH = "/api/mail/message/delete";
+export const MAIL_DELETE_MAX = 200;
+/** Kill switch (request verified). */
+export const MAIL_DELETE_ENABLED = true;
+
+export const isTrashFolder = (folder: string, name = "") => /^trash$/i.test(folder) || /^(휴지통|지운\s*편지함)$/.test(name.trim());
+
+export function normalizeMailDeleteArgs(folder: unknown, uids: unknown): { folder: string; uids: number[] } {
+  const f = validFolder(folder);
+  if (!Array.isArray(uids) || !uids.length) throw new Error("삭제할 메일을 선택하세요");
+  if (uids.length > MAIL_DELETE_MAX) throw new Error(`한 번에 ${MAIL_DELETE_MAX}통까지 삭제할 수 있습니다`);
+  return { folder: f, uids: [...new Set(uids.map((u) => normalizeMailUid(u)))] };
+}
+
+/** Body VERIFIED from capture (web delete of one Inbox mail): {"folderNames":["Inbox"],"uids":["67572"]} — parallel arrays, uids as strings. */
+export function mailDeleteBody(a: { folder: string; uids: number[] }) {
+  return { folderNames: a.uids.map(() => a.folder), uids: a.uids.map(String) };
+}
+
+type DelFetcher = (path: string, init?: { method?: string; json?: unknown }) => Promise<{ status: number; text: string }>;
+export async function deleteMail(fetcher: DelFetcher, folder: unknown, uids: unknown, enabled: boolean): Promise<{ ok: true; count: number }> {
+  if (!enabled) throw new Error("메일 삭제는 서버 API 확인 전이라 아직 꺼져 있습니다");
+  const a = normalizeMailDeleteArgs(folder, uids);
+  const res = await fetcher(MAIL_DELETE_PATH, { method: MAIL_DELETE_METHOD, json: mailDeleteBody(a) });
+  let body: any = null;
+  try { body = res.text ? JSON.parse(res.text) : null; } catch { /* ignore */ }
+  if (res.status === 200 && (body?.code == null || String(body.code) === "200")) return { ok: true, count: a.uids.length };
+  const m = body?.message;
+  throw new Error(typeof m === "string" && m ? m : `메일 삭제 실패 (HTTP ${res.status}${body?.code != null ? `, code ${body.code}` : ""})`);
+}
+
+/** Pure list update for optimistic delete: remaining items, next selection, unread decrement. */
+export function applyMailDelete<T extends { uid: number; folder: string; seen: boolean }>(items: T[], folder: string, uids: number[], selUid?: number | null) {
+  const del = new Set(uids);
+  const remaining = items.filter((m) => !(m.folder === folder && del.has(m.uid)));
+  const unreadRemoved = items.filter((m) => m.folder === folder && del.has(m.uid) && !m.seen).length;
+  let next: T | null = null;
+  if (selUid != null && del.has(selUid)) {
+    const idx = items.findIndex((m) => m.uid === selUid && m.folder === folder);
+    next = items.slice(idx + 1).find((m) => !del.has(m.uid) || m.folder !== folder) ?? [...items.slice(0, idx)].reverse().find((m) => !del.has(m.uid) || m.folder !== folder) ?? null;
+  }
+  return { remaining, unreadRemoved, next };
 }

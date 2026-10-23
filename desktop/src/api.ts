@@ -36,6 +36,8 @@ export type Bridge = {
     approvalCounts(): Promise<{ todo: number; upcoming: number }>;
     approvalDoc(id: number | string): Promise<ApprovalDocumentDetail>;
     mailUpload(name: string, data: ArrayBuffer, mime?: string): Promise<import("../electron/core/mail-attach").UploadedAttach>;
+    mailCaps(): Promise<{ delete: boolean }>;
+    mailDelete(folder: string, uids: number[]): Promise<{ ok: true; count: number }>;
     mailSend(draft: import("../electron/core/mail-compose").MailDraft): Promise<{ ok: true }>;
     approvalAction(kind: "approve" | "return", id: number | string, comment?: string): Promise<{ ok: true }>;
     flexPending(force?: boolean): Promise<{ count: number | null; at: number; error?: string }>;

@@ -1,3 +1,4 @@
+import { MAIL_DELETE_ENABLED, deleteMail } from "./mail";
 import { uploadMailAttachment, type Uploader, type UploadedAttach } from "./mail-attach";
 import { sendMail, type MailSender, normalizeDraft } from "./mail-compose";
 /**
@@ -704,6 +705,12 @@ export class PortalService {
   async mailSend(draft: unknown): Promise<{ ok: true }> {
     const d = normalizeDraft(draft);
     return sendMail(this.fetcher, d, await this.getSender());
+  }
+
+  mailCaps() { return { delete: MAIL_DELETE_ENABLED }; }
+  /** ⚠ DELETES MAIL (verified request; moves to 휴지통, permanent from 휴지통). */
+  async mailDelete(folder: unknown, uids: unknown): Promise<{ ok: true; count: number }> {
+    return deleteMail(this.fetcher, folder, uids, MAIL_DELETE_ENABLED);
   }
 
   async mailList(folder: string, page = 1, keyword = ""): Promise<MailListPage> {
