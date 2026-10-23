@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type LockStatus, type SessionUser, type Settings } from "../api";
 import { Avatar, Icon } from "./ui";
 import { useUpdateStatus } from "./UpdateBanner";
+import { THEME_MAX_BYTES, THEME_PRESETS, type ThemeState } from "../../electron/core/theme";
 
 export function SettingsModal({
   settings, user, onChange, onClose, onLogout,
@@ -13,6 +14,8 @@ export function SettingsModal({
   const [lockConfirmPin, setLockConfirmPin] = useState("");
   const [lockError, setLockError] = useState("");
   const [lockBusy, setLockBusy] = useState(false);
+  const [themeMsg, setThemeMsg] = useState<{ text: string; error?: boolean } | null>(null);
+  const [themeBusy, setThemeBusy] = useState(false);
   useEffect(() => {
     api().call("app:info").then(setInfo).catch(() => undefined);
     api().call<LockStatus>("lock:status").then(setLock).catch(() => undefined);
@@ -25,6 +28,26 @@ export function SettingsModal({
     onChange({ ...settings, ...patch });
     onChange(await api().call<Settings>("settings:set", patch));
   };
+
+  const applyThemeState = (st: ThemeState) => onChange({ ...settings, customThemes: st.themes, activeThemeId: st.activeThemeId });
+  const themeOp = async (fn: () => Promise<string | void>) => {
+    setThemeMsg(null);
+    setThemeBusy(true);
+    try {
+      const text = await fn();
+      if (text) setThemeMsg({ text });
+    } catch (e) {
+      setThemeMsg({ text: (e as Error).message, error: true });
+    } finally {
+      setThemeBusy(false);
+    }
+  };
+  const importTheme = () => themeOp(async () => {
+    const r = await api().theme.import();
+    if (!r) return;
+    applyThemeState(await api().theme.activate(r.id));
+    return r.removed.length ? `가져왔습니다. 안전하지 않은 항목을 제거했습니다: ${r.removed.join(", ")}` : "가져와서 적용했습니다.";
+  });
 
   const refreshLock = async () => {
     try {
@@ -114,6 +137,46 @@ export function SettingsModal({
               ))}
             </div>
           </div>
+          <div className="row">
+            <div>색상</div>
+            <div className="theme-presets">
+              {THEME_PRESETS.map((p) => (
+                <button key={p.id} className={(settings.themePreset || "default") === p.id ? "on" : ""} title={p.name} onClick={() => set({ themePreset: p.id })}>
+                  <span className="swatch" style={{ background: p.swatch }} />{p.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="row">
+            <div>
+              <div>사용자 테마</div>
+              <div className="muted tiny">CSS 파일({THEME_MAX_BYTES / 1024}KB 이하)을 가져와 화면에 덧씌웁니다. 외부 URL·@import·스크립트는 제거됩니다.</div>
+            </div>
+            <button className="link small" disabled={themeBusy} onClick={() => void importTheme()}>CSS 가져오기…</button>
+          </div>
+          {(settings.customThemes || []).length > 0 && (
+            <div className="theme-list">
+              <div className="row">
+                <label className="theme-name">
+                  <input type="radio" name="custom-theme" checked={!settings.activeThemeId} disabled={themeBusy}
+                    onChange={() => void themeOp(async () => applyThemeState(await api().theme.activate(null)))} />
+                  <span>사용 안 함</span>
+                </label>
+              </div>
+              {settings.customThemes!.map((t) => (
+                <div className="row" key={t.id}>
+                  <label className="theme-name">
+                    <input type="radio" name="custom-theme" checked={settings.activeThemeId === t.id} disabled={themeBusy}
+                      onChange={() => void themeOp(async () => applyThemeState(await api().theme.activate(t.id)))} />
+                    <span>{t.name}</span>
+                  </label>
+                  <button className="link small danger" disabled={themeBusy}
+                    onClick={() => void themeOp(async () => applyThemeState(await api().theme.remove(t.id)))}>삭제</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {themeMsg && <div className={themeMsg.error ? "lock-error" : "muted tiny"}>{themeMsg.text}</div>}
           <div className="row">
             <div>글자 크기</div>
             <input type="range" min={12} max={18} value={settings.fontSize} onChange={(e) => set({ fontSize: Number(e.target.value) })} />

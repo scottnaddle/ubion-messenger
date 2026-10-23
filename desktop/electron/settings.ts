@@ -1,6 +1,7 @@
 import { app, safeStorage } from "electron";
 import fs from "node:fs";
 import path from "node:path";
+import { normalizePreset, normalizeThemeState, type CustomTheme, type ThemePresetId } from "./core/theme";
 
 export type Settings = {
   serverUrl: string;
@@ -40,6 +41,12 @@ export type Settings = {
   mobileNotice: boolean;
   /** 자동 잠금까지의 유휴 시간(분). 0 = 자동 잠금 안 함. */
   lockTimeoutMin: 0 | 1 | 5 | 10 | 30 | 60;
+  /** Built-in color preset (CSS-variable overrides in styles.css). */
+  themePreset: ThemePresetId;
+  /** 테마 업로드: metadata only — CSS text lives in userData/themes/<id>.css. */
+  customThemes: CustomTheme[];
+  /** id of the applied custom theme, "" = none. */
+  activeThemeId: string;
 };
 
 export const DEFAULTS: Settings = {
@@ -64,6 +71,9 @@ export const DEFAULTS: Settings = {
   awayMinutes: 10,
   mobileNotice: true,
   lockTimeoutMin: 0,
+  themePreset: "default",
+  customThemes: [],
+  activeThemeId: "",
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");
@@ -73,6 +83,10 @@ export function loadSettings(): Settings {
   try {
     const s: Settings = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(file(), "utf8")) };
     if (!s.portalOpenModeChosen) s.portalOpenMode = DEFAULTS.portalOpenMode; // 1.0.6 migration: SSO in-app by default
+    const themes = normalizeThemeState(s.customThemes, s.activeThemeId);
+    s.customThemes = themes.themes;
+    s.activeThemeId = themes.activeThemeId;
+    s.themePreset = normalizePreset(s.themePreset);
     return s;
   } catch {
     return { ...DEFAULTS };

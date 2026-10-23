@@ -12,6 +12,13 @@
   --mine: #4566e0; --other: #252a33; --shadow: 0 8px 30px rgba(0, 0, 0, .5);
   color-scheme: dark;
 }
+/* color presets (설정 > 화면 > 색상); custom theme CSS (#ubm-custom-theme) is appended after this file and wins */
+[data-preset="blue"] { --accent: #0a84d6; --accent-soft: #e3f2fc; --mine: #0a84d6; --rail: #0d3050; --rail-fg: #c3dcef; }
+[data-preset="green"] { --accent: #1f9d6b; --accent-soft: #e2f5ec; --mine: #1f9d6b; --rail: #133d2e; --rail-fg: #c2e3d4; }
+[data-preset="purple"] { --accent: #7c4ddb; --accent-soft: #f0e9fc; --mine: #7c4ddb; --rail: #2f1f52; --rail-fg: #d6c9f0; }
+[data-theme="dark"][data-preset="blue"] { --accent: #4aa8f0; --accent-soft: #15344d; --mine: #1f7fc4; --rail: #0a1a29; }
+[data-theme="dark"][data-preset="green"] { --accent: #43c08d; --accent-soft: #163a2c; --mine: #1f8a5e; --rail: #0b1f18; }
+[data-theme="dark"][data-preset="purple"] { --accent: #a383f0; --accent-soft: #2e2350; --mine: #6a42c7; --rail: #170f29; }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; }
 body {
@@ -518,6 +525,13 @@ input, textarea, select { font: inherit; color: inherit; }
 .toast { display: flex; align-items: center; gap: 10px; }
 .toast-action { all: unset; cursor: pointer; font-weight: 600; text-decoration: underline; white-space: nowrap; }
 .row-actions { display: flex; gap: 8px; }
+.theme-presets { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.theme-presets button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: .88em; }
+.theme-presets button.on { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.theme-presets .swatch { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.theme-list { padding-left: 12px; }
+.theme-list .theme-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.theme-list .theme-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .download-dir { word-break: break-all; }
 
 /* v1.0.14 compose attachments */

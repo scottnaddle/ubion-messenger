@@ -46,6 +46,13 @@ const api = {
     connect: (key: string) => call<{ connected: boolean }>("zoom:connect", key),
     createMeeting: (key: string) => call<{ joinUrl: string } | { needsConnect: true }>("zoom:createMeeting", key),
   },
+  theme: {
+    list: () => call<import("./core/theme").ThemeState>("theme:list"),
+    import: () => call<(import("./core/theme").ThemeState & { id: string; removed: string[] }) | null>("theme:import"),
+    remove: (id: string) => call<import("./core/theme").ThemeState>("theme:remove", id),
+    activate: (id: string | null) => call<import("./core/theme").ThemeState>("theme:activate", id),
+    css: (id?: string) => call<string>("theme:css", id),
+  },
   listFavorites: () => call<import("./core/types").Person[]>("favorites:list"),
   addFavorite: (id: number) => call<{ ok: true }>("favorites:add", id),
   removeFavorite: (id: number) => call<{ ok: true }>("favorites:remove", id),

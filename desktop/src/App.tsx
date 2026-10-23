@@ -16,6 +16,7 @@ import { Approval } from "./components/Approval";
 import { LockScreen } from "./components/LockScreen";
 import { Flex } from "./components/Flex";
 import { noticeStoreKey } from "../electron/core/room-notice";
+import { THEME_STYLE_ID } from "../electron/core/theme";
 import { navForDigit, type NavView } from "./nav";
 import {
   applyBotStatus, BOT_STATUS_TTL_MS, clearBotStatusForMessage, expireBotStatuses, type BotStatusMap,
@@ -66,6 +67,28 @@ export function App() {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, [settings]);
+
+  // color preset + 테마 업로드: active custom CSS goes in a <style> appended after styles.css so it wins the cascade.
+  const preset = settings?.themePreset || "default";
+  const activeThemeId = settings?.activeThemeId || "";
+  useEffect(() => {
+    if (preset === "default") delete document.documentElement.dataset.preset;
+    else document.documentElement.dataset.preset = preset;
+  }, [preset]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = activeThemeId ? api().theme.css(activeThemeId).catch(() => "") : Promise.resolve("");
+    void load.then((css) => {
+      if (cancelled) return;
+      let el = document.getElementById(THEME_STYLE_ID);
+      if (!css) return el?.remove();
+      if (!el) el = document.createElement("style");
+      el.id = THEME_STYLE_ID;
+      el.textContent = css;
+      document.head.appendChild(el); // (re)append: stays last even if other styles were added since
+    });
+    return () => { cancelled = true; };
+  }, [activeThemeId]);
 
   // boot: settings + existing session + auto-login
   useEffect(() => {

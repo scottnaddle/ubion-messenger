@@ -3,6 +3,7 @@ import type { Bridge } from "./api";
 import { captureFileName } from "../electron/core/capture";
 import { isLocalInAppExtension } from "../electron/core/doc-preview";
 import { ZOOM_DISABLED_TEXT } from "../electron/core/zoom";
+import { activateTheme, addTheme, removeTheme, sanitizeThemeCss, type ThemeState } from "../electron/core/theme";
 import { buildCircleBody, PUBSUB_PAGE_SIZE, PUBSUB_SEND_DISABLED_TEXT, type PubsubDetail } from "../electron/core/pubsub";
 
 export function installMockIfNeeded() {
@@ -41,7 +42,13 @@ export function installMockIfNeeded() {
     userId: id, name: ["김하늘", "이서준", "박지우", "최유나", "정도윤", "한소희"][i], position: ["책임", "선임", "수석", "주임", "책임", "선임"][i],
     email: `user${id}@example.com`, thumbnail: "", departmentIds: [i % 2 ? 20 : 21],
   }));
-  const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", awayMinutes: 10, mobileNotice: true, lockTimeoutMin: 0, hasSavedPassword: true };
+  const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", awayMinutes: 10, mobileNotice: true, lockTimeoutMin: 0, themePreset: "default", customThemes: [], activeThemeId: "", hasSavedPassword: true };
+  // Fake imported theme (no file dialog in the browser preview); goes through the real sanitizer.
+  const mockThemeCss: Record<string, string> = {};
+  const mockThemeState = (st?: ThemeState): ThemeState => {
+    if (st) Object.assign(mockSettings, { customThemes: st.themes, activeThemeId: st.activeThemeId });
+    return { themes: mockSettings.customThemes, activeThemeId: mockSettings.activeThemeId };
+  };
   const mockSaved: Record<string, number> = {};
   const mockDeleted: string[] = [];
   const mockBotAutonomy: Record<string, boolean> = {};
@@ -206,6 +213,23 @@ export function installMockIfNeeded() {
       },
       createMeeting: async () =>
         mockZoomConnected ? { joinUrl: `https://zoom.us/j/${Math.floor(1e10 + Math.random() * 9e10)}` } : { needsConnect: true as const },
+    },
+    theme: {
+      list: async () => mockThemeState(),
+      import: async () => {
+        const id = `theme-mock-${Object.keys(mockThemeCss).length + 1}`;
+        const { css, removed } = sanitizeThemeCss(
+          `@import url("https://example.com/x.css");\n:root, [data-theme="dark"] { --accent: #e8590c; --mine: #e8590c; --accent-soft: #fff0e6; }\n.rail { background: url(https://example.com/bg.png); }`,
+        );
+        mockThemeCss[id] = css;
+        return { ...mockThemeState(addTheme(mockThemeState(), { id, name: `오렌지 ${Object.keys(mockThemeCss).length}` })), id, removed };
+      },
+      remove: async (id: string) => {
+        delete mockThemeCss[id];
+        return mockThemeState(removeTheme(mockThemeState(), id));
+      },
+      activate: async (id: string | null) => mockThemeState(activateTheme(mockSettings.customThemes, id || "")),
+      css: async (id?: string) => mockThemeCss[id ?? mockSettings.activeThemeId] || "",
     },
     listFavorites: async () => users.slice(0, 2),
     addFavorite: async () => ({ ok: true as const }),

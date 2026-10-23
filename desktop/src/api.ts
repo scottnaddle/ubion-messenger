@@ -8,6 +8,7 @@ import type { BotSettingsResult } from "../electron/core/bot-settings";
 import type { BackupFileType, BackupItem } from "../electron/core/backup";
 import type { CaptureResult } from "../electron/core/capture";
 import type { PreviewMode } from "../electron/core/doc-preview";
+import type { CustomTheme, ThemePresetId, ThemeState } from "../electron/core/theme";
 import type { PubsubCaps, PubsubDetail, PubsubPage, PubsubTarget } from "../electron/core/pubsub";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
 
@@ -35,6 +36,9 @@ export type Settings = {
   awayMinutes: 0 | 1 | 5 | 10 | 15;
   mobileNotice: boolean;
   lockTimeoutMin: 0 | 1 | 5 | 10 | 30 | 60;
+  themePreset?: ThemePresetId;
+  customThemes?: CustomTheme[];
+  activeThemeId?: string;
   hasSavedPassword?: boolean;
 };
 
@@ -69,6 +73,14 @@ export type Bridge = {
     caps(): Promise<import("../electron/core/zoom").ZoomCaps>;
     connect(key: string): Promise<{ connected: boolean }>;
     createMeeting(key: string): Promise<{ joinUrl: string } | { needsConnect: true }>;
+  };
+  /** 테마 업로드: sanitized custom CSS files (main owns the files + ids). import() = null when the dialog is cancelled. */
+  theme: {
+    list(): Promise<ThemeState>;
+    import(): Promise<(ThemeState & { id: string; removed: string[] }) | null>;
+    remove(id: string): Promise<ThemeState>;
+    activate(id: string | null): Promise<ThemeState>;
+    css(id?: string): Promise<string>;
   };
   listFavorites(): Promise<Person[]>;
   addFavorite(id: number): Promise<{ ok: true }>;

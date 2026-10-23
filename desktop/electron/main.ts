@@ -38,6 +38,10 @@ import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { backupFileName, historyClearEnabled, normalizeBackupFileType } from "./core/backup";
 import { checkPubsubDelete, checkPubsubSend, pubsubCaps, pubsubSendEnabled, PUBSUB_SEND_DISABLED_TEXT } from "./core/pubsub";
 import { maskSecrets } from "./core/mask";
+import {
+  activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
+  themeFileName, themeNameFromPath, type ThemeState,
+} from "./core/theme";
 import { buildPreviewUrl, docViewerServerEnabled, docViewerTemplate, planPreview, previewTempName, type PreviewMode } from "./core/doc-preview";
 import {
   CAPTURE_OVERLAY_DONE, CAPTURE_OVERLAY_IMAGE, CAPTURE_START, captureFileName, captureOverlayUrl, capturePermissionError,
@@ -876,7 +880,10 @@ function registerIpc() {
     })(),
   }));
   handle("settings:get", () => ({ ...settings, hasSavedPassword: !!(settings.rememberMe && loadPassword()) }));
-  handle("settings:set", (patch: Partial<Settings>) => {
+  handle("settings:set", (input: Partial<Settings>) => {
+    // Custom theme list/selection only change through theme:* (validated ids, files on disk).
+    const { customThemes: _ct, activeThemeId: _at, ...patch } = input || {};
+    if ("themePreset" in patch) patch.themePreset = normalizePreset(patch.themePreset);
     settings = { ...settings, ...patch };
     saveSettings(settings);
     if ("launchAtLogin" in patch) applyLoginItem();
@@ -1308,6 +1315,54 @@ function registerIpc() {
   handle("settings:pickDownloadDir", async () => {
     const r = await dialog.showOpenDialog(win!, { properties: ["openDirectory", "createDirectory"], defaultPath: settings.downloadDir || app.getPath("downloads") });
     return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+  });
+  // 테마 업로드: CSS text in userData/themes/<id>.css, metadata in settings.
+  const themesDir = () => path.join(app.getPath("userData"), "themes");
+  const themeState = (): ThemeState => ({ themes: settings.customThemes, activeThemeId: settings.activeThemeId });
+  const saveThemeState = (st: ThemeState): ThemeState => {
+    settings = { ...settings, customThemes: st.themes, activeThemeId: st.activeThemeId };
+    saveSettings(settings);
+    return st;
+  };
+  handle("theme:list", () => themeState());
+  handle("theme:import", async () => {
+    const r = await dialog.showOpenDialog(win!, { properties: ["openFile"], filters: [{ name: "CSS", extensions: ["css"] }] });
+    const file = r.canceled ? undefined : r.filePaths[0];
+    if (!file) return null;
+    if (!isCssFileName(file)) throw new Error("CSS 파일(.css)만 가져올 수 있습니다");
+    checkThemeSize((await fs.promises.stat(file)).size);
+    const { css, removed } = sanitizeThemeCss(await fs.promises.readFile(file, "utf8"));
+    if (!css) throw new Error("적용할 CSS 내용이 없습니다");
+    checkThemeSize(Buffer.byteLength(css));
+    const theme = { id: newThemeId(), name: themeNameFromPath(file) };
+    await fs.promises.mkdir(themesDir(), { recursive: true });
+    await fs.promises.writeFile(path.join(themesDir(), themeFileName(theme.id)), css, "utf8");
+    if (removed.length) console.warn("theme import sanitized:", removed.join(", "));
+    return { ...saveThemeState(addTheme(themeState(), theme)), id: theme.id, removed };
+  });
+  handle("theme:remove", async (id: string) => {
+    const name = themeFileName(id);
+    await fs.promises.rm(path.join(themesDir(), name), { force: true }).catch((e) =>
+      console.warn("theme remove failed:", maskSecrets(String((e as Error)?.message ?? e))));
+    return saveThemeState(removeTheme(themeState(), id));
+  });
+  handle("theme:activate", (id: string | null) => {
+    if (id && !settings.customThemes.some((t) => t.id === id)) throw new Error("알 수 없는 테마입니다");
+    return saveThemeState(activateTheme(settings.customThemes, id || ""));
+  });
+  handle("theme:css", async (id?: string) => {
+    const target = id ?? settings.activeThemeId;
+    if (!target) return "";
+    if (!settings.customThemes.some((t) => t.id === target)) return "";
+    const p = path.join(themesDir(), themeFileName(target));
+    try {
+      checkThemeSize((await fs.promises.stat(p)).size);
+      // Re-sanitize on read: the file may have been edited outside the app.
+      return sanitizeThemeCss(await fs.promises.readFile(p, "utf8")).css;
+    } catch (e) {
+      console.warn("theme css read failed:", maskSecrets(String((e as Error)?.message ?? e)));
+      return "";
+    }
   });
   handle("link:preview", (url: string) =>
     linkCache.get(url, () => fetchLinkPreview(url, { companyBase: core.client.baseUrl }))
