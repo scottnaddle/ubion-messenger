@@ -8,8 +8,8 @@ import { LANGUAGES, LANGUAGE_NAMES, tk, useT, type Language } from "../lib/i18n"
 const PRESET_LABELS: Record<ThemePresetId, string> = { default: tk("기본"), blue: tk("블루"), green: tk("그린"), purple: tk("퍼플") };
 
 export function SettingsModal({
-  settings, user, onChange, onClose, onLogout,
-}: { settings: Settings; user: SessionUser; onChange: (s: Settings) => void; onClose: () => void; onLogout: () => void }) {
+  settings, i18nEnabled = false, user, onChange, onClose, onLogout,
+}: { settings: Settings; i18nEnabled?: boolean; user: SessionUser; onChange: (s: Settings) => void; onClose: () => void; onLogout: () => void }) {
   const t = useT();
   const [info, setInfo] = useState<{ version: string; platform: string; encryption: boolean } | null>(null);
   const [lock, setLock] = useState<LockStatus | null>(null);
@@ -131,12 +131,14 @@ export function SettingsModal({
             <button className="danger-btn" onClick={onLogout}>{t("로그아웃")}</button>
           </section>
           <h4>{t("화면")}</h4>
-          <div className="row">
-            <div>{t("언어")}</div>
-            <select value={settings.language || "ko"} onChange={(e) => set({ language: e.target.value as Language })}>
-              {LANGUAGES.map((l) => <option key={l} value={l}>{LANGUAGE_NAMES[l]}</option>)}
-            </select>
-          </div>
+          {i18nEnabled && (
+            <div className="row">
+              <div>{t("언어")}</div>
+              <select value={settings.language || "ko"} onChange={(e) => set({ language: e.target.value as Language })}>
+                {LANGUAGES.map((l) => <option key={l} value={l}>{LANGUAGE_NAMES[l]}</option>)}
+              </select>
+            </div>
+          )}
           <div className="row">
             <div>{t("테마")}</div>
             <div className="seg">

@@ -4,9 +4,9 @@
  * plain helpers may import the module-level `t` (current language at call time).
  */
 import { useSyncExternalStore } from "react";
-import { normalizeLanguage, translate, type Language, type Vars } from "./i18n-core";
+import { effectiveLanguage, normalizeLanguage, translate, type Language, type Vars } from "./i18n-core";
 
-export { LANGUAGES, LANGUAGE_NAMES, normalizeLanguage, tk, type Language } from "./i18n-core";
+export { LANGUAGES, LANGUAGE_NAMES, effectiveLanguage, normalizeLanguage, tk, type I18nCaps, type Language } from "./i18n-core";
 
 let current: Language = "ko";
 const listeners = new Set<() => void>();
@@ -21,6 +21,12 @@ export function setLanguage(lang: unknown) {
   current = next;
   if (typeof document !== "undefined") document.documentElement.lang = next.replace("_", "-");
   listeners.forEach((l) => l());
+}
+
+/** Apply settings.language; forced to "ko" unless i18n:caps reports UBM_I18N=1. */
+export function applySavedLanguage(saved: unknown, enabled: boolean): Language {
+  setLanguage(effectiveLanguage(saved, enabled));
+  return current;
 }
 
 export function t(key: string, vars?: Vars): string {

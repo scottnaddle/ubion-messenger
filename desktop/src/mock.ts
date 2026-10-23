@@ -98,6 +98,8 @@ export function installMockIfNeeded() {
     "org:presence": () => ({ 2: "online", 3: "away", 4: "online", 5: "offline", 6: "busy" }),
     "org:users": () => users,
     "org:departments": () => [{ id: 19, name: "UBION", sortOrder: 0, depth: 0 }, { id: 20, name: "개발팀", sortOrder: 1, depth: 1, parentId: 19 }, { id: 21, name: "디자인팀", sortOrder: 2, depth: 1, parentId: 19 }],
+    // ?lang=en re-enables 다국어 in the browser mock (UBM_I18N=1 in the real app).
+    "i18n:caps": () => ({ enabled: new URLSearchParams(location.search).has("lang") }),
     "app:info": () => ({ version: "1.0.0", platform: "darwin", encryption: true }),
   };
   const isoNow = new Date().toISOString();

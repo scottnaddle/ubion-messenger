@@ -6,7 +6,7 @@ import { ChatView } from "./components/ChatView";
 import { People } from "./components/People";
 import { SettingsModal } from "./components/SettingsModal";
 import { drawBadge } from "./lib/badge";
-import { setLanguage, useT } from "./lib/i18n";
+import { applySavedLanguage, useT, type I18nCaps } from "./lib/i18n";
 import { Avatar, Icon } from "./components/ui";
 import { RailButton, RailProfile } from "./components/RailTooltip";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -56,10 +56,14 @@ export function App() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 7000 : 4500);
   }, []);
 
-  // 다국어: module-level language drives useT() in every component
+  // 다국어: module-level language drives useT() in every component; always ko unless main reports UBM_I18N=1
+  const [i18nOn, setI18nOn] = useState(false);
   useEffect(() => {
-    if (settings) setLanguage(settings.language);
-  }, [settings?.language]);
+    api().call<I18nCaps>("i18n:caps").then((c) => setI18nOn(!!c?.enabled)).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (settings) applySavedLanguage(settings.language, i18nOn);
+  }, [settings?.language, i18nOn]);
 
   // theme
   useEffect(() => {
@@ -387,6 +391,7 @@ export function App() {
       {showSettings && (
         <SettingsModal
           settings={settings}
+          i18nEnabled={i18nOn}
           user={user}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}

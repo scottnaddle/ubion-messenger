@@ -24,6 +24,21 @@ export function normalizeLanguage(v: unknown): Language {
   return typeof v === "string" && (LANGUAGES as readonly string[]).includes(v) ? (v as Language) : "ko";
 }
 
+/**
+ * 1.0.21 (company-only): multi-language is hidden and the UI is always Korean unless UBM_I18N=1 (read in main,
+ * exposed via the i18n:caps IPC). Dictionaries stay in place; the OS locale is never consulted.
+ */
+export type I18nCaps = { enabled: boolean };
+
+export function i18nEnabled(env: Record<string, string | undefined>): boolean {
+  return env.UBM_I18N === "1";
+}
+
+/** Language actually applied: the saved setting when the flag is on, otherwise always "ko". */
+export function effectiveLanguage(saved: unknown, enabled: boolean): Language {
+  return enabled ? normalizeLanguage(saved) : "ko";
+}
+
 /** {name} → vars.name; unknown placeholders are left as-is. */
 export function interpolate(s: string, vars?: Vars): string {
   if (!vars) return s;

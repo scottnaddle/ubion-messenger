@@ -54,8 +54,7 @@ import {
 } from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
 import { createBotSettingsClient } from "./core/bot-settings";
-import { setMainLanguage, tm } from "./core/i18n-main";
-import { normalizeLanguage } from "../src/lib/i18n-core";
+import { applyMainLanguage, filterLanguagePatch, i18nCaps, tm } from "./core/i18n-main";
 import { createAwayMonitor } from "./core/away";
 import { createLockState, hashPin, validatePin, verifyPin, type PinRecord } from "./core/lock";
 import {
@@ -249,7 +248,7 @@ function buildAppMenu() {
 
 /** 다국어: rebuild every main-process menu after settings.language changes. */
 function applyLanguage() {
-  setMainLanguage(settings.language);
+  applyMainLanguage(settings.language, process.env);
   buildAppMenu();
   updateBadge();
   if (portalWin && !portalWin.isDestroyed()) portalWin.setMenu(portalNavMenu());
@@ -904,12 +903,13 @@ function registerIpc() {
       }
     })(),
   }));
+  handle("i18n:caps", () => i18nCaps(process.env));
   handle("settings:get", () => ({ ...settings, hasSavedPassword: !!(settings.rememberMe && loadPassword()) }));
   handle("settings:set", (input: Partial<Settings>) => {
     // Custom theme list/selection only change through theme:* (validated ids, files on disk).
     const { customThemes: _ct, activeThemeId: _at, ...patch } = input || {};
     if ("themePreset" in patch) patch.themePreset = normalizePreset(patch.themePreset);
-    if ("language" in patch) patch.language = normalizeLanguage(patch.language);
+    filterLanguagePatch(patch, process.env);
     settings = { ...settings, ...patch };
     saveSettings(settings);
     if ("launchAtLogin" in patch) applyLoginItem();
@@ -1514,7 +1514,7 @@ app.on("window-all-closed", () => {
 app.whenReady().then(async () => {
   nativeTheme.themeSource = settings.theme;
   if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath("icon-mac.png")));
-  setMainLanguage(settings.language);
+  applyMainLanguage(settings.language, process.env);
   buildAppMenu();
   lockRecord = loadLockRecord();
   locked = !!lockRecord;
