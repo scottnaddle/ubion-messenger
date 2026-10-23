@@ -25,6 +25,10 @@ import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { FileCard, MediaViewer } from "./FileCard";
 import { BackupModal } from "./BackupModal";
+import { EmojiPicker } from "./EmojiPicker";
+import {
+  DAOU_STICKERS_ENABLED, insertAtSelection, loadRecentEmoji, parseEmoticonCodes, pushRecentEmoji, saveRecentEmoji,
+} from "../lib/emoticon";
 import { LinkPreview } from "./LinkPreview";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
@@ -705,12 +709,29 @@ function Linkified({ text, memberNames = [], myName = "" }: { text: string; memb
       {parts.map((p, i) =>
         i % 2 ? (
           <a key={i} href={p} onClick={(e) => { e.preventDefault(); api().call("app:openExternal", p); }}>{p}</a>
+        ) : DAOU_STICKERS_ENABLED ? (
+          <Fragment key={i}>
+            {parseEmoticonCodes(p).map((seg, j) =>
+              seg.type === "sticker" ? (
+                <StickerImage key={j} src={seg.src} code={seg.value} />
+              ) : (
+                <MentionedText key={j} text={seg.value} memberNames={memberNames} myName={myName} />
+              )
+            )}
+          </Fragment>
         ) : (
           <MentionedText key={i} text={p} memberNames={memberNames} myName={myName} />
         )
       )}
     </>
   );
+}
+
+/** DaouOffice sticker (flagged off). Falls back to the raw "(name)" code if the asset is missing. */
+function StickerImage({ src, code }: { src: string; code: string }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) return <>{code}</>;
+  return <img className="sticker" src={src} alt={code} title={code} draggable={false} onError={() => setBroken(true)} />;
 }
 
 function MentionedText({ text, memberNames, myName }: { text: string; memberNames: string[]; myName: string }) {
@@ -864,10 +885,35 @@ function Composer({
   const sending = useRef(false);
   const ta = useRef<HTMLTextAreaElement>(null);
   const drafts = useRef<Record<string, string>>({});
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [recentEmoji, setRecentEmoji] = useState<string[]>(() => loadRecentEmoji());
+  const emojiBtn = useRef<HTMLButtonElement>(null);
+  const closeEmoji = useCallback(() => setEmojiOpen(false), []);
+
+  // Insert at the caret as plain text (safe wire format). Picker stays open for multiple picks.
+  const pickEmoji = (emoji: string) => {
+    const el = ta.current;
+    const current = el?.value ?? text;
+    const next = insertAtSelection(current, el?.selectionStart ?? current.length, el?.selectionEnd ?? current.length, emoji);
+    setText(next.text);
+    setTrigger(null);
+    setRecentEmoji((list) => {
+      const updated = pushRecentEmoji(list, emoji);
+      saveRecentEmoji(updated);
+      return updated;
+    });
+    requestAnimationFrame(() => {
+      const t = ta.current;
+      if (!t) return;
+      t.focus();
+      t.setSelectionRange(next.cursor, next.cursor);
+    });
+  };
 
   useEffect(() => {
     setText(drafts.current[roomKey] || "");
     setTrigger(null);
+    setEmojiOpen(false);
     ta.current?.focus();
   }, [roomKey]);
 
@@ -957,6 +1003,9 @@ function Composer({
       )}
       <button className="icon-btn" title="파일 첨부" onClick={onPick}><Icon name="clip" /></button>
       <button className="icon-btn" title="화면 캡쳐" aria-label="화면 캡쳐" onClick={onCapture}><Icon name="capture" /></button>
+      <button ref={emojiBtn} className={`icon-btn${emojiOpen ? " on" : ""}`} title="이모티콘" aria-label="이모티콘"
+        aria-expanded={emojiOpen} onClick={() => setEmojiOpen((v) => !v)}><Icon name="smile" /></button>
+      {emojiOpen && <EmojiPicker recent={recentEmoji} anchor={emojiBtn} onPick={pickEmoji} onClose={closeEmoji} />}
       <textarea
         ref={ta}
         rows={1}

@@ -190,6 +190,16 @@ input, textarea, select { font: inherit; color: inherit; }
 .mention-item.on { background: var(--accent-soft); }
 .mention-item .mention-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mention-item .mention-pos { margin-left: auto; font-size: .82em; flex: none; }
+.emoji-pop { position: absolute; left: 14px; bottom: calc(100% + 4px); z-index: 21; width: 336px; display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; }
+.emoji-tabs { display: flex; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 6px; overflow-x: auto; }
+.emoji-tab { padding: 4px 10px; border-radius: 8px; font-size: .85em; color: var(--muted); white-space: nowrap; }
+.emoji-tab:hover { background: var(--bg3); }
+.emoji-tab.on { background: var(--accent-soft); color: var(--fg); font-weight: 600; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; max-height: 220px; overflow-y: auto; }
+.emoji-cell { height: 36px; border-radius: 8px; font-size: 22px; line-height: 1; display: grid; place-items: center; }
+.emoji-cell:hover { background: var(--bg3); }
+.bubble img.sticker { width: 64px; height: 64px; object-fit: contain; vertical-align: middle; }
 .mention { color: var(--accent); font-weight: 600; }
 .msg.mine .mention { color: #fff; }
 .mention.mention-me { background: var(--accent-soft); border-radius: 4px; padding: 0 2px; }
