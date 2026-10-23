@@ -1,4 +1,5 @@
 import { normalizeAttach } from "./attach";
+import { isAuthMarkerText } from "../../src/lib/markers";
 import { EventEmitter } from "node:events";
 import { DaouClient, sortRooms } from "./daou-client";
 import { PortalService } from "./portal";
@@ -406,7 +407,9 @@ export class MessengerCore {
     if (msg.needConfirmCount == null) msg.needConfirmCount = initialNeedConfirm(r.kind, r.seq, me, room);
     msg.confirmUsers = [];
     const viewing = this.activeRoomKey === key && this.focused;
-    if (room) {
+    if (room && isAuthMarkerText(msg.message)) {
+      // UBION login DM from the bot: consumed by ubm-auth, never a visible/unread message.
+    } else if (room) {
       room.preview = msg.attach ? `📎 ${msg.attach.name}` : msg.message.slice(0, 200);
       room.messageId = msg.messageId ?? room.messageId;
       room.createdAt = msg.createdAt;

@@ -84,7 +84,7 @@ import {
 } from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
 import { createBotSettingsClient } from "./core/bot-settings";
-import { createUbmAuth, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
+import { createUbmAuth, isAuthMarkerText, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
 import { applyMainLanguage, filterLanguagePatch, i18nCaps, tm } from "./core/i18n-main";
 import { createAwayMonitor } from "./core/away";
 import { createLockState, hashPin, validatePin, verifyPin, type PinRecord } from "./core/lock";
@@ -1022,6 +1022,7 @@ function notifyNewPostSummary(p: MessengerEventMap["portalNewPostSummary"]) {
 // ---------- notifications ----------
 function maybeNotify(m: MessengerEventMap["message"]) {
   if (!settings.notifications) return;
+  if (isAuthMarkerText(m.message)) return; // UBION login DM (bot challenge) — never notify
   if (dndActive()) return;
   const room = core.getRooms().find((r) => r.key === m.roomKey);
   const mentioned = !!room && room.kind === "room" && !room.isSelf &&
