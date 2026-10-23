@@ -10,6 +10,7 @@ export interface DaouPort {
   listRooms(): Promise<BotRoom[]>;
   sendText(room_id: string, text: string): Promise<{ message_id?: number }>;
   onMessage(cb: (m: InboundMessage) => void): () => void;
+  markRead?(room_id: string, message_id: number): Promise<void>;
   onRoomJoined(cb: (r: BotRoom) => void): () => void;
   healthy(): { state: string };
 }

@@ -43,7 +43,7 @@ export class CorePort implements DaouPort {
       this.log(`login as ${mask(this.cfg.username)}`);
       await this.core.login({ serverUrl: this.cfg.serverUrl, username: this.cfg.username, password: this.cfg.password });
       phase = "post-login(listRooms)"; this.log("login ok");
-      this.policy.onSuccess(); (await this.listRooms()).forEach((r) => this.known.add(r.room_id));
+      this.policy.onSuccess(); const rooms = await this.listRooms(); rooms.forEach((r) => this.known.add(r.room_id)); this.log(`rooms(${rooms.length}): ${rooms.map((r) => `${r.room_id}=${sanitize(r.room_name, 40)}`).join(", ")}`);
     } catch (e) {
       const auth = e instanceof HttpError && (e.webLogin || e.status === 401 || e.status === 403 || e.status === 423);
       this.log(`login failed (${auth ? "auth" : "net"}) phase=${phase} ${describeError(e)}`); this.schedule(auth ? "auth" : "net");
@@ -59,6 +59,7 @@ export class CorePort implements DaouPort {
   healthy() { return { state: this.state }; }
   async listRooms(): Promise<BotRoom[]> { return (await this.core.client.listRooms()).map((r) => ({ room_id: r.key, room_name: r.name })); }
   async sendText(room_id: string, text: string) { const r: any = await this.core.sendText(room_id, text); return { message_id: r?.messageId }; }
+  async markRead(room_id: string, message_id: number) { try { await this.core.markRead(room_id, message_id); } catch (e) { this.log(`markRead failed ${room_id}: ${describeError(e)}`); } }
   onMessage(cb: (m: InboundMessage) => void) {
     return this.core.on("message", (m) => cb({
       room_id: m.roomKey, message_id: m.messageId ?? 0, sender: { id: String(m.sendUserSeq ?? ""), name: m.sendUserName }, text: m.message ?? "",
