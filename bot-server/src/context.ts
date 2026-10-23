@@ -34,6 +34,10 @@ export interface ContextStore {
   rooms(): RoomSummary[];
   getSettings(room_id: string): RoomSettings;
   setSettings(room_id: string, autonomy: boolean, by: string): RoomSettings;
+  /** Message ids delivered to the adapter as message.created (file access proof; survives restarts). */
+  markDelivered(room_id: string, message_id: number): void;
+  deliveredRoom(message_id: number): string | null;
+  hasMessage(room_id: string, message_id: number): boolean;
   close(): void;
 }
 
@@ -149,6 +153,10 @@ export class MemoryContextStore implements ContextStore {
     return { ...next };
   }
 
+  private delivered = new Map<number, { room_id: string; at: number }>();
+  markDelivered(room_id: string, message_id: number): void { this.delivered.set(message_id, { room_id, at: Date.now() }); }
+  deliveredRoom(message_id: number): string | null { return this.delivered.get(message_id)?.room_id ?? null; }
+  hasMessage(room_id: string, message_id: number): boolean { return this.list(room_id, { since: String(message_id - 1), limit: 1 }).some((m) => m.message_id === message_id); }
   close(): void {}
 }
 
@@ -194,6 +202,7 @@ export class SqliteContextStore implements ContextStore {
         PRIMARY KEY (room_id, message_id)
       );
       CREATE INDEX IF NOT EXISTS idx_messages_room_ts ON messages (room_id, ts);
+      CREATE TABLE IF NOT EXISTS delivered (message_id INTEGER PRIMARY KEY, room_id TEXT NOT NULL, at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS room_settings (
         room_id TEXT PRIMARY KEY,
         autonomy INTEGER NOT NULL DEFAULT 0,
@@ -233,6 +242,7 @@ export class SqliteContextStore implements ContextStore {
 
   prune(olderThanMs: number): number {
     const cutoff = new Date(this.now() - olderThanMs).toISOString();
+    this.db.prepare("DELETE FROM delivered WHERE at < ?").run(Date.now() - olderThanMs);
     return Number(this.db.prepare("DELETE FROM messages WHERE ts < ?").run(cutoff).changes);
   }
 
@@ -270,6 +280,16 @@ export class SqliteContextStore implements ContextStore {
     return { room_id, autonomy, enabled_by, enabled_at, updated_by: by, updated_at: ts };
   }
 
+  markDelivered(room_id: string, message_id: number): void {
+    this.db.prepare("INSERT OR REPLACE INTO delivered (message_id, room_id, at) VALUES (?, ?, ?)").run(message_id, room_id, Date.now());
+  }
+  deliveredRoom(message_id: number): string | null {
+    const r = this.db.prepare("SELECT room_id FROM delivered WHERE message_id = ?").get(message_id) as any;
+    return r ? String(r.room_id) : null;
+  }
+  hasMessage(room_id: string, message_id: number): boolean {
+    return !!this.db.prepare("SELECT 1 FROM messages WHERE room_id = ? AND message_id = ?").get(room_id, message_id);
+  }
   close(): void { this.db.close(); }
 
   private rowToMessage(row: Record<string, unknown>): StoredMessage {

@@ -210,6 +210,7 @@ export class BotServer {
     if (!message_id) return;
     if (this.messageRooms.has(message_id)) this.messageRooms.delete(message_id);
     this.messageRooms.set(message_id, room_id);
+    try { this.ctx?.store.markDelivered(room_id, message_id); } catch { /* best effort */ }
     while (this.messageRooms.size > 2000) {
       const first = this.messageRooms.keys().next();
       if (first.done) break;
@@ -379,6 +380,13 @@ export class BotServer {
       if (!cookie) return this.fail(s, E(401, "unauthorized", "missing authentication"));
       if (cookie.length > 4096 || /[\r\n]/.test(cookie))
         return this.fail(s, E(401, "invalid_session", "invalid session"));
+      // throttle before the upstream coco call so random cookies cannot hammer it
+      const ipKey = `ip:${q.socket.remoteAddress ?? "?"}:${String(q.headers["x-forwarded-for"] ?? "").split(",")[0].trim()}`;
+      const irl = this.humanRl.take(ipKey);
+      if (!irl.ok) {
+        const retry = Math.ceil(irl.retryAfterMs / 1000);
+        return this.json(s, 429, { error: { code: "rate_limited", message: "slow down", retry_after_s: retry } }, { "retry-after": String(retry) });
+      }
       const verify = this.o.port.verifyUserSession;
       if (!verify) return this.fail(s, E(401, "invalid_session", "invalid session"));
       let user: { user_id: string; name: string } | null = null;
@@ -480,28 +488,26 @@ export class BotServer {
       return this.fail(s, E(404, "not_found", "attachment not found"));
     }
 
+    // Access rule: only messages actually delivered to the adapter (message.created), or messages
+    // stored from a room whose autonomy is on. No guessing across rooms by id.
     let room_id: string | undefined;
     let atts: AttachmentMeta[] = [];
-    const cached = this.messageRooms.get(message_id);
-    if (queryRoom) {
-      if (!hasFiles) {
-        this.fileAudit(action, tok, queryRoom, message_id, undefined, "denied", "forbidden_scope");
-        return this.fail(s, E(403, "forbidden_scope", "files:read required for explicit room_id"));
+    let delivered = this.messageRooms.get(message_id);
+    if (!delivered) { try { delivered = this.ctx?.store.deliveredRoom(message_id) ?? undefined; } catch { delivered = undefined; } }
+    if (delivered && (!queryRoom || queryRoom === delivered)) {
+      room_id = delivered;
+      if (!this.o.allowlist.allows(room_id, tok)) {
+        this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
+        return this.fail(s, E(403, "room_not_allowed", "room is not allowlisted"));
       }
+    } else if (queryRoom && this.ctx && this.isContextRoom(queryRoom) && this.ctx.store.hasMessage(queryRoom, message_id)) {
       room_id = queryRoom;
-      if (!this.o.allowlist.allows(room_id, tok)) {
+      if (tok.rooms && !tok.rooms.includes(room_id)) {
         this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
-        return this.fail(s, E(403, "room_not_allowed", "room is not allowlisted"));
+        return this.fail(s, E(403, "room_not_allowed", "room is not allowed for this token"));
       }
-      atts = await this.lookupAttachments(room_id, message_id);
-    } else if (cached) {
-      room_id = cached;
-      if (!this.o.allowlist.allows(room_id, tok)) {
-        this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
-        return this.fail(s, E(403, "room_not_allowed", "room is not allowlisted"));
-      }
-      atts = await this.lookupAttachments(room_id, message_id);
     }
+    if (room_id) atts = await this.lookupAttachments(room_id, message_id);
     if (!room_id || !atts.length) {
       this.fileAudit(action, tok, room_id, message_id, undefined, "error", "not_found");
       return this.fail(s, E(404, "not_found", "attachment not found"));
@@ -522,8 +528,12 @@ export class BotServer {
       return this.fail(s, E(404, "not_found", "attachment not found"));
     }
     let file: { data: Buffer; contentType: string; name: string };
-    try { file = await download.call(this.o.port, room_id, message_id, index, att.file_id); }
-    catch {
+    try { file = await download.call(this.o.port, room_id, message_id, index, att.file_id, max); }
+    catch (e) {
+      if ((e as any)?.status === 413) {
+        this.fileAudit(action, tok, room_id, message_id, att, "error", "too_large");
+        return this.fail(s, E(413, "too_large", "file exceeds maxFileBytes"));
+      }
       this.fileAudit(action, tok, room_id, message_id, att, "error", "not_found");
       return this.fail(s, E(404, "not_found", "attachment not found"));
     }

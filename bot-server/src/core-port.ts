@@ -81,7 +81,7 @@ export class CorePort implements DaouPort {
     const ext = a.extention ? `.${String(a.extention).replace(/^\./, "")}` : "";
     return [{ name, size: a.size, mime: mimeFor(/\.[a-z0-9]{1,8}$/i.test(name) ? name : `${name}${ext}`), file_id: a.cryptId, image: !!a.imageFile }];
   }
-  async downloadAttachment(room_id: string, message_id: number, index: number, file_id?: string): Promise<{ data: Buffer; contentType: string; name: string }> {
+  async downloadAttachment(room_id: string, message_id: number, index: number, file_id?: string, maxBytes = 20 * 1024 * 1024): Promise<{ data: Buffer; contentType: string; name: string }> {
     let id = file_id;
     let name = "";
     if (!id) {
@@ -91,7 +91,7 @@ export class CorePort implements DaouPort {
       id = att.file_id;
       name = att.name;
     }
-    const res = await this.core.client.fetchBinary(this.core.client.fileUrlPath(id, message_id));
+    const res = await this.core.client.fetchCapped(this.core.client.fileUrlPath(id, message_id), maxBytes);
     return { data: res.data, contentType: mimeFor(name), name };
   }
   async verifyUserSession(cookie: string): Promise<{ user_id: string; name: string } | null> {

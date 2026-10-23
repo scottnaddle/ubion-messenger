@@ -20,6 +20,9 @@ const TEXT_EXT = new Set(["txt", "md", "csv", "json", "log"]);
 const MAX_XML_BYTES = 8 * 1024 * 1024;
 const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const MAX_ZIP_ENTRIES = 300;
+/** Zip-bomb guard: total declared uncompressed size and entry count, checked before any entry is inflated. */
+export const MAX_ZIP_UNCOMPRESSED = 100 * 1024 * 1024;
+const MAX_ZIP_TOTAL_ENTRIES = 5000;
 const EXTRACT_DEADLINE_MS = 30_000;
 
 function extension(name: string): string {
@@ -120,11 +123,28 @@ function slideNumber(entry: string): number {
 }
 
 function xmlTagValues(xml: string, tag = "t"): string[] {
-  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "gi");
-  const out: string[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(xml))) out.push(decodeXml(m[1]));
+  // Linear indexOf scan (no backtracking regex): <tag> or <tag attr...> ... </tag>
+  const out: string[] = []; const open = `<${tag}`; const close = `</${tag}>`;
+  let i = 0;
+  while (true) {
+    const o = xml.indexOf(open, i); if (o < 0) break;
+    const after = xml.charCodeAt(o + open.length);
+    const gt = xml.indexOf(">", o + open.length); if (gt < 0) break;
+    if (!(after === 62 || after === 32 || after === 9 || after === 10 || after === 13) || xml.charCodeAt(gt - 1) === 47) { i = gt + 1; continue; }
+    const c = xml.indexOf(close, gt + 1); if (c < 0) break;
+    out.push(decodeXml(xml.slice(gt + 1, c)));
+    i = c + close.length;
+  }
   return out;
+}
+
+/** `unzip -Zt` → "N files, X bytes uncompressed, Y bytes compressed: Z%" */
+async function zipGuard(file: string, deadline: number): Promise<void> {
+  const out = await run("unzip", ["-Zt", file], deadline).catch(() => "");
+  const m = /(\d+)\s+files?,\s+(\d+)\s+bytes? uncompressed/i.exec(out);
+  if (!m) throw new ExtractError(422, "bad_archive", "not a readable zip archive");
+  if (Number(m[1]) > MAX_ZIP_TOTAL_ENTRIES || Number(m[2]) > MAX_ZIP_UNCOMPRESSED)
+    throw new ExtractError(413, "archive_too_large", "archive expands beyond the extraction limit");
 }
 
 async function extractDocx(file: string, deadline: number): Promise<string> {
@@ -183,10 +203,10 @@ async function extractUncapped(name: string, data: Buffer, deadline: number): Pr
       mime,
     };
   }
-  if (ext === "docx") return { text: await withTempFile(name, data, (file) => extractDocx(file, deadline)), mime };
-  if (ext === "pptx") return { text: await withTempFile(name, data, (file) => extractPptx(file, deadline)), mime };
-  if (ext === "xlsx") return { text: await withTempFile(name, data, (file) => extractXlsx(file, deadline)), mime };
-  if (ext === "hwpx") return { text: await withTempFile(name, data, (file) => extractHwpx(file, deadline)), mime };
+  if (ext === "docx") return { text: await withTempFile(name, data, async (file) => { await zipGuard(file, deadline); return extractDocx(file, deadline); }), mime };
+  if (ext === "pptx") return { text: await withTempFile(name, data, async (file) => { await zipGuard(file, deadline); return extractPptx(file, deadline); }), mime };
+  if (ext === "xlsx") return { text: await withTempFile(name, data, async (file) => { await zipGuard(file, deadline); return extractXlsx(file, deadline); }), mime };
+  if (ext === "hwpx") return { text: await withTempFile(name, data, async (file) => { await zipGuard(file, deadline); return extractHwpx(file, deadline); }), mime };
   throw new ExtractError(415, "unsupported_type", `unsupported attachment type: ${ext || "(none)"}`);
 }
 

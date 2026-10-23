@@ -397,6 +397,33 @@ export class DaouClient {
     return { data: res.buffer, contentType: res.contentType };
   }
 
+  /** Streaming GET with a hard byte cap: reads the body chunk by chunk and aborts as soon as it exceeds maxBytes. */
+  async fetchCapped(path: string, maxBytes: number, retried = false): Promise<{ data: Buffer; contentType: string }> {
+    if (!path.startsWith("/")) path = "/" + path;
+    const url = this.baseUrl + path;
+    const headers: Record<string, string> = { "User-Agent": "UBIONMessenger-Desktop/1.0", Accept: "*/*" };
+    const cookie = await this.jar.getCookieString(url);
+    if (cookie) headers.Cookie = cookie;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 60_000);
+    try {
+      const res = await fetch(url, { headers, redirect: "manual", signal: ctrl.signal });
+      if ((res.status === 401 || (res.status >= 300 && res.status < 400)) && !retried) {
+        ctrl.abort(); clearTimeout(timer); await this.refreshSession(); return this.fetchCapped(path, maxBytes, true);
+      }
+      if (res.status !== 200 || !res.body) { ctrl.abort(); throw new HttpError(res.status, `GET ${res.status}`); }
+      const len = Number(res.headers.get("content-length"));
+      if (Number.isFinite(len) && len > maxBytes) { ctrl.abort(); throw new HttpError(413, "too large"); }
+      const chunks: Buffer[] = []; let n = 0;
+      for await (const c of res.body as any as AsyncIterable<Uint8Array>) {
+        n += c.length;
+        if (n > maxBytes) { ctrl.abort(); throw new HttpError(413, "too large"); }
+        chunks.push(Buffer.from(c));
+      }
+      return { data: Buffer.concat(chunks, n), contentType: res.headers.get("content-type") || "" };
+    } finally { clearTimeout(timer); }
+  }
+
   // ---------- http ----------
   private requireUser(): SessionUser {
     if (!this.user) throw new HttpError(401, "not logged in");

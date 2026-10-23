@@ -14,7 +14,7 @@ export interface DaouPort {
   sendText(room_id: string, text: string): Promise<{ message_id?: number }>;
   sendFile?(room_id: string, file: { name: string; data: Buffer; mime?: string }): Promise<{ message_id?: number }>;
   getAttachments?(room_id: string, message_id: number): Promise<Array<{ name: string; size?: number; mime?: string; file_id: string; image?: boolean }>>;
-  downloadAttachment?(room_id: string, message_id: number, index: number, file_id?: string): Promise<{ data: Buffer; contentType: string; name: string }>;
+  downloadAttachment?(room_id: string, message_id: number, index: number, file_id?: string, maxBytes?: number): Promise<{ data: Buffer; contentType: string; name: string }>;
   verifyUserSession?(cookie: string): Promise<{ user_id: string; name: string } | null>;
   isRoomMember?(room_id: string, user_id: string): Promise<boolean>;
   onMessage(cb: (m: InboundMessage) => void): () => void;

@@ -34,12 +34,13 @@ class MockDaou implements DaouPort {
     if (this.emptyLookups > 0) { this.emptyLookups--; return []; }
     return this.attachments.get(message_id) ?? [];
   }
-  async downloadAttachment(_room_id: string, message_id: number, index: number, file_id?: string) {
+  async downloadAttachment(_room_id: string, message_id: number, index: number, file_id?: string, maxBytes?: number) {
     const all = this.attachments.get(message_id) ?? [];
     const a = file_id ? all.find((x) => x.file_id === file_id) : all[index];
     if (!a) throw new Error("not found");
     const b = this.binary.get(a.file_id);
     if (!b) throw new Error("not found");
+    if (maxBytes != null && b.data.length > maxBytes) throw Object.assign(new Error("too large"), { status: 413 });
     return { data: b.data, contentType: b.contentType || a.mime || "application/octet-stream", name: a.name };
   }
   sessions = new Map<string, { user_id: string; name: string } | null>();
@@ -699,27 +700,32 @@ describe("inbound attachments and downloads", () => {
   it("rejects non-allowlisted rooms and missing attachments", async () => {
     await setup();
     const denied = await fileReq("/bot/files/1?room_id=room:2");
-    expect(denied.status).toBe(403); expect((await denied.json()).error.code).toBe("room_not_allowed");
+    expect(denied.status).toBe(404);
     const missing = await fileReq("/bot/files/999?room_id=room:1");
     expect(missing.status).toBe(404); expect((await missing.json()).error.code).toBe("not_found");
   });
-  it("events:read-only may fetch only published ids; files:read may name a room explicitly", async () => {
-    await setup({ attachRetryMs: [0] });
+  it("only ids delivered to the adapter (or stored from autonomy rooms) are downloadable", async () => {
+    const store = new MemoryContextStore();
+    await setup({ attachRetryMs: [0], context: { store } } as any);
     const data = Buffer.from("published", "utf8");
     daou.attachments.set(50, [{ name: "a.txt", size: data.length, mime: "text/plain", file_id: "f50" }]);
     daou.binary.set("f50", { data });
-
     expect((await fileReq("/bot/files/50", RO)).status).toBe(404);
-    const explicit = await fileReq("/bot/files/50?room_id=room:1", FULL);
-    expect(explicit.status).toBe(200);
-    const eventsExplicit = await fileReq("/bot/files/50?room_id=room:1", RO);
-    expect(eventsExplicit.status).toBe(403); expect((await eventsExplicit.json()).error.code).toBe("forbidden_scope");
-
+    expect((await fileReq("/bot/files/50?room_id=room:1", FULL)).status).toBe(404); // explicit room no longer enough
     daou.msg("room:1", "a.txt", { message_id: 50, messageType: "SENDFILE" });
     await tick();
     const published = await fileReq("/bot/files/50", RO);
     expect(published.status).toBe(200);
     expect(Buffer.from(await published.arrayBuffer())).toEqual(data);
+    expect(store.deliveredRoom(50)).toBe("room:1"); // persisted proof survives restarts
+    // autonomy room not in BOT_ROOMS: stored message is downloadable with explicit room_id
+    store.setSettings("room:9", true, "test");
+    daou.attachments.set(51, [{ name: "b.txt", size: 1, mime: "text/plain", file_id: "f51" }]);
+    daou.binary.set("f51", { data: Buffer.from("b") });
+    daou.msg("room:9", "b.txt", { message_id: 51, messageType: "SENDFILE" });
+    await tick();
+    expect((await fileReq("/bot/files/51?room_id=room:9", FULL)).status).toBe(200);
+    expect((await fileReq("/bot/files/51?room_id=room:2", FULL)).status).toBe(404);
   });
   it("does not remember ids filtered out by mention-only", async () => {
     await setup({ mentionOnly: true, attachRetryMs: [0] });
@@ -740,19 +746,25 @@ describe("inbound attachments and downloads", () => {
     expect(r.status).toBe(429); expect(r.headers.get("retry-after")).toBeTruthy();
     expect((await r.json()).error.code).toBe("rate_limited");
   });
-  it("rejects files larger than maxFileBytes", async () => {
-    await setup({ maxFileBytes: 4 });
+  it("rejects files larger than maxFileBytes (metadata and streamed cap)", async () => {
+    await setup({ maxFileBytes: 4, attachRetryMs: [0] });
     daou.attachments.set(7, [{ name: "big.bin", size: 100, mime: "application/octet-stream", file_id: "big" }]);
     daou.binary.set("big", { data: Buffer.alloc(100, 1) });
-    const r = await fileReq("/bot/files/7?room_id=room:1");
+    daou.msg("room:1", "big.bin", { message_id: 7, messageType: "SENDFILE" }); await tick();
+    const r = await fileReq("/bot/files/7");
     expect(r.status).toBe(413); expect((await r.json()).error.code).toBe("too_large");
+    daou.attachments.set(8, [{ name: "lie.bin", file_id: "lie" }]);
+    daou.binary.set("lie", { data: Buffer.alloc(100, 1) });
+    daou.msg("room:1", "lie.bin", { message_id: 8, messageType: "SENDFILE" }); await tick();
+    expect((await fileReq("/bot/files/8")).status).toBe(413);
   });
   it("extracts text from a txt attachment", async () => {
-    await setup();
+    await setup({ attachRetryMs: [0] });
     const data = Buffer.from("hello\nworld", "utf8");
     daou.attachments.set(1, [{ name: "a.txt", size: data.length, mime: "text/plain", file_id: "t1" }]);
     daou.binary.set("t1", { data, contentType: "text/plain" });
-    const r = await fileReq("/bot/files/1/text?room_id=room:1");
+    daou.msg("room:1", "a.txt", { messageType: "SENDFILE" }); await tick();
+    const r = await fileReq("/bot/files/1/text");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ message_id: 1, index: 0, name: "a.txt", mime: "text/plain", chars: 11, truncated: false, text: "hello\nworld" });
     expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "file_text", token_id: "hermes", room_id: "room:1", message_id: 1, file_name: "a.txt", status: "ok" }));
@@ -783,4 +795,23 @@ describe("extract", () => {
       expect(res.text).toContain("World & more");
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
+  (hasPython ? it : it.skip)("refuses zip bombs before inflating (declared uncompressed > 100MB)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ubm-bomb-"));
+    const file = path.join(dir, "b.docx");
+    try {
+      execFileSync("python3", ["-c", "import sys,zipfile\nwith zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_DEFLATED) as z:\n  z.writestr('word/document.xml', b'\\0'*(101*1024*1024))", file]);
+      await expect(extractText("b.docx", fs.readFileSync(file))).rejects.toMatchObject({ code: "archive_too_large", status: 413 });
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
+  (hasPython ? it : it.skip)("pptx with many unclosed <a:t> tags extracts in linear time", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ubm-pptx-"));
+    const file = path.join(dir, "p.pptx");
+    try {
+      execFileSync("python3", ["-c", "import sys,zipfile\nwith zipfile.ZipFile(sys.argv[1],'w',zipfile.ZIP_DEFLATED) as z:\n  z.writestr('ppt/slides/slide1.xml', '<a:t>ok</a:t>' + '<a:t>'*400000)", file]);
+      const t0 = Date.now();
+      const res = await extractText("p.pptx", fs.readFileSync(file));
+      expect(res.text).toContain("ok");
+      expect(Date.now() - t0).toBeLessThan(3000);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }, 20_000);
 });
