@@ -41,6 +41,11 @@ const api = {
       call<{ ok: true; count: number }>("pubsub:send", { message, targets, range: "partial" }),
     remove: (id: number) => call<{ ok: true }>("pubsub:delete", id),
   },
+  zoom: {
+    caps: () => call<import("./core/zoom").ZoomCaps>("zoom:caps"),
+    connect: (key: string) => call<{ connected: boolean }>("zoom:connect", key),
+    createMeeting: (key: string) => call<{ joinUrl: string } | { needsConnect: true }>("zoom:createMeeting", key),
+  },
   listFavorites: () => call<import("./core/types").Person[]>("favorites:list"),
   addFavorite: (id: number) => call<{ ok: true }>("favorites:add", id),
   removeFavorite: (id: number) => call<{ ok: true }>("favorites:remove", id),

@@ -65,6 +65,11 @@ export type Bridge = {
     send(message: string, targets: PubsubTarget[]): Promise<{ ok: true; count: number }>;
     remove(id: number): Promise<{ ok: true }>;
   };
+  zoom: {
+    caps(): Promise<import("../electron/core/zoom").ZoomCaps>;
+    connect(key: string): Promise<{ connected: boolean }>;
+    createMeeting(key: string): Promise<{ joinUrl: string } | { needsConnect: true }>;
+  };
   listFavorites(): Promise<Person[]>;
   addFavorite(id: number): Promise<{ ok: true }>;
   removeFavorite(id: number): Promise<{ ok: true }>;

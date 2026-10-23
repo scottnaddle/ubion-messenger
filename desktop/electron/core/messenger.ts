@@ -8,6 +8,7 @@ import { xmppKeyFromLoginId } from "./xmpp-key";
 import { canonMessageId } from "./messages";
 import { isDeletedMessage } from "./chat-delete";
 import { parseNotice } from "./room-notice";
+import { parseZoomTokenMessage } from "./zoom";
 import type { BotStatusUpdate, ParsedBotStatus } from "../../src/lib/bot-status";
 import type {
   ChatMessage,
@@ -335,6 +336,12 @@ export class MessengerCore {
     const me = this.client.user?.id;
     if (me == null) return;
     const actiontype = String(obj.actiontype ?? obj.actionType ?? "").toLowerCase();
+    if (actiontype === "zoom") {
+      // Zoom OAuth result pushed by the server (UNVERIFIED). Carries a secret: never render, never log.
+      const token = parseZoomTokenMessage(obj);
+      if (token) this.emit("zoomToken", token);
+      return;
+    }
     if (actiontype === "notice") {
       const routed = routeXmppBody(obj, me);
       if (routed.seq != null && Number.isFinite(routed.seq) && routed.kind !== "unknown") {

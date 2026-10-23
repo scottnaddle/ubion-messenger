@@ -44,6 +44,10 @@ import {
   captureScale, captureThumbnailSize, normalizeCropRect, pickScreenSource, type CaptureResult,
 } from "./core/capture";
 import { chatBotUrl, isChatBotUrl } from "./core/chatbot";
+import {
+  extractZoomRedirect, resolveZoomClientId, zoomAuthorizeUrl, zoomCaps, zoomEnabled, zoomRedirectUri, zoomState,
+  ZOOM_DISABLED_TEXT, type ZoomConfig,
+} from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
 import { createBotSettingsClient } from "./core/bot-settings";
 import { createAwayMonitor } from "./core/away";
@@ -160,6 +164,7 @@ function handle(channel: string, fn: (...args: any[]) => any) {
 
 function wireCore() {
   unsubscribe.forEach((u) => u());
+  resetZoom();
   core.allowTcpFallback = !!settings.xmppTcpFallback;
   core.portal.persistedMaxPostId = typeof settings.portalLastPostId === "number" ? settings.portalLastPostId : null;
   core.portal.onPostBaseline = (id) => {
@@ -187,6 +192,8 @@ function wireCore() {
     fwd("portalBadge"),
     core.on("portalNewPost", (p) => notifyNewPost(p)),
     core.on("portalNewPostSummary", (p) => notifyNewPostSummary(p)),
+    core.on("zoomToken", (t) => setZoomToken(t.accessToken)),
+    core.on("loggedOut", () => resetZoom()),
     core.on("rooms", () => updateBadge()),
     core.on("message", (m) => {
       if (m.attachUpdate) return; // attach fill-in of an already-delivered file message (renderer upserts it)
@@ -581,6 +588,89 @@ async function openDocViewer(o: { url?: string; file?: string; title: string; se
 
 function clearPreviewTemp() {
   try { fs.rmSync(previewTempDir(), { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
+// ---------- Zoom 연동 (UNVERIFIED OAuth, behind UBM_ZOOM=1) ----------
+/** Secret: memory only, never logged, never sent to the renderer. Cleared on logout / core rewire. */
+let zoomAccessToken: string | null = null;
+let zoomConfigCache: { config: ZoomConfig | undefined } | null = null;
+let zoomWin: BrowserWindow | null = null;
+const zoomTokenWaiters = new Set<() => void>();
+
+function setZoomToken(token: string | null) {
+  zoomAccessToken = token || null;
+  if (zoomAccessToken) for (const w of [...zoomTokenWaiters]) w();
+}
+
+function resetZoom() {
+  zoomAccessToken = null;
+  zoomConfigCache = null;
+  if (zoomWin && !zoomWin.isDestroyed()) zoomWin.close();
+}
+
+async function loadZoomConfig(): Promise<ZoomConfig | undefined> {
+  if (zoomConfigCache) return zoomConfigCache.config;
+  try {
+    const config = await core.client.fetchZoomConfig();
+    zoomConfigCache = { config };
+    return config;
+  } catch (e) {
+    console.warn("zoom config failed:", maskSecrets(String((e as Error)?.message ?? e)));
+    return undefined;
+  }
+}
+
+/**
+ * Opens the Zoom authorize page in-app (portal partition so the Daou redirect sees the SSO cookie, like the
+ * original window.open). Best effort: a token in the redirect URL is taken directly; otherwise the server is
+ * expected to exchange the code and push the token over XMPP ("zoom" stanza). Resolves true once a token is held.
+ */
+function connectZoomWindow(authorizeUrl: string, redirectUri: string): Promise<boolean> {
+  if (zoomWin && !zoomWin.isDestroyed()) zoomWin.close();
+  return new Promise((resolve) => {
+    const w = new BrowserWindow({
+      width: 520, height: 720, title: "Zoom 연결", autoHideMenuBar: true,
+      webPreferences: { partition: PORTAL_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
+    });
+    zoomWin = w;
+    let done = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      zoomTokenWaiters.delete(onToken);
+      if (!w.isDestroyed()) w.close();
+      resolve(ok);
+    };
+    const onToken = () => finish(true);
+    zoomTokenWaiters.add(onToken);
+    timer = setTimeout(() => finish(!!zoomAccessToken), 10 * 60_000);
+    const watch = (u: string) => {
+      const r = extractZoomRedirect(u, redirectUri);
+      if (!r) return;
+      if (r.accessToken) return setZoomToken(r.accessToken);
+      if (r.error) return finish(false);
+      // Code only: the server exchanges it; give the XMPP push a short window.
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(!!zoomAccessToken), 30_000);
+    };
+    const guard = (e: Electron.Event, u: string) => {
+      if (/^https:/i.test(u) || extractZoomRedirect(u, redirectUri)) return watch(u);
+      e.preventDefault();
+    };
+    w.on("page-title-updated", (e) => e.preventDefault());
+    w.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    w.webContents.on("will-navigate", guard);
+    w.webContents.on("will-redirect", guard);
+    w.webContents.on("did-navigate", (_e, u) => watch(u));
+    w.on("closed", () => {
+      if (zoomWin === w) zoomWin = null;
+      finish(!!zoomAccessToken);
+    });
+    // Never log the URL (it carries state / code).
+    w.loadURL(authorizeUrl).catch((e) => console.warn("zoom authorize load failed:", maskSecrets(String((e as Error)?.name ?? e))));
+  });
 }
 
 function notifyNewPost(p: MessengerEventMap["portalNewPost"]) {
@@ -1045,6 +1135,34 @@ function registerIpc() {
     const detail = selfOnly ? await logged("pubsub detail", core.client.getPubsub(id)) : null;
     checkPubsubDelete({ enabled: PUBSUB_SEND_ENABLED, selfOnly, detail, me });
     return logged("pubsub delete", core.client.deletePubsub(id));
+  });
+  // Zoom 연동. createMeeting only creates the Zoom meeting; the join URL goes to the composer and the user sends it.
+  const ZOOM_ON = zoomEnabled(process.env);
+  handle("zoom:caps", async () => {
+    const config = ZOOM_ON && core.user ? await loadZoomConfig() : undefined;
+    return zoomCaps({ env: process.env, config, connected: !!zoomAccessToken });
+  });
+  handle("zoom:connect", async (key: string) => {
+    if (!ZOOM_ON) throw new Error(ZOOM_DISABLED_TEXT);
+    const roomSeq = guardedRoomSeq(key);
+    const config = await loadZoomConfig();
+    if (!config?.use) throw new Error("서버에 Zoom 연동이 설정되어 있지 않습니다");
+    const { clientId } = resolveZoomClientId(config, process.env.UBM_ZOOM_CLIENT_ID);
+    const redirectUri = zoomRedirectUri(core.client.baseUrl);
+    const state = zoomState({ resource: core.client.resource, userSeq: core.user!.id, roomSeq });
+    await syncPortalCookies().catch((e) => console.warn("portal cookie sync failed:", (e as Error).name));
+    return { connected: await connectZoomWindow(zoomAuthorizeUrl(clientId, redirectUri, state), redirectUri) };
+  });
+  handle("zoom:createMeeting", async (key: string) => {
+    if (!ZOOM_ON) throw new Error(ZOOM_DISABLED_TEXT);
+    guardedRoomSeq(key);
+    if (!zoomAccessToken) return { needsConnect: true as const };
+    const r = await logged("zoom meeting", core.client.createZoomMeeting(zoomAccessToken));
+    if (r === "auth") {
+      setZoomToken(null);
+      return { needsConnect: true as const };
+    }
+    return { joinUrl: r.joinUrl };
   });
   handle("history:clear", async (key: string, messageId: number, confirmed: unknown) => {
     if (!HISTORY_CLEAR_ENABLED) throw new Error("대화 기록 삭제는 아직 지원되지 않습니다");

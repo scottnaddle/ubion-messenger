@@ -20,6 +20,7 @@ import {
   ROOM_NOTICE_CLOSE_CONFIRM, ROOM_NOTICE_REGISTER_CONFIRM,
 } from "../../electron/core/room-notice";
 import type { NoticeStatus } from "../../electron/core/types";
+import type { ZoomCaps } from "../../electron/core/zoom";
 import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
@@ -82,6 +83,9 @@ export function ChatView({
   const [noticeStatus, setNoticeStatus] = useState<NoticeStatus>("normal");
   const [roomMenu, setRoomMenu] = useState<{ x: number; y: number } | null>(null);
   const [backupOpen, setBackupOpen] = useState(false);
+  const [zoomCaps, setZoomCaps] = useState<ZoomCaps | null>(null);
+  const [zoomBusy, setZoomBusy] = useState(false);
+  const [composerInsert, setComposerInsert] = useState<ComposerInsert | null>(null);
   const [roomMembers, setRoomMembers] = useState<MentionCandidate[]>([]);
   const [botAutonomy, setBotAutonomy] = useState(false);
   const [botLoading, setBotLoading] = useState(false);
@@ -417,6 +421,34 @@ export function ChatView({
     }
   };
 
+  useEffect(() => {
+    let alive = true;
+    api().zoom.caps().then((c) => { if (alive) setZoomCaps(c); }).catch(() => { if (alive) setZoomCaps(null); });
+    return () => { alive = false; };
+  }, []);
+
+  // Zoom: create the meeting, then only put the join URL in the composer. The user presses 보내기.
+  const startZoom = async () => {
+    if (zoomBusy) return;
+    const key = room.key;
+    setZoomBusy(true);
+    try {
+      let r = await api().zoom.createMeeting(key);
+      if ("needsConnect" in r) {
+        const c = await api().zoom.connect(key);
+        if (!c.connected) return toast("Zoom 연결을 완료하지 못했습니다");
+        r = await api().zoom.createMeeting(key);
+        if ("needsConnect" in r) return toast("Zoom 인증에 실패했습니다");
+      }
+      setComposerInsert({ roomKey: key, text: r.joinUrl, id: Date.now() });
+      toast("Zoom 회의 링크를 입력창에 넣었습니다. 보내기를 눌러 공유하세요", "info");
+    } catch (e) {
+      toast(`Zoom 회의를 만들지 못했습니다: ${(e as Error).message}`);
+    } finally {
+      setZoomBusy(false);
+    }
+  };
+
   const stagePasted = (files: File[]) => {
     stageFiles(files.map((f) => ({
       name: f.name && f.name !== "image.png" ? f.name : `캡처_${new Date().toISOString().replace(/[:.]/g, "-")}.png`,
@@ -518,6 +550,11 @@ export function ChatView({
           <div className="name">{room.name}</div>
           <div className="sub muted">{subtitle}</div>
         </div>
+        {zoomCaps?.enabled && canSend && (
+          <button className="icon-btn" title="Zoom 화상회의" aria-label="Zoom 화상회의" disabled={zoomBusy} onClick={() => void startZoom()}>
+            <Icon name="video" size={18} />
+          </button>
+        )}
         <button className={`icon-btn ${searchOpen ? "on" : ""}`} title="대화 내용 검색" onClick={() => setSearchOpen((s) => !s)}>
           <Icon name="search" size={18} />
         </button>
@@ -649,6 +686,7 @@ export function ChatView({
             onCapture={() => void captureScreen()}
             onPasteFiles={stagePasted}
             onEscapeTray={escapeTray}
+            insert={composerInsert}
           />
         </>
       ) : (
@@ -869,12 +907,14 @@ function MessageRow({
   );
 }
 
+type ComposerInsert = { roomKey: string; text: string; id: number };
+
 function Composer({
-  roomKey, meId, isGroup, hasFiles, onSend, onPick, onCapture, onPasteFiles, onEscapeTray,
+  roomKey, meId, isGroup, hasFiles, onSend, onPick, onCapture, onPasteFiles, onEscapeTray, insert,
 }: {
   roomKey: string; meId: number; isGroup: boolean; hasFiles: boolean;
   onSend: (t: string) => Promise<boolean>; onPick: () => void; onCapture: () => void; onPasteFiles: (files: File[]) => void;
-  onEscapeTray: () => boolean;
+  onEscapeTray: () => boolean; insert?: ComposerInsert | null;
 }) {
   const [text, setText] = useState("");
   const [members, setMembers] = useState<MentionCandidate[]>([]);
@@ -916,6 +956,21 @@ function Composer({
     setEmojiOpen(false);
     ta.current?.focus();
   }, [roomKey]);
+
+  // External text (Zoom join URL) goes in at the caret; never sent automatically.
+  useEffect(() => {
+    if (!insert || insert.roomKey !== roomKey) return;
+    const el = ta.current;
+    const current = el?.value ?? "";
+    const next = insertAtSelection(current, el?.selectionStart ?? current.length, el?.selectionEnd ?? current.length, insert.text);
+    setText(next.text);
+    requestAnimationFrame(() => {
+      const t = ta.current;
+      if (!t) return;
+      t.focus();
+      t.setSelectionRange(next.cursor, next.cursor);
+    });
+  }, [insert?.id]);
 
   useEffect(() => {
     let alive = true;

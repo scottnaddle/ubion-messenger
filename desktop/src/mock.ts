@@ -2,6 +2,7 @@
 import type { Bridge } from "./api";
 import { captureFileName } from "../electron/core/capture";
 import { isLocalInAppExtension } from "../electron/core/doc-preview";
+import { ZOOM_DISABLED_TEXT } from "../electron/core/zoom";
 import { buildCircleBody, PUBSUB_PAGE_SIZE, PUBSUB_SEND_DISABLED_TEXT, type PubsubDetail } from "../electron/core/pubsub";
 
 export function installMockIfNeeded() {
@@ -45,6 +46,7 @@ export function installMockIfNeeded() {
   const mockDeleted: string[] = [];
   const mockBotAutonomy: Record<string, boolean> = {};
   const mockBackups: import("../electron/core/backup").BackupItem[] = [];
+  let mockZoomConnected = false;
   const mockPubsubSend = new URLSearchParams(location.search).has("pubsubSend");
   const mockPubsubs: PubsubDetail[] = [
     { id: 9001, message: "11월 전사 워크숍 일정 안내드립니다.", createdAt: new Date(Date.now() - 864e5).toISOString(), companyTarget: false,
@@ -191,6 +193,19 @@ export function installMockIfNeeded() {
         if (i >= 0) mockPubsubs.splice(i, 1);
         return { ok: true as const };
       },
+    },
+    // ?zoom shows the 화상회의 button; the meeting link is fake and only lands in the composer.
+    zoom: {
+      caps: async () => {
+        const on = new URLSearchParams(location.search).has("zoom");
+        return { enabled: on, configured: on, flowVerified: false as const, connected: mockZoomConnected, reason: on ? undefined : ZOOM_DISABLED_TEXT };
+      },
+      connect: async () => {
+        mockZoomConnected = true;
+        return { connected: true };
+      },
+      createMeeting: async () =>
+        mockZoomConnected ? { joinUrl: `https://zoom.us/j/${Math.floor(1e10 + Math.random() * 9e10)}` } : { needsConnect: true as const },
     },
     listFavorites: async () => users.slice(0, 2),
     addFavorite: async () => ({ ok: true as const }),

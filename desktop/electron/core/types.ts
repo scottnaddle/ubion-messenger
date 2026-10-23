@@ -134,6 +134,8 @@ export type MessengerEventMap = {
   presence: { userId: number; presence: Presence };
   botStatus: BotStatusUpdate;
   connection: { state: ConnState; error?: string };
+  /** Main-process only (never forwarded to the renderer): Zoom access token from an XMPP "zoom" stanza. */
+  zoomToken: import("./zoom").ZoomToken;
 } & PortalEvents;
 
 export type ReadReceipt = { roomKey: string; readerSeq: number; beginId?: number; endId?: number };

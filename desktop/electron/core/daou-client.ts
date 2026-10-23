@@ -15,6 +15,10 @@ import {
   backupBodyError, backupDeletePath, backupDownloadPath, backupListPath, backupRequestPath, buildBackupRequest,
   HISTORY_CLEAR_METHOD, historyClearPath, parseBackupList, type BackupItem,
 } from "./backup";
+import {
+  isZoomAuthError, parseMeeting, parseZoomConfig, ZOOM_CONFIG_PATH, ZOOM_DISABLED_TEXT, ZOOM_MEETING_METHOD, ZOOM_MEETING_PATH,
+  zoomEnabled, zoomMeetingForm, type ZoomConfig, type ZoomMeeting,
+} from "./zoom";
 import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
 import { fromElectronCookie, needsWebLogin, onSessionExpired, WEB_LOGIN_MESSAGE, type ElectronCookieIn } from "./web-login";
 
@@ -615,6 +619,28 @@ export class DaouClient {
   }
 
   /** Authenticated GET of any same-server path (thumbnails, avatars, files). */
+  // ---------- Zoom ----------
+  /** Read-only: GET /api/mobile/baseconfig → useZoomChat / zoomClientId. undefined when the server has no Zoom fields. */
+  async fetchZoomConfig(): Promise<ZoomConfig | undefined> {
+    this.requireUser();
+    return parseZoomConfig(await this.getJson(ZOOM_CONFIG_PATH));
+  }
+
+  /**
+   * Creates a Zoom meeting (Zoom-side only; nothing is sent to a room): POST /api/zoom/meetings, form accessToken=….
+   * Returns "auth" when the token is rejected (caller must re-authorize). Gated by UBM_ZOOM=1.
+   */
+  async createZoomMeeting(accessToken: string): Promise<ZoomMeeting | "auth"> {
+    if (!zoomEnabled(process.env)) throw new Error(ZOOM_DISABLED_TEXT);
+    this.requireUser();
+    const res = await this.request(ZOOM_MEETING_PATH, { method: ZOOM_MEETING_METHOD, form: zoomMeetingForm(accessToken) });
+    if (isZoomAuthError(res.status, res.text)) return "auth";
+    if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `Zoom 회의 생성 실패 (HTTP ${res.status})`);
+    const meeting = parseMeeting(res.text);
+    if (!meeting) throw new HttpError(500, "Zoom 회의 링크를 받지 못했습니다");
+    return meeting;
+  }
+
   async fetchBinary(path: string): Promise<{ data: Buffer; contentType: string }> {
     if (!path.startsWith("/")) path = "/" + path;
     const res = await this.request(path);
