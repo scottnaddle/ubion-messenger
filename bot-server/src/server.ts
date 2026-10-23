@@ -27,7 +27,7 @@ export type BotServerOpts = {
   /** Peers whose X-Forwarded-For is trusted (reverse proxy). Default 127.0.0.1 and ::1. */
   trustedProxies?: string[];
   /** Browser origins allowed for CORS on the settings endpoints (empty = no CORS headers). */
-  corsOrigins?: string[]; placeholderTtlMs?: number; attachRetryMs?: number[]; logger?: (m: string) => void;
+  corsOrigins?: string[]; placeholderTtlMs?: number; statusMode?: "message" | "chatstate"; attachRetryMs?: number[]; logger?: (m: string) => void;
   context?: ContextOpts; autonomyNotices?: boolean;
 };
 
@@ -731,6 +731,36 @@ export class BotServer {
       if (!b || typeof b.room_id !== "string" || !["thinking", "working", "done"].includes(b.state)) return err(E(400, "bad_request", "room_id and state (thinking|working|done) required"));
       if (b.text != null && typeof b.text !== "string") return err(E(400, "bad_request", "text must be a string"));
       if (!this.o.allowlist.allows(b.room_id, tok)) { this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "denied", code: "room_not_allowed" }); return err(E(403, "room_not_allowed", "room not allowlisted")); }
+      if ((this.o.statusMode ?? "chatstate") === "chatstate") {
+        const now = (this.o.now ?? Date.now)(), gap = this.o.statusThrottleMs ?? 3000, last = this.lastStatus.get(b.room_id);
+        // A failed send must not consume the throttle window (the retry would be silently "throttled").
+        const unthrottle = () => { if (b.state === "done") return; if (last == null) this.lastStatus.delete(b.room_id); else this.lastStatus.set(b.room_id, last); };
+        if (b.state !== "done") {
+          if (last != null && now - last < gap) { this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "throttled", code: b.state }); return { status: 200, body: { ok: true, throttled: true, state: b.state } }; }
+          this.lastStatus.set(b.room_id, now);
+        }
+        let text = "";
+        if (b.state === "thinking") text = "생각 중";
+        else if (b.state === "working") {
+          const t = String(b.text ?? "").replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim();
+          text = t ? [...t].slice(0, 60).join("") : "작업 중";
+        }
+        if (!this.o.port.sendChatState) {
+          this.logf(`chatstate unsupported room=${b.room_id}`); unthrottle();
+          this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "error", code: "upstream_error" });
+          return err(E(502, "upstream_error", "DaouOffice chat state unsupported"));
+        }
+        try {
+          const r = await this.o.port.sendChatState(b.room_id, b.state, text);
+          this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "ok", code: b.state });
+          return { status: 200, body: { ok: true, state: b.state, mode: "chatstate", recipients: r.recipients } };
+        } catch (e: any) {
+          unthrottle();
+          this.logf(`chatstate send failed room=${b.room_id} err=${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 120)}`);
+          this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "error", code: "upstream_error" });
+          return err(E(502, "upstream_error", "DaouOffice chat state failed"));
+        }
+      }
       const now = (this.o.now ?? Date.now)(), gap = this.o.statusThrottleMs ?? 3000;
       const last = this.lastStatus.get(b.room_id);
       if (last != null && now - last < gap) { this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "throttled", code: b.state }); return { status: 200, body: { ok: true, throttled: true, state: b.state } }; }

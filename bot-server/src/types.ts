@@ -12,6 +12,7 @@ export interface DaouPort {
   botName(): string;
   listRooms(): Promise<BotRoom[]>;
   sendText(room_id: string, text: string): Promise<{ message_id?: number }>;
+  sendChatState?(room_id: string, state: "thinking" | "working" | "done", text: string): Promise<{ recipients: number }>;
   sendFile?(room_id: string, file: { name: string; data: Buffer; mime?: string }): Promise<{ message_id?: number }>;
   getAttachments?(room_id: string, message_id: number): Promise<Array<{ name: string; size?: number; mime?: string; file_id: string; image?: boolean }>>;
   downloadAttachment?(room_id: string, message_id: number, index: number, file_id?: string, maxBytes?: number): Promise<{ data: Buffer; contentType: string; name: string }>;

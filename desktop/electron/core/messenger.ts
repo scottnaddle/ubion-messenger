@@ -35,6 +35,20 @@ export function isChatType(type: string) {
   return !NON_CHAT.has(type);
 }
 
+const xmlEscape = (s: string) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+
+/** Ephemeral bot-status chat-state stanza (no body, so unaware clients ignore it). */
+export function botStatusStanza(opts: { to: number | string; domain: string; state: "thinking" | "working" | "done"; text: string; room?: string; id: string }) {
+  const { to, domain, state, text, room, id } = opts;
+  const chatstate = state === "done" ? "paused" : "composing";
+  const body = state === "done" ? "" : text;
+  const roomKey = room != null && !String(room).startsWith("room:") ? `room:${room}` : room;
+  const roomAttr = roomKey ? ` room='${xmlEscape(String(roomKey))}'` : "";
+  const msgId = String(id).startsWith("bs-") ? String(id) : `bs-${id}`;
+  return `<message type='chat' to='${xmlEscape(String(to))}@${xmlEscape(domain)}' id='${xmlEscape(msgId)}'><${chatstate} xmlns='http://jabber.org/protocol/chatstates'/><bot-status xmlns='urn:ubion:bot-status' state='${state}'${roomAttr}>${xmlEscape(body)}</bot-status><no-store xmlns='urn:xmpp:hints'/></message>`;
+}
+
 /** Map an XMPP JSON body (official desktop format) to a room-scoped message. Pure; unit-tested. */
 export function routeXmppBody(obj: Record<string, any>, me: number) {
   const fr = (obj.from && typeof obj.from === "object" ? obj.from : {}) as Record<string, any>;
@@ -93,6 +107,8 @@ export class MessengerCore {
   /** Read-only portal home (GET whitelist), shares the client's GOSSOcookie session. */
   readonly portal: PortalService;
   private xmpp: XmppClient | BoshClient | null = null;
+  /** XMPP domain actually used for the current realtime session. */
+  private xmppDomain = "";
   /** Realtime transport in use ("bosh" = XMPP over HTTPS, default; "tcp" = plaintext 5222 fallback). */
   transport: "bosh" | "tcp" | null = null;
   /** Hidden setting: allow plaintext TCP 5222 if BOSH cannot connect (off by default). */
@@ -223,17 +239,21 @@ export class MessengerCore {
     this.xmpp?.stop();
     this.xmpp = null;
     this.transport = null;
-    if (forceTcp) return this.attachXmpp(new XmppClient({
-      host,
-      port: 5222,
-      domain: this.client.xmppDomain,
-      username: String(this.client.user!.repId),
-      password: xmppKeyFromLoginId(this.client.loginIdForXmpp()),
-      resource: this.client.resource,
-    }), "tcp");
+    if (forceTcp) {
+      this.xmppDomain = this.client.xmppDomain;
+      return this.attachXmpp(new XmppClient({
+        host,
+        port: 5222,
+        domain: this.client.xmppDomain,
+        username: String(this.client.user!.repId),
+        password: xmppKeyFromLoginId(this.client.loginIdForXmpp()),
+        resource: this.client.resource,
+      }), "tcp");
+    }
     const gen = ++this.xmppGen;
     void this.boshCreds().then((c) => {
       if (gen !== this.xmppGen || !this.client.user) return;
+      this.xmppDomain = c.domain;
       const url = `${this.client.baseUrl}/http-bind/`;
       const x = new BoshClient({ url, domain: c.domain, username: c.username, password: c.password, resource: this.client.resource });
       x.on("state", (st: string) => {
@@ -534,6 +554,30 @@ export class MessengerCore {
   async sendFile(key: string, file: { name: string; data: Buffer; mime?: string }) {
     const { kind, seq } = this.parseKey(key);
     return this.client.sendFile(kind, seq, file);
+  }
+
+  /** Broadcast an ephemeral bot status to a buddy or every member of a group room (excluding self). */
+  async sendBotStatus(roomKey: string, state: "thinking" | "working" | "done", text: string): Promise<number> {
+    const x = this.xmpp;
+    if (!x || !x.online) throw new Error("realtime not online");
+    const { kind, seq } = this.parseKey(roomKey);
+    let recipients: number[];
+    if (kind === "buddy") recipients = [seq];
+    else if (kind === "room") {
+      const me = this.client.user?.id;
+      recipients = [...new Set((await this.members(roomKey)).map((m) => m.userId))].filter((id) => Number.isInteger(id) && id > 0 && id !== me);
+    } else throw new Error(`unsupported room kind: ${kind}`);
+    const domain = this.xmppDomain || this.client.xmppDomain;
+    // Also drop XML-invalid code points (lone surrogates, U+FFFE/FFFF): one would kill the whole XMPP stream.
+    const body = [...String(text ?? "").replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|[^\u0000-\ud7ff\ue000-\ufffd\u{10000}-\u{10ffff}]/gu, " ").replace(/\s+/g, " ").trim()]
+      .slice(0, 60)
+      .join("");
+    let sent = 0;
+    for (const to of recipients) {
+      const id = `bs-${Math.random().toString(36).slice(2)}`;
+      if (x.sendStanza(botStatusStanza({ to, domain, state, text: body, room: kind === "room" ? roomKey : undefined, id }))) sent++;
+    }
+    return sent;
   }
 
   /** Mark read up to the latest message, only meaningful when room is open + window focused. */

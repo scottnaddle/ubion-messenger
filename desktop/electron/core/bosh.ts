@@ -102,6 +102,13 @@ export class BoshClient extends EventEmitter {
     if (this.online) this.write(`<presence><status>${status}</status></presence>`);
   }
 
+  /** Send a raw stanza; false when the session is not online. */
+  sendStanza(xml: string): boolean {
+    if (!this.online) return false;
+    this.write(xml);
+    return true;
+  }
+
   private reset() {
     this.gen++;
     this.sid = "";

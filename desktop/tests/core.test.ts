@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { splitStanzas, xmlUnescape } from "../electron/core/xmpp";
-import { parsePresence, routeXmppBody, MessengerCore } from "../electron/core/messenger";
+import { botStatusStanza, parsePresence, routeXmppBody, MessengerCore } from "../electron/core/messenger";
 import { xmppKeyFromLoginId } from "../electron/core/xmpp-key";
 import { canonMessageId, dedupeByMessageId, upsertMessage } from "../electron/core/messages";
 import { normalizeRestMessage, sortRooms } from "../electron/core/daou-client";
@@ -61,6 +61,66 @@ describe("routing", () => {
     expect(parsePresence(undefined, "online:on")).toBe("online");
     expect(parsePresence(undefined, "away:on")).toBe("away");
     expect(parsePresence("unavailable", "terminated")).toBe("offline");
+  });
+});
+
+describe("bot status chat state", () => {
+  it("escapes text and omits room for a buddy", () => {
+    const x = botStatusStanza({ to: 229, domain: "d", state: "thinking", text: "a & <b> ' \" c", id: "bs-1" });
+    expect(x).toBe(
+      `<message type='chat' to='229@d' id='bs-1'><composing xmlns='http://jabber.org/protocol/chatstates'/><bot-status xmlns='urn:ubion:bot-status' state='thinking'>a &amp; &lt;b&gt; &apos; &quot; c</bot-status><no-store xmlns='urn:xmpp:hints'/></message>`
+    );
+    expect(x).not.toContain(" room=");
+  });
+  it("adds the room attribute and uses paused with empty text for done", () => {
+    const x = botStatusStanza({ to: 5, domain: "d", state: "done", text: "ignored", room: "room:900", id: "bs-2" });
+    expect(x).toContain("state='done' room='room:900'");
+    expect(x).toContain("<paused xmlns='http://jabber.org/protocol/chatstates'/>");
+    expect(x).not.toContain("ignored");
+    expect(x).toContain("id='bs-2'");
+  });
+  it("sendBotStatus targets one buddy", async () => {
+    const core = new MessengerCore("https://example.invalid");
+    core.client.user = { id: 1, repId: 1, name: "me", loginId: "me" };
+    const sent: string[] = [];
+    (core as any).xmpp = { online: true, sendStanza: (x: string) => { sent.push(x); return true; } };
+    (core as any).xmppDomain = "xmppdaou.com";
+    expect(await core.sendBotStatus("buddy:229", "working", "  hi  ")).toBe(1);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("to='229@xmppdaou.com'");
+    expect(sent[0]).toContain("state='working'");
+    expect(sent[0]).not.toContain(" room=");
+  });
+  it("sendBotStatus strips XML-invalid chars and throws when offline", async () => {
+    const core = new MessengerCore("https://example.invalid");
+    core.client.user = { id: 1, repId: 1, name: "me", loginId: "me" };
+    const sent: string[] = [];
+    (core as any).xmpp = { online: true, sendStanza: (x: string) => { sent.push(x); return true; } };
+    await core.sendBotStatus("buddy:2", "working", "a\ud800b\uffff\u2067c\u0007d");
+    expect(sent[0]).toContain(">a b c d</bot-status>");
+    (core as any).xmpp.online = false;
+    await expect(core.sendBotStatus("buddy:2", "working", "x")).rejects.toThrow("realtime not online");
+    await expect(new MessengerCore("https://example.invalid").sendBotStatus("buddy:2", "done", "")).rejects.toThrow();
+  });
+  it("sendBotStatus targets room members except self", async () => {
+    const core = new MessengerCore("https://example.invalid");
+    core.client.user = { id: 1, repId: 1, name: "me", loginId: "me" };
+    const sent: string[] = [];
+    (core as any).xmpp = { online: true, sendStanza: (x: string) => { sent.push(x); return true; } };
+    (core as any).xmppDomain = "d";
+    core.members = async () => [
+      { userId: 5, name: "a", image: "", position: "" },
+      { userId: 1, name: "me", image: "", position: "" },
+      { userId: 7, name: "b", image: "", position: "" },
+      { userId: 5, name: "a", image: "", position: "" },
+      { userId: NaN, name: "?", image: "", position: "" },
+    ];
+    expect(await core.sendBotStatus("room:900", "done", "")).toBe(2);
+    expect(sent.map((x) => /to='(\d+)@/.exec(x)![1])).toEqual(["5", "7"]);
+    for (const x of sent) {
+      expect(x).toContain(" room='room:900'");
+      expect(x).toContain("<paused xmlns='http://jabber.org/protocol/chatstates'/>");
+    }
   });
 });
 

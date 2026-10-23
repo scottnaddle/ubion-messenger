@@ -39,7 +39,7 @@ async function main() {
   } catch (e) {
     log(`context disabled: ${String((e as any)?.message ?? e)}`);
   }
-  const srv = new BotServer({ port, tokens, allowlist: new Allowlist(env("BOT_ROOMS").split(",").map((s) => s.trim()).filter(Boolean)), mentionOnly: env("BOT_MENTION_ONLY", "0") === "1", audit: new Audit((l) => log(`[audit] ${l}`)), trustedProxies: env("BOT_TRUSTED_PROXIES", "127.0.0.1,::1").split(",").map((x) => x.trim()).filter(Boolean), corsOrigins: (process.env.BOT_CORS_ORIGINS ?? "").split(",").map((x) => x.trim()).filter(Boolean), ...(context ? { context } : {}) });
+  const srv = new BotServer({ port, tokens, allowlist: new Allowlist(env("BOT_ROOMS").split(",").map((s) => s.trim()).filter(Boolean)), mentionOnly: env("BOT_MENTION_ONLY", "0") === "1", statusMode: env("BOT_STATUS_MODE", "chatstate") === "message" ? "message" : "chatstate", audit: new Audit((l) => log(`[audit] ${l}`)), trustedProxies: env("BOT_TRUSTED_PROXIES", "127.0.0.1,::1").split(",").map((x) => x.trim()).filter(Boolean), corsOrigins: (process.env.BOT_CORS_ORIGINS ?? "").split(",").map((x) => x.trim()).filter(Boolean), ...(context ? { context } : {}) });
   const p = await srv.listen(Number(env("BOT_PORT", "8787")), env("BOT_HOST", "127.0.0.1"));
   log(`bot api on :${p}`); await port.start();
 }

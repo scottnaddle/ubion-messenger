@@ -15,6 +15,8 @@ import { extractText, stripTags } from "../src/extract";
 
 class MockDaou implements DaouPort {
   sends: Array<{ room_id: string; text: string }> = []; failNext = false; delay = 0;
+  chatStates: Array<{ room_id: string; state: string; text: string }> = [];
+  async sendChatState(room_id: string, state: "thinking" | "working" | "done", text: string) { this.chatStates.push({ room_id, state, text }); return { recipients: 3 }; }
   private mcb: Array<(m: InboundMessage) => void> = []; private rcb: Array<(r: BotRoom) => void> = [];
   botUserId() { return "99"; } botName() { return "봇"; } healthy() { return { state: "online" }; }
   async listRooms() { return [{ room_id: "room:1", room_name: "A", kind: "room", member_count: 5 }, { room_id: "room:2", room_name: "Secret", kind: "buddy", member_count: 2 }]; }
@@ -535,7 +537,7 @@ describe("units", () => {
 const status = (b: object, t = FULL) => fetch(`${base}/bot/status`, { method: "POST", headers: { authorization: `Bearer ${t}`, "content-type": "application/json" }, body: JSON.stringify(b) });
 describe("status placeholder", () => {
   it("thinking sends one placeholder; send() deletes it", async () => {
-    await setup({ statusThrottleMs: 0 });
+    await setup({ statusThrottleMs: 0, statusMode: "message" });
     const r = await status({ room_id: "room:1", state: "thinking" });
     expect(r.status).toBe(200); expect(await r.json()).toMatchObject({ ok: true, state: "thinking", message_id: 1 });
     expect(daou.sends).toEqual([{ room_id: "room:1", text: "💭 생각 중…" }]);
@@ -545,7 +547,7 @@ describe("status placeholder", () => {
     expect(srv.audit.entries.some((e) => e.action === "status" && e.code === "thinking")).toBe(true);
   });
   it("working replaces previous placeholder (sanitized, max 60), done deletes", async () => {
-    await setup({ statusThrottleMs: 0 });
+    await setup({ statusThrottleMs: 0, statusMode: "message" });
     await status({ room_id: "room:1", state: "thinking" });
     await status({ room_id: "room:1", state: "working", text: "파일\n분석 " + "x".repeat(100) });
     expect(daou.sends[1].text).toBe("⚙️ 파일 분석 " + "x".repeat(54));
@@ -556,13 +558,13 @@ describe("status placeholder", () => {
     expect((await (await status({ room_id: "room:1", state: "done" })).json()).deleted).toBe(false);
   });
   it("throttles to 1 per window per room", async () => {
-    await setup();
+    await setup({ statusMode: "message" });
     expect((await (await status({ room_id: "room:1", state: "thinking" })).json()).throttled).toBeUndefined();
     const r = await status({ room_id: "room:1", state: "working" });
     expect(r.status).toBe(200); expect((await r.json()).throttled).toBe(true); expect(daou.sends.length).toBe(1);
   });
   it("auto-expires after 10 minutes", async () => {
-    await setup({ statusThrottleMs: 0 });
+    await setup({ statusThrottleMs: 0, statusMode: "message" });
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const tok = srv["o"].tokens.verify(`Bearer ${FULL}`)!;
@@ -573,15 +575,61 @@ describe("status placeholder", () => {
     } finally { vi.useRealTimers(); }
   });
   it("403 for non-allowlisted room and missing scope; 400 bad state", async () => {
-    await setup({ statusThrottleMs: 0 });
+    await setup({ statusThrottleMs: 0, statusMode: "message" });
     const a = await status({ room_id: "room:2", state: "thinking" }); expect(a.status).toBe(403); expect((await a.json()).error.code).toBe("room_not_allowed");
     const b = await status({ room_id: "room:1", state: "thinking" }, RO); expect(b.status).toBe(403); expect((await b.json()).error.code).toBe("forbidden_scope");
     expect((await status({ room_id: "room:1", state: "nap" })).status).toBe(400); expect(daou.sends).toEqual([]);
   });
   it("delete failure never throws out", async () => {
-    await setup({ statusThrottleMs: 0, logger: () => {} }); daou.deleteMessages = async () => { throw new Error("boom"); };
+    await setup({ statusThrottleMs: 0, statusMode: "message", logger: () => {} }); daou.deleteMessages = async () => { throw new Error("boom"); };
     await status({ room_id: "room:1", state: "thinking" });
     expect((await send({ room_id: "room:1", text: "a", client_msg_id: "f1" })).status).toBe(200);
+  });
+});
+
+describe("status chatstate (default)", () => {
+  it("sends chat state, never a text message", async () => {
+    await setup({ statusThrottleMs: 0 });
+    const r = await status({ room_id: "room:1", state: "thinking" });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true, state: "thinking", mode: "chatstate", recipients: 3 });
+    expect(daou.sends).toEqual([]);
+    expect(daou.chatStates).toEqual([{ room_id: "room:1", state: "thinking", text: "생각 중" }]);
+    await status({ room_id: "room:1", state: "working", text: "파일\n분석 " + "x".repeat(100) });
+    expect(daou.chatStates[1]).toEqual({ room_id: "room:1", state: "working", text: "파일 분석 " + "x".repeat(54) });
+    await status({ room_id: "room:1", state: "working" });
+    expect(daou.chatStates[2]).toEqual({ room_id: "room:1", state: "working", text: "작업 중" });
+    expect(daou.sends).toEqual([]);
+    expect(daou.deletes).toEqual([]);
+  });
+  it("done bypasses the throttle", async () => {
+    await setup();
+    expect((await status({ room_id: "room:1", state: "thinking" })).status).toBe(200);
+    expect((await (await status({ room_id: "room:1", state: "working" })).json()).throttled).toBe(true);
+    const d = await status({ room_id: "room:1", state: "done" });
+    expect(d.status).toBe(200);
+    expect(await d.json()).toEqual({ ok: true, state: "done", mode: "chatstate", recipients: 3 });
+    expect(daou.chatStates.at(-1)).toEqual({ room_id: "room:1", state: "done", text: "" });
+  });
+  it("502 when the port lacks sendChatState or it fails", async () => {
+    await setup({ statusThrottleMs: 0, logger: () => {} });
+    (daou as any).sendChatState = undefined;
+    let r = await status({ room_id: "room:1", state: "thinking" });
+    expect(r.status).toBe(502); expect((await r.json()).error.code).toBe("upstream_error");
+    (daou as any).sendChatState = async () => { throw new Error("boom"); };
+    r = await status({ room_id: "room:1", state: "thinking" });
+    expect(r.status).toBe(502); expect((await r.json()).error.code).toBe("upstream_error");
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "status", status: "error", code: "upstream_error" }));
+  });
+  it("a failed send does not consume the throttle window", async () => {
+    await setup({ logger: () => {} });
+    const ok = daou.sendChatState.bind(daou);
+    daou.sendChatState = async () => { throw new Error("boom"); };
+    expect((await status({ room_id: "room:1", state: "thinking" })).status).toBe(502);
+    daou.sendChatState = ok;
+    const r = await status({ room_id: "room:1", state: "thinking" });
+    expect(r.status).toBe(200); expect((await r.json()).throttled).toBeUndefined();
+    expect(daou.chatStates).toEqual([{ room_id: "room:1", state: "thinking", text: "생각 중" }]);
   });
 });
 
@@ -647,7 +695,7 @@ describe("send-file", () => {
     expect((await r.json()).file).toEqual({ name: "테스트.txt", size: 2 });
   });
   it("deletes the room placeholder after send-file", async () => {
-    await setup({ statusThrottleMs: 0 });
+    await setup({ statusThrottleMs: 0, statusMode: "message" });
     await status({ room_id: "room:1", state: "thinking" });
     const r = await postFile(fileForm("room:1", { name: "a.txt", body: "x" }));
     expect(r.status).toBe(200);
