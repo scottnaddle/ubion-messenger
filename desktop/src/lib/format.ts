@@ -1,3 +1,12 @@
+import { getLanguage, t } from "./i18n";
+
+const DATE_LOCALES = { ko: "ko-KR", en: "en-US", ja: "ja-JP", zh_CN: "zh-CN", zh_TW: "zh-TW", vi: "vi-VN" } as const;
+
+/** BCP-47 locale for toLocale*String, following settings.language. */
+export function dateLocale(): string {
+  return DATE_LOCALES[getLanguage()];
+}
+
 export function parseTime(s?: string): Date | null {
   if (!s) return null;
   const d = new Date(s);
@@ -7,7 +16,7 @@ export function parseTime(s?: string): Date | null {
 export function timeLabel(s?: string): string {
   const d = parseTime(s);
   if (!d) return "";
-  return d.toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString(dateLocale(), { hour: "numeric", minute: "2-digit" });
 }
 
 export function roomTimeLabel(s?: string): string {
@@ -17,15 +26,15 @@ export function roomTimeLabel(s?: string): string {
   if (d.toDateString() === now.toDateString()) return timeLabel(s);
   const y = new Date(now);
   y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return "어제";
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}월 ${d.getDate()}일`;
+  if (d.toDateString() === y.toDateString()) return t("어제");
+  if (d.getFullYear() === now.getFullYear()) return t("{m}월 {d}일", { m: d.getMonth() + 1, d: d.getDate() });
   return `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}.`;
 }
 
 export function dayLabel(s?: string): string {
   const d = parseTime(s);
   if (!d) return "";
-  return d.toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
+  return d.toLocaleDateString(dateLocale(), { year: "numeric", month: "long", day: "numeric", weekday: "long" });
 }
 
 export function sameDay(a?: string, b?: string) {

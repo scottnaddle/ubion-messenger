@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type LockStatus } from "../api";
 import { Icon } from "./ui";
 import { PubsubModal } from "./PubsubModal";
+import { useT } from "../lib/i18n";
 import type { ToastFn } from "../App";
 import type { BoardPost, MenuEntry, PortalBadge } from "../../electron/core/portal";
 
@@ -31,6 +32,7 @@ type LocalView = "home" | "chats" | "people" | "mail" | "approval";
 type Props = { badge: PortalBadge; unreadChats: number; onLocal: (v: LocalView) => void; toast?: ToastFn };
 
 export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
+  const t = useT();
   const [items, setItems] = useState<MenuEntry[] | null>(null);
   const [source, setSource] = useState<"server" | "static">("server");
   const [boardNew, setBoardNew] = useState(0);
@@ -39,7 +41,7 @@ export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
   const [pubsubOpen, setPubsubOpen] = useState(false);
 
   const load = (force = false) =>
-    api().portal.menu(force).then((r) => { setItems(r.items); setSource(r.source); }).catch(() => setErr("메뉴를 불러오지 못했습니다"));
+    api().portal.menu(force).then((r) => { setItems(r.items); setSource(r.source); }).catch(() => setErr(t("메뉴를 불러오지 못했습니다")));
 
   useEffect(() => {
     void load();
@@ -53,7 +55,7 @@ export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
   const click = (m: MenuEntry) => {
     if (m.target === "local" && m.local) return onLocal(m.local);
     if (m.appName === "mail" || m.appName === "approval") return onLocal(m.appName);
-    void api().portal.open(m.url).catch(() => setErr(`${m.name}을(를) 열지 못했습니다`));
+    void api().portal.open(m.url).catch(() => setErr(t("{name}을(를) 열지 못했습니다", { name: m.name })));
   };
 
   const groups: Array<{ title?: string; list: MenuEntry[] }> = [];
@@ -66,12 +68,12 @@ export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
   return (
     <div className="home menu-view">
       <div className="side-head home-head">
-        <h2>메뉴</h2>
-        <span className="muted small">{source === "static" ? "기본 목록(서버 메뉴를 불러오지 못함)" : ""}</span>
-        <button className="icon-btn" title="새로고침" onClick={() => void load(true)}><Icon name="refresh" size={18} /></button>
+        <h2>{t("메뉴")}</h2>
+        <span className="muted small">{source === "static" ? t("기본 목록(서버 메뉴를 불러오지 못함)") : ""}</span>
+        <button className="icon-btn" title={t("새로고침")} onClick={() => void load(true)}><Icon name="refresh" size={18} /></button>
       </div>
       {err && <div className="muted small home-err">{err}</div>}
-      {!items && !err && <div className="muted small" style={{ padding: "0 16px" }}>불러오는 중…</div>}
+      {!items && !err && <div className="muted small" style={{ padding: "0 16px" }}>{t("불러오는 중…")}</div>}
       {groups.map((g, i) => (
         <section key={i} className="menu-group">
           {g.title && <h4 className="muted small">{g.title}</h4>}
@@ -80,7 +82,7 @@ export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
               const n = m.appName === "chat" ? unreadChats : menuBadge(m, badge, boardNew);
               return (
                 <button key={m.id} className="menu-item" onClick={() => click(m)}
-                  title={m.target === "external" ? `${m.name} — 외부 브라우저에서 열림` : m.target === "local" || m.appName === "mail" || m.appName === "approval" ? `${m.name} — 메신저에서 열기` : `${m.name} — 포털 창에서 열기`}>
+                  title={m.target === "external" ? t("{name} — 외부 브라우저에서 열림", { name: m.name }) : m.target === "local" || m.appName === "mail" || m.appName === "approval" ? t("{name} — 메신저에서 열기", { name: m.name }) : t("{name} — 포털 창에서 열기", { name: m.name })}>
                   <span className="menu-ic"><Icon name={menuIcon(m)} size={22} />{n > 0 && <span className="rail-badge">{n > 99 ? "99+" : n}</span>}</span>
                   <span className="menu-name">{m.name}</span>
                   {m.target === "external" && <span className="menu-ext"><Icon name="external" size={12} /></span>}
@@ -91,33 +93,33 @@ export function Menu({ badge, unreadChats, onLocal, toast }: Props) {
         </section>
       ))}
       <section className="menu-group">
-        <h4 className="muted small">앱</h4>
+        <h4 className="muted small">{t("앱")}</h4>
         <div className="menu-grid">
           <button
             className="menu-item"
             disabled={!lock?.enabled}
-            title={lock?.enabled ? "메신저 잠금" : "설정에서 PIN을 먼저 설정하세요"}
+            title={lock?.enabled ? t("메신저 잠금") : t("설정에서 PIN을 먼저 설정하세요")}
             onClick={() => api().call("lock:lockNow").catch((e) => setErr((e as Error).message))}
           >
             <span className="menu-ic"><Icon name="lock" size={22} /></span>
-            <span className="menu-name">메신저 잠금</span>
+            <span className="menu-name">{t("메신저 잠금")}</span>
           </button>
-          <button className="menu-item" title="공지톡 — 여러 사람에게 공지 보내기 / 보낸 공지톡" onClick={() => setPubsubOpen(true)}>
+          <button className="menu-item" title={t("공지톡 — 여러 사람에게 공지 보내기 / 보낸 공지톡")} onClick={() => setPubsubOpen(true)}>
             <span className="menu-ic"><Icon name="bell" size={22} /></span>
-            <span className="menu-name">공지톡</span>
+            <span className="menu-name">{t("공지톡")}</span>
           </button>
         </div>
       </section>
       <section className="menu-group">
-        <h4 className="muted small">문의</h4>
+        <h4 className="muted small">{t("문의")}</h4>
         <div className="menu-grid">
           <button
             className="menu-item"
-            title="챗봇 문의 — 외부 브라우저에서 열림"
-            onClick={() => api().openChatBot().catch(() => setErr("챗봇 문의를 열지 못했습니다"))}
+            title={t("챗봇 문의 — 외부 브라우저에서 열림")}
+            onClick={() => api().openChatBot().catch(() => setErr(t("챗봇 문의를 열지 못했습니다")))}
           >
             <span className="menu-ic"><Icon name="chat" size={22} /></span>
-            <span className="menu-name">챗봇 문의</span>
+            <span className="menu-name">{t("챗봇 문의")}</span>
             <span className="menu-ext"><Icon name="external" size={12} /></span>
           </button>
         </div>

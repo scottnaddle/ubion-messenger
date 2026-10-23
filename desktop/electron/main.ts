@@ -54,6 +54,8 @@ import {
 } from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
 import { createBotSettingsClient } from "./core/bot-settings";
+import { setMainLanguage, tm } from "./core/i18n-main";
+import { normalizeLanguage } from "../src/lib/i18n-core";
 import { createAwayMonitor } from "./core/away";
 import { createLockState, hashPin, validatePin, verifyPin, type PinRecord } from "./core/lock";
 import {
@@ -212,7 +214,7 @@ function updateBadge() {
   if (process.platform === "darwin") app.dock?.setBadge(n ? (n > 99 ? "99+" : String(n)) : "");
   else app.setBadgeCount?.(n);
   send("badge:changed", n); // renderer draws Windows overlay icon
-  tray?.setToolTip(n ? `${APP_NAME} — 읽지 않은 메시지 ${n}` : APP_NAME);
+  tray?.setToolTip(n ? `${APP_NAME} — ${tm("읽지 않은 메시지 {n}", { n })}` : APP_NAME);
   rebuildTrayMenu(n);
 }
 
@@ -220,14 +222,36 @@ function rebuildTrayMenu(n = core.unreadTotal()) {
   if (!tray) return;
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: n ? `읽지 않은 메시지 ${n}개` : "새 메시지 없음", enabled: false },
+      { label: n ? tm("읽지 않은 메시지 {n}개", { n }) : tm("새 메시지 없음"), enabled: false },
       { type: "separator" },
-      { label: "UBION Messenger 열기", click: showWindow },
-      { label: "설정", click: () => (showWindow(), send("nav:settings", null)) },
+      { label: tm("UBION Messenger 열기"), click: showWindow },
+      { label: tm("설정"), click: () => (showWindow(), send("nav:settings", null)) },
       { type: "separator" },
-      { label: "종료", click: () => ((quitting = true), app.quit()) },
+      { label: tm("종료"), click: () => ((quitting = true), app.quit()) },
     ])
   );
+}
+
+/** macOS app menu; submenu titles follow settings.language (role items keep OS-localized labels). */
+function buildAppMenu() {
+  Menu.setApplicationMenu(
+    process.platform === "darwin"
+      ? Menu.buildFromTemplate([
+          { role: "appMenu" },
+          { role: "editMenu", label: tm("편집") },
+          { role: "viewMenu", label: tm("보기") },
+          { role: "windowMenu", label: tm("윈도우") },
+        ])
+      : null
+  );
+}
+
+/** 다국어: rebuild every main-process menu after settings.language changes. */
+function applyLanguage() {
+  setMainLanguage(settings.language);
+  buildAppMenu();
+  updateBadge();
+  if (portalWin && !portalWin.isDestroyed()) portalWin.setMenu(portalNavMenu());
 }
 
 function createTray() {
@@ -307,10 +331,10 @@ async function clearPortalSession() {
 function portalNavMenu() {
   // Window menu bar (Windows) / app menu while focused: back, forward, reload, open in external browser.
   return Menu.buildFromTemplate([
-    { label: "◀ 뒤로", accelerator: "CmdOrCtrl+[", click: () => portalWin?.webContents.navigationHistory.goBack() },
-    { label: "앞으로 ▶", accelerator: "CmdOrCtrl+]", click: () => portalWin?.webContents.navigationHistory.goForward() },
-    { label: "새로고침", accelerator: "CmdOrCtrl+R", click: () => portalWin?.webContents.reload() },
-    { label: "외부 브라우저로 열기", click: () => { const u = portalWin?.webContents.getURL(); if (u && /^https?:/.test(u)) void shell.openExternal(u); } },
+    { label: tm("◀ 뒤로"), accelerator: "CmdOrCtrl+[", click: () => portalWin?.webContents.navigationHistory.goBack() },
+    { label: tm("앞으로 ▶"), accelerator: "CmdOrCtrl+]", click: () => portalWin?.webContents.navigationHistory.goForward() },
+    { label: tm("새로고침"), accelerator: "CmdOrCtrl+R", click: () => portalWin?.webContents.reload() },
+    { label: tm("외부 브라우저로 열기"), click: () => { const u = portalWin?.webContents.getURL(); if (u && /^https?:/.test(u)) void shell.openExternal(u); } },
   ]);
 }
 
@@ -884,6 +908,7 @@ function registerIpc() {
     // Custom theme list/selection only change through theme:* (validated ids, files on disk).
     const { customThemes: _ct, activeThemeId: _at, ...patch } = input || {};
     if ("themePreset" in patch) patch.themePreset = normalizePreset(patch.themePreset);
+    if ("language" in patch) patch.language = normalizeLanguage(patch.language);
     settings = { ...settings, ...patch };
     saveSettings(settings);
     if ("launchAtLogin" in patch) applyLoginItem();
@@ -891,6 +916,7 @@ function registerIpc() {
     if ("autoUpdate" in patch) updater.schedule(settings.autoUpdate);
     if ("awayMinutes" in patch || "mobileNotice" in patch) startAwayMonitor();
     if ("lockTimeoutMin" in patch) maybeAutoLock();
+    if ("language" in patch) applyLanguage();
     if (patch.rememberMe === false) {
       clearPassword();
       settings.autoLogin = false;
@@ -1485,16 +1511,8 @@ app.on("window-all-closed", () => {
 app.whenReady().then(async () => {
   nativeTheme.themeSource = settings.theme;
   if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath("icon-mac.png")));
-  Menu.setApplicationMenu(
-    process.platform === "darwin"
-      ? Menu.buildFromTemplate([
-          { role: "appMenu" },
-          { role: "editMenu" },
-          { role: "viewMenu" },
-          { role: "windowMenu" },
-        ])
-      : null
-  );
+  setMainLanguage(settings.language);
+  buildAppMenu();
   lockRecord = loadLockRecord();
   locked = !!lockRecord;
   lockState.reset();

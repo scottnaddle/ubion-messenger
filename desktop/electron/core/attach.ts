@@ -1,4 +1,5 @@
 import type { AttachModel } from "./types";
+import { tk } from "../../src/lib/i18n-core";
 
 /**
  * DaouOffice chat attachment helpers (shared by main + renderer).
@@ -105,7 +106,7 @@ export function isExpired(a: AttachModel, now = Date.now()): boolean {
 
 /** "유효기간 : ~ 2027.10.23" (KST). */
 export function expiryLabel(a: AttachModel): string {
-  if (!a.expiresAt) return a.expired ? "유효기간 만료" : "";
+  if (!a.expiresAt) return a.expired ? tk("유효기간 만료") : "";
   const d = new Date(Date.parse(a.expiresAt) + 9 * 3600_000);
   const p = (n: number) => String(n).padStart(2, "0");
   return `유효기간 : ~ ${d.getUTCFullYear()}.${p(d.getUTCMonth() + 1)}.${p(d.getUTCDate())}`;

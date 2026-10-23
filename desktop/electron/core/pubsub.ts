@@ -12,6 +12,7 @@
  * target list is exactly [me] (checkForwardTarget).
  */
 import { checkForwardTarget } from "./forward";
+import { tk } from "../../src/lib/i18n-core";
 
 export const PUBSUB_SEND_ENV = "UBM_PUBSUB_SEND";
 export const PUBSUB_PAGE_SIZE = 10;
@@ -19,7 +20,7 @@ export const PUBSUB_MAX_TARGETS = 300;
 export const PUBSUB_MAX_MESSAGE = 4000;
 export const PUBSUB_SEND_DISABLED_TEXT = `공지톡 발송은 꺼져 있습니다 (${PUBSUB_SEND_ENV}=1 로 실행해야 활성화됩니다)`;
 export const PUBSUB_ALL_REFUSED_TEXT = "전체 사용자 공지톡은 이 앱에서 보낼 수 없습니다";
-export const PUBSUB_DELETE_CONFIRM = "공지톡을 삭제하시겠습니까?";
+export const PUBSUB_DELETE_CONFIRM = tk("공지톡을 삭제하시겠습니까?");
 
 /** Original component state uses "partial" (default) and "all"; "all" is never sent by this client. */
 export type PubsubRange = "partial" | "all";
@@ -56,7 +57,7 @@ export function pubsubCaps(env: Env): PubsubCaps {
     send,
     delete: send,
     selfOnly,
-    reason: send ? (selfOnly ? "안전 모드: 나에게만 보낼 수 있습니다" : undefined) : PUBSUB_SEND_DISABLED_TEXT,
+    reason: send ? (selfOnly ? tk("안전 모드: 나에게만 보낼 수 있습니다") : undefined) : PUBSUB_SEND_DISABLED_TEXT,
   };
 }
 

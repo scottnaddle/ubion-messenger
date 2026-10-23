@@ -1,6 +1,7 @@
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { pickerCategories } from "../lib/emoticon";
+import { useT } from "../lib/i18n";
 
 /** Composer emoji popover. Closes on outside mousedown, Esc, or window blur. */
 export function EmojiPicker({
@@ -10,6 +11,7 @@ export function EmojiPicker({
   /** The toggle button: clicks on it are left to its own handler (so it can close the picker). */
   anchor: React.RefObject<HTMLElement | null>;
 }) {
+  const t = useT();
   const cats = pickerCategories(recent);
   const [tab, setTab] = useState(cats[0].id);
   const ref = useRef<HTMLDivElement>(null);
@@ -17,8 +19,8 @@ export function EmojiPicker({
 
   useEffect(() => {
     const down = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (ref.current?.contains(t) || anchor.current?.contains(t)) return;
+      const node = e.target as Node;
+      if (ref.current?.contains(node) || anchor.current?.contains(node)) return;
       onClose();
     };
     const key = (e: KeyboardEvent) => {
@@ -38,13 +40,13 @@ export function EmojiPicker({
   }, [onClose, anchor]);
 
   return (
-    <div className="emoji-pop" ref={ref} role="dialog" aria-label="이모티콘">
+    <div className="emoji-pop" ref={ref} role="dialog" aria-label={t("이모티콘")}>
       <div className="emoji-tabs" role="tablist">
         {cats.map((c) => (
           <button key={c.id} type="button" role="tab" aria-selected={c.id === current.id}
             className={`emoji-tab${c.id === current.id ? " on" : ""}`}
             onMouseDown={(e) => e.preventDefault()} onClick={() => setTab(c.id)}>
-            {c.label}
+            {t(c.label)}
           </button>
         ))}
       </div>

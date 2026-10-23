@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type React from "react";
 import { createPortal } from "react-dom";
 import { nextShowDelay, railTipFor, type RailTipId } from "../rail-tooltip";
+import { useT } from "../lib/i18n";
 
 type Point = { top: number; left: number };
 type SharedState = { activeId: RailTipId | null; at: Point | null };
@@ -67,6 +68,7 @@ function focusVisible(el: HTMLElement): boolean {
 
 export function useRailTooltip<T extends HTMLElement>(id: RailTipId, name?: string) {
   const ref = useRef<T | null>(null);
+  useT(); // re-render rail labels on language change
   const shared = useSyncExternalStore(subscribe, getSnapshot);
   const open = shared.activeId === id;
   const at = open ? shared.at : null;

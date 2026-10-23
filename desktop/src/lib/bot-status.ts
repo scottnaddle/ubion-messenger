@@ -1,3 +1,5 @@
+import { tk } from "./i18n-core";
+
 export type BotStatusState = "thinking" | "working" | "done";
 
 /** Event emitted by the messenger core, keyed to the room the status belongs to. */
@@ -103,7 +105,7 @@ export function expireBotStatuses(map: BotStatusMap, now: number, ttlMs = BOT_ST
 /** Korean default labels when the server sends no text. */
 export function botStatusLabel(state: BotStatusState, text: string): string {
   if (text) return text;
-  if (state === "working") return "작업 중";
-  if (state === "thinking") return "생각 중";
+  if (state === "working") return tk("작업 중");
+  if (state === "thinking") return tk("생각 중");
   return "";
 }

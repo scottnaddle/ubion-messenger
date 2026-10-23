@@ -9,6 +9,7 @@ import {
 import { apiRoomSeq } from "../../electron/core/forward";
 import type { ToastFn } from "../App";
 import { Icon } from "./ui";
+import { useT } from "../lib/i18n";
 
 const ymd = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -20,6 +21,7 @@ export function BackupModal({
 }: {
   room: Room; lastMessageId?: number; toast: ToastFn; onClose: () => void; onHistoryCleared?: () => void;
 }) {
+  const t = useT();
   const today = ymd(new Date());
   const [from, setFrom] = useState(() => ymd(new Date(Date.now() - 30 * 86_400_000)));
   const [to, setTo] = useState(today);
@@ -52,7 +54,7 @@ export function BackupModal({
         timer.current = setTimeout(() => void poll(), BACKUP_POLL_MS);
       }
     } catch (e) {
-      if (alive.current) toast(`백업 목록을 불러오지 못했습니다: ${(e as Error).message}`);
+      if (alive.current) toast(t("백업 목록을 불러오지 못했습니다: {error}", { error: (e as Error).message }));
     } finally {
       if (alive.current) setLoading(false);
     }
@@ -82,10 +84,10 @@ export function BackupModal({
     setBusy(true);
     try {
       await api().backup.request(room.key, from, to, fileType);
-      toast("백업을 요청했습니다", "info");
+      toast(t("백업을 요청했습니다"), "info");
       restartPoll();
     } catch (e) {
-      toast(`백업을 요청하지 못했습니다: ${(e as Error).message}`);
+      toast(t("백업을 요청하지 못했습니다: {error}", { error: (e as Error).message }));
     } finally {
       setBusy(false);
     }
@@ -94,9 +96,9 @@ export function BackupModal({
   const download = async (b: BackupItem) => {
     try {
       const p = await api().backup.download(room.key, b.id, "downloads");
-      if (p) toast(`저장했습니다: ${p}`, "info");
+      if (p) toast(t("저장했습니다: {path}", { path: p }), "info");
     } catch (e) {
-      toast(`백업 파일을 저장하지 못했습니다: ${(e as Error).message}`);
+      toast(t("백업 파일을 저장하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
 
@@ -108,17 +110,17 @@ export function BackupModal({
     try {
       if (c.kind === "delete") {
         await api().backup.remove(room.key, c.item.id);
-        toast(isBackupDone(c.item) ? "백업 파일을 삭제했습니다" : "백업을 취소했습니다", "info");
+        toast(isBackupDone(c.item) ? t("백업 파일을 삭제했습니다") : t("백업을 취소했습니다"), "info");
         restartPoll();
       } else {
-        if (!lastMessageId) throw new Error("삭제할 대화가 없습니다");
+        if (!lastMessageId) throw new Error(t("삭제할 대화가 없습니다"));
         await api().backup.clearHistory(room.key, lastMessageId, true);
-        toast("대화 기록을 삭제했습니다", "info");
+        toast(t("대화 기록을 삭제했습니다"), "info");
         onHistoryCleared?.();
         onClose();
       }
     } catch (e) {
-      toast(`${c.kind === "delete" ? "백업 삭제" : "대화 기록 삭제"}에 실패했습니다: ${(e as Error).message}`);
+      toast(c.kind === "delete" ? t("백업 삭제에 실패했습니다: {error}", { error: (e as Error).message }) : t("대화 기록 삭제에 실패했습니다: {error}", { error: (e as Error).message }));
     } finally {
       setBusy(false);
     }
@@ -126,52 +128,52 @@ export function BackupModal({
 
   return createPortal(
     <div className="modal-back" onClick={onClose}>
-      <div className="modal backup-modal" role="dialog" aria-modal="true" aria-label="대화 백업" onClick={(e) => e.stopPropagation()}>
+      <div className="modal backup-modal" role="dialog" aria-modal="true" aria-label={t("대화 백업")} onClick={(e) => e.stopPropagation()}>
         <div className="side-head">
-          <h3>대화 백업</h3>
-          <button className="icon-btn" title="닫기" onClick={onClose}><Icon name="close" size={16} /></button>
+          <h3>{t("대화 백업")}</h3>
+          <button className="icon-btn" title={t("닫기")} onClick={onClose}><Icon name="close" size={16} /></button>
         </div>
         {confirm ? (
           <div className="modal-body">
             <p>{confirm.kind === "delete" ? BACKUP_DELETE_CONFIRM : HISTORY_CLEAR_CONFIRM}</p>
             <div className="approval-modal-actions">
-              <button className="link" disabled={busy} onClick={() => setConfirm(null)}>취소</button>
-              <button className="danger-btn" autoFocus disabled={busy} onClick={() => void doConfirm()}>삭제</button>
+              <button className="link" disabled={busy} onClick={() => setConfirm(null)}>{t("취소")}</button>
+              <button className="danger-btn" autoFocus disabled={busy} onClick={() => void doConfirm()}>{t("삭제")}</button>
             </div>
           </div>
         ) : (
           <div className="modal-body">
-            <h4>백업 기간</h4>
+            <h4>{t("백업 기간")}</h4>
             <div className="backup-range">
-              <input type="date" aria-label="시작일" value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
+              <input type="date" aria-label={t("시작일")} value={from} max={to || today} onChange={(e) => setFrom(e.target.value)} />
               <span className="muted">~</span>
-              <input type="date" aria-label="종료일" value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
+              <input type="date" aria-label={t("종료일")} value={to} min={from} max={today} onChange={(e) => setTo(e.target.value)} />
             </div>
-            <h4>파일 형식</h4>
+            <h4>{t("파일 형식")}</h4>
             <div className="chips backup-types">
-              {(["TXT", "HTML"] as const).map((t) => (
-                <button key={t} className={`chip ${fileType === t ? "on" : ""}`} onClick={() => setFileType(t)}>{t}</button>
+              {(["TXT", "HTML"] as const).map((ft) => (
+                <button key={ft} className={`chip ${fileType === ft ? "on" : ""}`} onClick={() => setFileType(ft)}>{ft}</button>
               ))}
             </div>
             <div className="approval-modal-actions">
-              <button className="primary" disabled={busy || roomSeq == null} onClick={() => void request()}>백업 요청</button>
+              <button className="primary" disabled={busy || roomSeq == null} onClick={() => void request()}>{t("백업 요청")}</button>
             </div>
-            <h4>백업 파일</h4>
+            <h4>{t("백업 파일")}</h4>
             <div className="backup-list">
-              {loading && <div className="muted small">불러오는 중…</div>}
-              {!loading && !items.length && <div className="muted small">이 대화방의 백업 파일이 없습니다</div>}
+              {loading && <div className="muted small">{t("불러오는 중…")}</div>}
+              {!loading && !items.length && <div className="muted small">{t("이 대화방의 백업 파일이 없습니다")}</div>}
               {items.map((b) => (
                 <div key={b.id} className="backup-item">
                   <Icon name="file" size={16} />
                   <div className="backup-item-body">
                     <div className="backup-item-name" title={backupFileName(b)}>{backupFileName(b)}</div>
-                    <div className={`muted tiny backup-status ${b.status.toLowerCase()}`}>{backupStatusLabel(b.status)}</div>
+                    <div className={`muted tiny backup-status ${b.status.toLowerCase()}`}>{t(backupStatusLabel(b.status))}</div>
                   </div>
                   {isBackupDone(b) && (
-                    <button className="icon-btn" title="저장" onClick={() => void download(b)}><Icon name="download" size={16} /></button>
+                    <button className="icon-btn" title={t("저장")} onClick={() => void download(b)}><Icon name="download" size={16} /></button>
                   )}
                   <button
-                    className="icon-btn" title={isBackupDone(b) ? "삭제" : "취소"} disabled={busy}
+                    className="icon-btn" title={isBackupDone(b) ? t("삭제") : t("취소")} disabled={busy}
                     onClick={() => setConfirm({ kind: "delete", item: b })}
                   >
                     <Icon name={isBackupDone(b) ? "trash" : "close"} size={16} />
@@ -181,11 +183,11 @@ export function BackupModal({
             </div>
             {clearEnabled && (
               <div className="backup-clear">
-                <h4>대화 기록 삭제</h4>
-                <p className="muted small">이 대화방의 지금까지의 대화 기록을 내 화면에서 삭제합니다. (실험 기능)</p>
+                <h4>{t("대화 기록 삭제")}</h4>
+                <p className="muted small">{t("이 대화방의 지금까지의 대화 기록을 내 화면에서 삭제합니다. (실험 기능)")}</p>
                 <div className="approval-modal-actions">
                   <button className="danger-btn" disabled={busy || !lastMessageId} onClick={() => setConfirm({ kind: "clear" })}>
-                    대화 기록 삭제
+                    {t("대화 기록 삭제")}
                   </button>
                 </div>
               </div>

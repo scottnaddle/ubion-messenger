@@ -33,9 +33,10 @@ import {
 import { LinkPreview } from "./LinkPreview";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
+import { tk, useT } from "../lib/i18n";
 import type { Toast, ToastFn } from "../App";
 
-const PRES_LABEL: Record<Presence, string> = { online: "온라인", away: "자리 비움", busy: "다른 용무 중", offline: "오프라인" };
+const PRES_LABEL: Record<Presence, string> = { online: tk("온라인"), away: tk("자리 비움"), busy: tk("다른 용무 중"), offline: tk("오프라인") };
 
 type MentionCandidate = MentionMember & { image?: string };
 
@@ -70,6 +71,7 @@ function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
 export function ChatView({
   room, me, focused, presence, botStatus, toast,
 }: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; botStatus?: BotStatusEntry; toast: ToastFn }) {
+  const t = useT();
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
@@ -300,7 +302,7 @@ export function ChatView({
       setMsgs((l) => upsertMessage(l, { ...optimistic, messageId: r.messageId, pending: false }));
     } catch (e) {
       setMsgs((l) => l.map((m) => (m.clientId === clientId ? { ...m, pending: false, failed: true } : m)));
-      toast(`전송 실패: ${(e as Error).message}`);
+      toast(t("전송 실패: {error}", { error: (e as Error).message }));
     }
   };
 
@@ -324,9 +326,9 @@ export function ChatView({
     setConfirmNotice(null);
     try {
       await api().registerNotice(room.key, target.messageId);
-      toast("공지를 등록했습니다", "info");
+      toast(t("공지를 등록했습니다"), "info");
     } catch (e) {
-      toast(`공지를 등록하지 못했습니다: ${(e as Error).message}`);
+      toast(t("공지를 등록하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
   const doDelete = async () => {
@@ -340,10 +342,10 @@ export function ChatView({
     try {
       await api().deleteChatMessages(ids);
       if (wasNotice) void api().registerNotice(room.key, target.messageId).catch(() => undefined);
-      toast("메시지를 삭제했습니다", "info");
+      toast(t("메시지를 삭제했습니다"), "info");
     } catch (e) {
       if (snapshot) setMsgs((l) => l.map((m) => (m.messageId === target.messageId ? snapshot : m)));
-      toast(`삭제하지 못했습니다: ${(e as Error).message}`);
+      toast(t("삭제하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
 
@@ -354,11 +356,11 @@ export function ChatView({
       } else if (file.file instanceof Blob) {
         await api().call("files:sendBuffer", room.key, file.name, await file.file.arrayBuffer(), file.type);
       } else {
-        throw new Error("파일을 읽을 수 없습니다");
+        throw new Error(t("파일을 읽을 수 없습니다"));
       }
       return true;
     } catch (e) {
-      toast(`업로드 실패: ${(e as Error).message}`);
+      toast(t("업로드 실패: {error}", { error: (e as Error).message }));
       return false;
     }
   };
@@ -400,7 +402,7 @@ export function ChatView({
         path: p.path, previewData: p.preview,
       })));
     } catch (e) {
-      toast(`파일을 선택하지 못했습니다: ${(e as Error).message}`);
+      toast(t("파일을 선택하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
 
@@ -415,7 +417,7 @@ export function ChatView({
       // Staged only: the user still has to press 보내기.
       stageFiles([{ name: file.name, size: file.size, lastModified: file.lastModified, type: file.type, file }]);
     } catch (e) {
-      toast(`화면 캡쳐 실패: ${(e as Error).message}`);
+      toast(t("화면 캡쳐 실패: {error}", { error: (e as Error).message }));
     } finally {
       capturing.current = false;
     }
@@ -436,14 +438,14 @@ export function ChatView({
       let r = await api().zoom.createMeeting(key);
       if ("needsConnect" in r) {
         const c = await api().zoom.connect(key);
-        if (!c.connected) return toast("Zoom 연결을 완료하지 못했습니다");
+        if (!c.connected) return toast(t("Zoom 연결을 완료하지 못했습니다"));
         r = await api().zoom.createMeeting(key);
-        if ("needsConnect" in r) return toast("Zoom 인증에 실패했습니다");
+        if ("needsConnect" in r) return toast(t("Zoom 인증에 실패했습니다"));
       }
       setComposerInsert({ roomKey: key, text: r.joinUrl, id: Date.now() });
-      toast("Zoom 회의 링크를 입력창에 넣었습니다. 보내기를 눌러 공유하세요", "info");
+      toast(t("Zoom 회의 링크를 입력창에 넣었습니다. 보내기를 눌러 공유하세요"), "info");
     } catch (e) {
-      toast(`Zoom 회의를 만들지 못했습니다: ${(e as Error).message}`);
+      toast(t("Zoom 회의를 만들지 못했습니다: {error}", { error: (e as Error).message }));
     } finally {
       setZoomBusy(false);
     }
@@ -514,18 +516,18 @@ export function ChatView({
     setRoomMenu(null);
     try {
       await api().setRoomPush(room.key, next);
-      toast(next ? "이 대화방의 알림을 켰습니다" : "이 대화방의 알림을 껐습니다", "info");
+      toast(next ? t("이 대화방의 알림을 켰습니다") : t("이 대화방의 알림을 껐습니다"), "info");
     } catch (e) {
-      toast(`알림 설정을 변경하지 못했습니다: ${(e as Error).message}`);
+      toast(t("알림 설정을 변경하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
   const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
   const subtitle =
     room.kind === "buddy"
-      ? [room.position, presence ? PRES_LABEL[presence] : PRES_LABEL.offline].filter(Boolean).join(" · ")
+      ? [room.position, t(presence ? PRES_LABEL[presence] : PRES_LABEL.offline)].filter(Boolean).join(" · ")
       : room.kind === "room"
-      ? `그룹 대화${room.memberCount ? ` · ${room.memberCount}명` : ""}`
-      : "알림 채널";
+      ? (room.memberCount ? t("그룹 대화 · {n}명", { n: room.memberCount }) : t("그룹 대화"))
+      : t("알림 채널");
 
   const statusAuthor = botStatus ? roomMembers.find((m) => m.userId === botStatus.userId) : undefined;
   const statusMsg = botStatus ? [...msgs].reverse().find((m) => m.sendUserSeq === botStatus.userId) : undefined;
@@ -551,16 +553,16 @@ export function ChatView({
           <div className="sub muted">{subtitle}</div>
         </div>
         {zoomCaps?.enabled && canSend && (
-          <button className="icon-btn" title="Zoom 화상회의" aria-label="Zoom 화상회의" disabled={zoomBusy} onClick={() => void startZoom()}>
+          <button className="icon-btn" title={t("Zoom 화상회의")} aria-label={t("Zoom 화상회의")} disabled={zoomBusy} onClick={() => void startZoom()}>
             <Icon name="video" size={18} />
           </button>
         )}
-        <button className={`icon-btn ${searchOpen ? "on" : ""}`} title="대화 내용 검색" onClick={() => setSearchOpen((s) => !s)}>
+        <button className={`icon-btn ${searchOpen ? "on" : ""}`} title={t("대화 내용 검색")} onClick={() => setSearchOpen((s) => !s)}>
           <Icon name="search" size={18} />
         </button>
         <button
           className={`icon-btn ${roomMenu ? "on" : ""}`}
-          title="대화방 메뉴"
+          title={t("대화방 메뉴")}
           onClick={(e) => {
             if (roomMenu) return setRoomMenu(null);
             const r = e.currentTarget.getBoundingClientRect();
@@ -582,25 +584,25 @@ export function ChatView({
             title={noticeText(notice)}
             onClick={() => changeNoticeStatus("normal")}
           >
-            <b>{notice.sendUserName || "공지"}</b> {noticeText(notice)}
+            <b>{notice.sendUserName || t("공지")}</b> {noticeText(notice)}
           </button>
           {noticeStatus === "folded" ? (
-            <button className="link tiny" onClick={() => changeNoticeStatus("normal")}>펼치기</button>
+            <button className="link tiny" onClick={() => changeNoticeStatus("normal")}>{t("펼치기")}</button>
           ) : (
-            <button className="link tiny" onClick={() => changeNoticeStatus("folded")}>접어두기</button>
+            <button className="link tiny" onClick={() => changeNoticeStatus("folded")}>{t("접어두기")}</button>
           )}
           <button
             className="link tiny"
             onClick={() => { if (window.confirm(ROOM_NOTICE_CLOSE_CONFIRM)) changeNoticeStatus("closed"); }}
           >
-            다시 보지 않음
+            {t("다시 보지 않음")}
           </button>
         </div>
       )}
       <div className="chat-body">
         <div className="msg-list" ref={listRef} onScroll={onScroll}>
-          {loadingOlder && <div className="loader-line">이전 메시지 불러오는 중…</div>}
-          {!hasMore && !loading && <div className="history-start muted">대화의 시작입니다</div>}
+          {loadingOlder && <div className="loader-line">{t("이전 메시지 불러오는 중…")}</div>}
+          {!hasMore && !loading && <div className="history-start muted">{t("대화의 시작입니다")}</div>}
           {loading ? (
             <div className="skeletons">{Array.from({ length: 6 }, (_, i) => <div key={i} className={`sk ${i % 2 ? "r" : ""}`} />)}</div>
           ) : (
@@ -635,7 +637,7 @@ export function ChatView({
                 {statusName && <div className="msg-name">{statusName}</div>}
                 <div className="msg-line">
                   <div className="bubble bot-status-bubble">
-                    <span className="bot-status-text">{botStatusLabel(botStatus.state, botStatus.text)}</span>
+                    <span className="bot-status-text">{t(botStatusLabel(botStatus.state, botStatus.text))}</span>
                     <span className="bot-status-dots" aria-hidden="true"><i /><i /><i /></span>
                   </div>
                 </div>
@@ -646,7 +648,7 @@ export function ChatView({
         </div>
         {searchOpen && <SearchPanel room={room} onClose={() => setSearchOpen(false)} />}
       </div>
-      {uploading > 0 && <div className="upload-bar">파일 {uploading}개 업로드 중…</div>}
+      {uploading > 0 && <div className="upload-bar">{t("파일 {n}개 업로드 중…", { n: uploading })}</div>}
       {canSend ? (
         <>
           {staged.length > 0 && (
@@ -671,7 +673,7 @@ export function ChatView({
                     <span className="attach-name" title={f.name}>{f.name}</span>
                     <span className="attach-size muted">{formatSize(f.size)}</span>
                   </div>
-                  <button className="attach-remove" title="첨부 취소" onClick={() => removeStaged(f)}>
+                  <button className="attach-remove" title={t("첨부 취소")} onClick={() => removeStaged(f)}>
                     <Icon name="close" size={12} />
                   </button>
                 </div>
@@ -690,9 +692,9 @@ export function ChatView({
           />
         </>
       ) : (
-        <div className="composer readonly muted">이 채널은 읽기 전용입니다</div>
+        <div className="composer readonly muted">{t("이 채널은 읽기 전용입니다")}</div>
       )}
-      {dragOver && <div className="drop-hint">여기에 놓아 파일 보내기</div>}
+      {dragOver && <div className="drop-hint">{t("여기에 놓아 파일 보내기")}</div>}
       {viewer?.attach && <MediaViewer m={viewer} onClose={() => setViewer(null)} toast={toast} />}
       {roomMenu && (
         <RoomMenu
@@ -716,8 +718,8 @@ export function ChatView({
             <div className="modal-body">
               <p>{CHAT_DELETE_CONFIRM}</p>
               <div className="approval-modal-actions">
-                <button className="link" onClick={() => setConfirmDelete(null)}>취소</button>
-                <button className="danger-btn" autoFocus onClick={() => void doDelete()}>삭제</button>
+                <button className="link" onClick={() => setConfirmDelete(null)}>{t("취소")}</button>
+                <button className="danger-btn" autoFocus onClick={() => void doDelete()}>{t("삭제")}</button>
               </div>
             </div>
           </div>
@@ -729,8 +731,8 @@ export function ChatView({
             <div className="modal-body">
               <p>{ROOM_NOTICE_REGISTER_CONFIRM}</p>
               <div className="approval-modal-actions">
-                <button className="link" onClick={() => setConfirmNotice(null)}>취소</button>
-                <button className="primary" autoFocus onClick={() => void doRegisterNotice()}>공지로 등록</button>
+                <button className="link" onClick={() => setConfirmNotice(null)}>{t("취소")}</button>
+                <button className="primary" autoFocus onClick={() => void doRegisterNotice()}>{t("공지로 등록")}</button>
               </div>
             </div>
           </div>
@@ -795,6 +797,7 @@ function RoomMenu({
   showBot: boolean; botAutonomy: boolean; botBusy: boolean; botDisabled: boolean;
   botError: string; onToggleBot: () => void;
 }) {
+  const t = useT();
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
@@ -803,30 +806,30 @@ function RoomMenu({
   return (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
       <button role="menuitem" onClick={() => { onClose(); onToggle(); }}>
-        <Icon name={usePush ? "bellOff" : "bell"} size={14} /> {usePush ? "알림 끄기" : "알림 켜기"}
+        <Icon name={usePush ? "bellOff" : "bell"} size={14} /> {usePush ? t("알림 끄기") : t("알림 켜기")}
       </button>
       {onBackup && (
         <button role="menuitem" onClick={() => { onClose(); onBackup(); }}>
-          <Icon name="download" size={14} /> 대화 백업
+          <Icon name="download" size={14} /> {t("대화 백업")}
         </button>
       )}
       {showBot && (
         <div className="bot-autonomy">
           <label className="bot-autonomy-row">
             <span>
-              <span className="bot-autonomy-title">유비온봇 자율활동</span>
-              <span className="muted tiny bot-autonomy-desc">켜면 유비온봇이 호출 없이도 대화 흐름을 보고 참여할 수 있습니다.</span>
+              <span className="bot-autonomy-title">{t("유비온봇 자율활동")}</span>
+              <span className="muted tiny bot-autonomy-desc">{t("켜면 유비온봇이 호출 없이도 대화 흐름을 보고 참여할 수 있습니다.")}</span>
             </span>
             <input
               type="checkbox"
               className="switch"
               checked={botAutonomy}
               disabled={botBusy || botDisabled}
-              aria-label="유비온봇 자율활동"
+              aria-label={t("유비온봇 자율활동")}
               onChange={onToggleBot}
             />
           </label>
-          {botBusy && <div className="muted tiny">불러오는 중…</div>}
+          {botBusy && <div className="muted tiny">{t("불러오는 중…")}</div>}
           {botError && <div className="bot-autonomy-error">{botError}</div>}
         </div>
       )}
@@ -837,6 +840,7 @@ function RoomMenu({
 function MessageMenu({
   x, y, onDelete, onNotice, onClose,
 }: { x: number; y: number; onDelete?: () => void; onNotice?: () => void; onClose: () => void }) {
+  const t = useT();
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
@@ -844,8 +848,8 @@ function MessageMenu({
   }, [onClose]);
   return (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
-      {onNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> 공지로 등록</button>}
-      {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> 삭제</button>}
+      {onNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> {t("공지로 등록")}</button>}
+      {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> {t("삭제")}</button>}
     </div>
   );
 }
@@ -857,6 +861,7 @@ function MessageRow({
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
 }) {
+  const t = useT();
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const openMenu = (e: React.MouseEvent) => {
@@ -866,7 +871,7 @@ function MessageRow({
   };
   // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.
   const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message }
-    : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || "삭제된 파일", expired: true } : undefined);
+    : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || t("삭제된 파일"), expired: true } : undefined);
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
       {menu && (onDelete || onNotice) && (
@@ -891,9 +896,9 @@ function MessageRow({
           )}
           <div className="msg-meta">
             {m.failed ? (
-              <button className="link danger tiny" onClick={onRetry}>전송 실패 · 재시도</button>
+              <button className="link danger tiny" onClick={onRetry}>{t("전송 실패 · 재시도")}</button>
             ) : m.pending ? (
-              <span className="tiny muted">전송 중…</span>
+              <span className="tiny muted">{t("전송 중…")}</span>
             ) : (
               <>
                 <ReadMark m={m} room={room} meId={meId} mine={mine} isLastMine={isLastMine} />
@@ -916,6 +921,7 @@ function Composer({
   onSend: (t: string) => Promise<boolean>; onPick: () => void; onCapture: () => void; onPasteFiles: (files: File[]) => void;
   onEscapeTray: () => boolean; insert?: ComposerInsert | null;
 }) {
+  const t = useT();
   const [text, setText] = useState("");
   const [members, setMembers] = useState<MentionCandidate[]>([]);
   const [trigger, setTrigger] = useState<MentionTrigger | null>(null);
@@ -943,10 +949,10 @@ function Composer({
       return updated;
     });
     requestAnimationFrame(() => {
-      const t = ta.current;
-      if (!t) return;
-      t.focus();
-      t.setSelectionRange(next.cursor, next.cursor);
+      const el = ta.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
     });
   };
 
@@ -965,10 +971,10 @@ function Composer({
     const next = insertAtSelection(current, el?.selectionStart ?? current.length, el?.selectionEnd ?? current.length, insert.text);
     setText(next.text);
     requestAnimationFrame(() => {
-      const t = ta.current;
-      if (!t) return;
-      t.focus();
-      t.setSelectionRange(next.cursor, next.cursor);
+      const el = ta.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
     });
   }, [insert?.id]);
 
@@ -1021,13 +1027,13 @@ function Composer({
   const submit = () => {
     if (sending.current) return;
     const original = text;
-    const t = original.replace(/\s+$/, "");
-    if (!t.trim() && !hasFiles) return;
+    const trimmed = original.replace(/\s+$/, "");
+    if (!trimmed.trim() && !hasFiles) return;
     sending.current = true;
     setTrigger(null);
     void (async () => {
       try {
-        const failed = await onSend(t);
+        const failed = await onSend(trimmed);
         if (!failed) setText((current) => (current === original ? "" : current));
       } finally {
         sending.current = false;
@@ -1038,7 +1044,7 @@ function Composer({
   return (
     <div className="composer">
       {open && (
-        <div className="mention-pop" role="listbox" aria-label="멘션할 멤버">
+        <div className="mention-pop" role="listbox" aria-label={t("멘션할 멤버")}>
           {suggestions.map((member, i) => (
             <button
               key={member.userId}
@@ -1056,16 +1062,16 @@ function Composer({
           ))}
         </div>
       )}
-      <button className="icon-btn" title="파일 첨부" onClick={onPick}><Icon name="clip" /></button>
-      <button className="icon-btn" title="화면 캡쳐" aria-label="화면 캡쳐" onClick={onCapture}><Icon name="capture" /></button>
-      <button ref={emojiBtn} className={`icon-btn${emojiOpen ? " on" : ""}`} title="이모티콘" aria-label="이모티콘"
+      <button className="icon-btn" title={t("파일 첨부")} onClick={onPick}><Icon name="clip" /></button>
+      <button className="icon-btn" title={t("화면 캡쳐")} aria-label={t("화면 캡쳐")} onClick={onCapture}><Icon name="capture" /></button>
+      <button ref={emojiBtn} className={`icon-btn${emojiOpen ? " on" : ""}`} title={t("이모티콘")} aria-label={t("이모티콘")}
         aria-expanded={emojiOpen} onClick={() => setEmojiOpen((v) => !v)}><Icon name="smile" /></button>
       {emojiOpen && <EmojiPicker recent={recentEmoji} anchor={emojiBtn} onPick={pickEmoji} onClose={closeEmoji} />}
       <textarea
         ref={ta}
         rows={1}
         value={text}
-        placeholder="메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)"
+        placeholder={t("메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)")}
         onChange={(e) => {
           const value = e.target.value;
           setText(value);
@@ -1125,12 +1131,13 @@ function Composer({
           }
         }}
       />
-      <button className="send-btn" disabled={!text.trim() && !hasFiles} title="전송" onClick={submit}><Icon name="send" size={18} /></button>
+      <button className="send-btn" disabled={!text.trim() && !hasFiles} title={t("전송")} onClick={submit}><Icon name="send" size={18} /></button>
     </div>
   );
 }
 
 function SearchPanel({ room, onClose }: { room: Room; onClose: () => void }) {
+  const t = useT();
   const [q, setQ] = useState("");
   const [res, setRes] = useState<ChatMessage[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1149,16 +1156,16 @@ function SearchPanel({ room, onClose }: { room: Room; onClose: () => void }) {
   return (
     <aside className="search-panel">
       <div className="side-head">
-        <h3>대화 검색</h3>
+        <h3>{t("대화 검색")}</h3>
         <button className="icon-btn" onClick={onClose}><Icon name="close" size={16} /></button>
       </div>
       <form className="search-box" onSubmit={run}>
         <Icon name="search" size={16} />
-        <input autoFocus placeholder="검색어 입력 후 Enter" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input autoFocus placeholder={t("검색어 입력 후 Enter")} value={q} onChange={(e) => setQ(e.target.value)} />
       </form>
       <div className="search-results">
-        {busy && <div className="muted small pad">검색 중…</div>}
-        {res && !busy && !res.length && <div className="muted small pad">결과 없음</div>}
+        {busy && <div className="muted small pad">{t("검색 중…")}</div>}
+        {res && !busy && !res.length && <div className="muted small pad">{t("결과 없음")}</div>}
         {res?.map((m) => (
           <div key={m.messageId} className="search-hit">
             <div className="small"><b>{m.sendUserName}</b> <span className="muted tiny">{dayLabel(m.createdAt)} {timeLabel(m.createdAt)}</span></div>
@@ -1176,17 +1183,18 @@ function SearchPanel({ room, onClose }: { room: Room; onClose: () => void }) {
  * Click opens who-read popover (group: member list from /api/chat/members).
  */
 function ReadMark({ m, room, meId, mine, isLastMine }: { m: ChatMessage; room: Room; meId: number; mine: boolean; isLastMine: boolean }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   if (room.kind === "pubsub" || room.isSelf || m.messageId == null) return null;
   const n = m.needConfirmCount || 0;
   if (n <= 0) {
-    return mine && isLastMine && room.kind === "buddy" ? <span className="read-done tiny">읽음</span> : null;
+    return mine && isLastMine && room.kind === "buddy" ? <span className="read-done tiny">{t("읽음")}</span> : null;
   }
   return (
     <span className="read-wrap">
       <button
         className="unread-n"
-        title={room.kind === "buddy" ? "상대방이 아직 읽지 않았습니다" : `${n}명이 읽지 않았습니다`}
+        title={room.kind === "buddy" ? t("상대방이 아직 읽지 않았습니다") : t("{n}명이 읽지 않았습니다", { n })}
         onClick={(e) => { e.stopPropagation(); if (room.kind === "room") setOpen((o) => !o); }}
       >
         {n}
@@ -1197,6 +1205,7 @@ function ReadMark({ m, room, meId, mine, isLastMine }: { m: ChatMessage; room: R
 }
 
 function ReadersPopover({ m, room, meId, onClose }: { m: ChatMessage; room: Room; meId: number; onClose: () => void }) {
+  const t = useT();
   const [members, setMembers] = useState<{ userId: number; name: string; image: string }[] | null>(null);
   useEffect(() => {
     api().call("rooms:members", room.key).then(setMembers).catch(() => setMembers([]));
@@ -1211,13 +1220,13 @@ function ReadersPopover({ m, room, meId, onClose }: { m: ChatMessage; room: Room
   return (
     <div className="readers" onClick={(e) => e.stopPropagation()}>
       {!members ? (
-        <div className="muted small">불러오는 중…</div>
+        <div className="muted small">{t("불러오는 중…")}</div>
       ) : (
         <>
-          <div className="readers-h">안 읽음 {unreadList.length}</div>
-          {unreadList.map((u) => <div key={u.userId} className="readers-row"><Avatar name={u.name} src={u.image} size={20} />{u.name}{u.userId === meId ? " (나)" : ""}</div>)}
-          <div className="readers-h">읽음 {readList.length}</div>
-          {readList.map((u) => <div key={u.userId} className="readers-row muted"><Avatar name={u.name} src={u.image} size={20} />{u.name}{u.userId === meId ? " (나)" : ""}</div>)}
+          <div className="readers-h">{t("안 읽음 {n}", { n: unreadList.length })}</div>
+          {unreadList.map((u) => <div key={u.userId} className="readers-row"><Avatar name={u.name} src={u.image} size={20} />{u.name}{u.userId === meId ? ` ${t("(나)")}` : ""}</div>)}
+          <div className="readers-h">{t("읽음 {n}", { n: readList.length })}</div>
+          {readList.map((u) => <div key={u.userId} className="readers-row muted"><Avatar name={u.name} src={u.image} size={20} />{u.name}{u.userId === meId ? ` ${t("(나)")}` : ""}</div>)}
         </>
       )}
     </div>

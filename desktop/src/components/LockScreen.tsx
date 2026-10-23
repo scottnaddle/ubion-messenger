@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type UnlockResult } from "../api";
 import { Icon } from "./ui";
+import { useT } from "../lib/i18n";
 
 /** Full-screen lock overlay. The PIN never leaves the renderer except through lock:unlock. */
 export function LockScreen({ name, onUnlocked }: { name: string; onUnlocked: () => void }) {
+  const t = useT();
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -42,7 +44,7 @@ export function LockScreen({ name, onUnlocked }: { name: string; onUnlocked: () 
         onUnlocked();
         return;
       }
-      setError(result.error || "PIN이 올바르지 않습니다.");
+      setError(result.error || t("PIN이 올바르지 않습니다."));
       if (result.cooldownMs) setCooldownUntil(Date.now() + result.cooldownMs);
       inputRef.current?.focus();
     } catch (err) {
@@ -53,11 +55,11 @@ export function LockScreen({ name, onUnlocked }: { name: string; onUnlocked: () 
   };
 
   return (
-    <div className="lock-screen" role="dialog" aria-modal="true" aria-label="메신저 잠금">
+    <div className="lock-screen" role="dialog" aria-modal="true" aria-label={t("메신저 잠금")}>
       <form className="lock-card" onSubmit={submit}>
         <div className="lock-icon"><Icon name="lock" size={30} /></div>
-        <h2>메신저 잠금</h2>
-        <p className="muted small">{name ? `${name}님, PIN을 입력해 주세요.` : "PIN을 입력해 주세요."}</p>
+        <h2>{t("메신저 잠금")}</h2>
+        <p className="muted small">{name ? t("{name}님, PIN을 입력해 주세요.", { name }) : t("PIN을 입력해 주세요.")}</p>
         <input
           ref={inputRef}
           type="password"
@@ -71,12 +73,12 @@ export function LockScreen({ name, onUnlocked }: { name: string; onUnlocked: () 
           aria-label="PIN"
         />
         {remaining > 0 ? (
-          <div className="lock-cooldown">{remaining}초 후 다시 시도하세요.</div>
+          <div className="lock-cooldown">{t("{n}초 후 다시 시도하세요.", { n: remaining })}</div>
         ) : error ? (
           <div className="lock-error">{error}</div>
         ) : null}
         <button className="primary" type="submit" disabled={busy || remaining > 0 || !pin}>
-          잠금 해제
+          {t("잠금 해제")}
         </button>
       </form>
     </div>

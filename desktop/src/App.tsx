@@ -6,6 +6,7 @@ import { ChatView } from "./components/ChatView";
 import { People } from "./components/People";
 import { SettingsModal } from "./components/SettingsModal";
 import { drawBadge } from "./lib/badge";
+import { setLanguage, useT } from "./lib/i18n";
 import { Avatar, Icon } from "./components/ui";
 import { RailButton, RailProfile } from "./components/RailTooltip";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -27,6 +28,7 @@ export type Toast = { id: number; text: string; kind?: "error" | "info"; action?
 export type ToastFn = (text: string, kind?: Toast["kind"], action?: ToastAction) => void;
 
 export function App() {
+  const t = useT();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [booting, setBooting] = useState(true);
@@ -53,6 +55,11 @@ export function App() {
     setToasts((t) => [...t, { id, text, kind, action }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 7000 : 4500);
   }, []);
+
+  // 다국어: module-level language drives useT() in every component
+  useEffect(() => {
+    if (settings) setLanguage(settings.language);
+  }, [settings?.language]);
 
   // theme
   useEffect(() => {
@@ -109,7 +116,7 @@ export function App() {
           if ("webLoginRequired" in u) setWebPrompt(u.message.split("\n")[0]);
           else setUser(u);
         } catch (e) {
-          toast(`자동 로그인 실패: ${(e as Error).message}`);
+          toast(t("자동 로그인 실패: {message}", { message: (e as Error).message }));
         }
       }
       setBooting(false);
@@ -146,7 +153,7 @@ export function App() {
         else if (type === "portalBadge") setPortalBadge(payload);
         else if (type === "webLoginRequired") {
           // Web (OTP) session expired: back to login with the web-login prompt; never loop native logins.
-          setWebPrompt(payload?.message || "이 계정은 추가 인증(OTP)이 필요해요");
+          setWebPrompt(payload?.message || t("이 계정은 추가 인증(OTP)이 필요해요"));
           setUser(null);
           setRooms([]);
           setActiveKey(null);
@@ -323,10 +330,10 @@ export function App() {
         {offline && (
           <div className={`banner ${!netOnline ? "bad" : "warn"}`}>
             {!netOnline
-              ? "오프라인 상태입니다. 네트워크 연결을 확인하세요."
+              ? t("오프라인 상태입니다. 네트워크 연결을 확인하세요.")
               : conn === "reconnecting"
-              ? "실시간 연결이 끊어져 다시 연결하는 중…"
-              : "실시간 서버에 연결하는 중…"}
+              ? t("실시간 연결이 끊어져 다시 연결하는 중…")
+              : t("실시간 서버에 연결하는 중…")}
           </div>
         )}
         <div className="panes">
@@ -369,8 +376,8 @@ export function App() {
                 <div className="empty-chat">
                   <div className="logo-mark big">U</div>
                   <h2>UBION Messenger</h2>
-                  <p>왼쪽에서 대화를 선택하거나 조직도에서 동료를 찾아 대화를 시작하세요.</p>
-                  <p className="muted small">⌘/Ctrl+K 대화 검색 · ⌘/Ctrl+N 조직도 · ⌘/Ctrl+1..6 탭 이동 · Alt+↑↓ 대화 이동</p>
+                  <p>{t("왼쪽에서 대화를 선택하거나 조직도에서 동료를 찾아 대화를 시작하세요.")}</p>
+                  <p className="muted small">{t("⌘/Ctrl+K 대화 검색 · ⌘/Ctrl+N 조직도 · ⌘/Ctrl+1..6 탭 이동 · Alt+↑↓ 대화 이동")}</p>
                 </div>
               )}
             </>

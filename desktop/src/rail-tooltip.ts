@@ -1,19 +1,20 @@
 import { NAV_ORDER, type NavView } from "./nav";
+import { t, tk } from "./lib/i18n";
 
 export type RailTipId = NavView | "approval" | "settings" | "profile";
 
 export const RAIL_TOOLTIP_DELAY_MS = 300;
 
 const TIPS: Record<RailTipId, { label: string; keys: readonly string[] }> = {
-  home: { label: "홈", keys: ["1"] },
-  chats: { label: "메시지", keys: ["2", "K"] },
-  mail: { label: "메일", keys: ["3"] },
-  flex: { label: "플렉스", keys: ["4"] },
-  people: { label: "조직도", keys: ["5", "N"] },
-  menu: { label: "앱", keys: ["6"] },
-  approval: { label: "전자결재", keys: [] },
-  settings: { label: "설정", keys: [","] },
-  profile: { label: "프로필", keys: [] },
+  home: { label: tk("홈"), keys: ["1"] },
+  chats: { label: tk("메시지"), keys: ["2", "K"] },
+  mail: { label: tk("메일"), keys: ["3"] },
+  flex: { label: tk("플렉스"), keys: ["4"] },
+  people: { label: tk("조직도"), keys: ["5", "N"] },
+  menu: { label: tk("앱"), keys: ["6"] },
+  approval: { label: tk("전자결재"), keys: [] },
+  settings: { label: tk("설정"), keys: [","] },
+  profile: { label: tk("프로필"), keys: [] },
 };
 
 export function isMacPlatform(platform?: string | null): boolean {
@@ -22,7 +23,7 @@ export function isMacPlatform(platform?: string | null): boolean {
 }
 
 export function railLabel(id: RailTipId, name?: string): string {
-  return id === "profile" && name ? name : TIPS[id].label;
+  return id === "profile" && name ? name : t(TIPS[id].label);
 }
 
 export function railShortcut(id: RailTipId, platform?: string | null): string {

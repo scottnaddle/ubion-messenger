@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
+import { useT } from "../lib/i18n";
 import { sanitizeMailHtml } from "../lib/sanitize";
 import { fileIcon } from "../../electron/core/attach";
 import { applyMailDelete, isTrashFolder } from "../../electron/core/mail";
@@ -43,6 +44,7 @@ function FolderGroup({ title, folders, cur, onPick }: { title?: string; folders:
 
 /** Sandboxed iframe (no scripts) so mail CSS can't touch the app; links → external browser. */
 function MailBody({ html, onHeight }: { html: string; onHeight?: (h: number) => void }) {
+  const t = useT();
   const ref = useRef<HTMLIFrameElement>(null);
   const [h, setH] = useState(200);
   const doc = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>
@@ -65,58 +67,60 @@ function MailBody({ html, onHeight }: { html: string; onHeight?: (h: number) => 
     d.querySelectorAll("img").forEach((i) => i.addEventListener("load", fit));
   };
   // allow-same-origin (no allow-scripts) lets the parent measure height and intercept clicks; nothing in the mail can run.
-  return <iframe ref={ref} className="mail-frame" title="메일 본문" sandbox="allow-same-origin" srcDoc={doc} style={{ height: h }} onLoad={onLoad} />;
+  return <iframe ref={ref} className="mail-frame" title={t("메일 본문")} sandbox="allow-same-origin" srcDoc={doc} style={{ height: h }} onLoad={onLoad} />;
 }
 
 function Overview({ page, inboxUnread, folders, onSender, onPick, onWrite }: {
   onWrite: () => void;
   page: MailListPage | null; inboxUnread: number; folders: MailFolders | null; onSender: (q: string) => void; onPick: (m: MailListItem) => void;
 }) {
+  const t = useT();
   const o = mailOverview(page, inboxUnread);
   const percent = folders ? Math.max(0, Math.min(100, folders.quota.percent)) : 0;
   return (
     <div className="mail-overview">
       <div className="mail-ov-cards">
-        <div className="mail-ov-card"><span className="muted small">안 읽은 메일</span><b>{o.unread}</b><span className="muted tiny">받은편지함</span></div>
-        <div className="mail-ov-card"><span className="muted small">중요 · 별표</span><b>{o.important}</b><span className="muted tiny">현재 목록</span></div>
-        <div className="mail-ov-card"><span className="muted small">첨부 있는 메일</span><b>{o.withAttach}</b><span className="muted tiny">현재 목록</span></div>
-        <div className="mail-ov-card"><span className="muted small">용량</span><b>{percent}%</b>
+        <div className="mail-ov-card"><span className="muted small">{t("안 읽은 메일")}</span><b>{o.unread}</b><span className="muted tiny">{t("받은편지함")}</span></div>
+        <div className="mail-ov-card"><span className="muted small">{t("중요 · 별표")}</span><b>{o.important}</b><span className="muted tiny">{t("현재 목록")}</span></div>
+        <div className="mail-ov-card"><span className="muted small">{t("첨부 있는 메일")}</span><b>{o.withAttach}</b><span className="muted tiny">{t("현재 목록")}</span></div>
+        <div className="mail-ov-card"><span className="muted small">{t("용량")}</span><b>{percent}%</b>
           <div className="mail-quota-bar"><i style={{ width: `${percent}%` }} /></div>
         </div>
       </div>
       <div className="mail-ov-cols">
         <section className="mail-ov-sec">
-          <h4>최근 보낸 사람</h4>
-          {!o.recentSenders.length && <div className="muted small">메일이 없습니다</div>}
+          <h4>{t("최근 보낸 사람")}</h4>
+          {!o.recentSenders.length && <div className="muted small">{t("메일이 없습니다")}</div>}
           {o.recentSenders.map((s) => (
-            <button key={s.address || s.name} className="mail-ov-row" onClick={() => onSender(s.address || s.name)} title={`${s.address} 메일 검색`}>
+            <button key={s.address || s.name} className="mail-ov-row" onClick={() => onSender(s.address || s.name)} title={t("{address} 메일 검색", { address: s.address })}>
               <span className="mail-ov-av">{(s.name || "?").slice(0, 1)}</span>
               <span className="ellipsis">{s.name}<span className="muted tiny"> {s.address !== s.name ? s.address : ""}</span></span>
-              <span className="muted small">{s.count}통{s.unread ? ` · 새 ${s.unread}` : ""}</span>
+              <span className="muted small">{t("{n}통", { n: s.count })}{s.unread ? t(" · 새 {n}", { n: s.unread }) : ""}</span>
             </button>
           ))}
         </section>
         <section className="mail-ov-sec">
-          <h4>중요 메일</h4>
-          {!o.importantItems.length && <div className="muted small">중요 표시된 메일이 없습니다</div>}
+          <h4>{t("중요 메일")}</h4>
+          {!o.importantItems.length && <div className="muted small">{t("중요 표시된 메일이 없습니다")}</div>}
           {o.importantItems.map((m) => (
             <button key={m.uid} className="mail-ov-row" onClick={() => onPick(m)}>
               <span className="mail-imp">!</span>
-              <span className="ellipsis">{m.subject || "(제목 없음)"}</span>
+              <span className="ellipsis">{m.subject || t("(제목 없음)")}</span>
               <span className="muted small">{mailDate(m.dateUtc)}</span>
             </button>
           ))}
         </section>
       </div>
       <div className="mail-ov-actions">
-        <button className="primary small" onClick={onWrite}>메일 쓰기</button>
-        <span className="muted tiny">메일을 선택하면 여기에서 바로 읽을 수 있습니다.</span>
+        <button className="primary small" onClick={onWrite}>{t("메일 쓰기")}</button>
+        <span className="muted tiny">{t("메일을 선택하면 여기에서 바로 읽을 수 있습니다.")}</span>
       </div>
     </div>
   );
 }
 
 export function Mail() {
+  const t = useT();
   const [folders, setFolders] = useState<MailFolders | null>(null);
   const [folderErr, setFolderErr] = useState("");
   const [folder, setFolder] = useState("Inbox");
@@ -215,29 +219,29 @@ export function Mail() {
     if (sel && uids.includes(sel.uid)) { if (next) void openMsg(next); else { setSel(null); setMsg(null); } }
     try {
       await api().portal.mailDelete(f, uids);
-      setToast(inTrash ? `${uids.length}통을 영구 삭제했습니다` : `${uids.length}통을 휴지통으로 이동했습니다`);
+      setToast(inTrash ? t("{n}통을 영구 삭제했습니다", { n: uids.length }) : t("{n}통을 휴지통으로 이동했습니다", { n: uids.length }));
       void api().portal.refresh().catch(() => undefined);
       void loadFolders();
     } catch (e) {
       setItems(prevItems); setList(prevList); setSel(prevSel); setMsg(prevMsg);
       if (unreadRemoved) bumpUnread(f, unreadRemoved);
-      setToast(`삭제하지 못했습니다: ${(e as Error).message}`);
+      setToast(t("삭제하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key !== "Delete" && !(e.key === "Backspace" && e.metaKey)) return;
-      const t = e.target as HTMLElement;
-      if (compose || confirmDel || t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+      const el = e.target as HTMLElement;
+      if (compose || confirmDel || el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
       const uids = checked.size ? [...checked] : sel ? [sel.uid] : [];
       if (uids.length) { e.preventDefault(); askDelete(uids); }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   });
-  useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 2500); return () => clearTimeout(t); }, [toast]);
+  useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 2500); return () => clearTimeout(timer); }, [toast]);
   const onSent = () => {
-    setCompose(null); setToast("메일을 보냈습니다");
+    setCompose(null); setToast(t("메일을 보냈습니다"));
     const sent = folders?.defaultFolders?.find((f) => f.fullName === "Sent" || f.name === "보낸편지함");
     if (sent) pickFolder(sent); else { setFolder("Sent"); setSel(null); setMsg(null); setKw(""); setQuery(""); }
     setItems([]);
@@ -265,26 +269,26 @@ export function Mail() {
     <div className="mail3">
       <aside className="mail-pane-folders">
         <div className="side-head home-head">
-          <h2>메일</h2>
-          <button className="icon-btn" title="새로고침" onClick={() => { void loadFolders(); setItems([]); void loadPage(1); }}>
+          <h2>{t("메일")}</h2>
+          <button className="icon-btn" title={t("새로고침")} onClick={() => { void loadFolders(); setItems([]); void loadPage(1); }}>
             <Icon name="refresh" size={18} />
           </button>
         </div>
-        <button className="primary small mail-write" onClick={() => startCompose("new")} title="새 메일 쓰기">
-          <Icon name="plus" size={15} /> 메일 쓰기
+        <button className="primary small mail-write" onClick={() => startCompose("new")} title={t("새 메일 쓰기")}>
+          <Icon name="plus" size={15} /> {t("메일 쓰기")}
         </button>
         <div className="mail-folders">
-          {folderErr && <div className="mail-error"><span>{folderErr}</span><button className="link" onClick={() => void loadFolders()}>다시 시도</button></div>}
-          {!folders && !folderErr && <div className="muted small pad">불러오는 중…</div>}
+          {folderErr && <div className="mail-error"><span>{folderErr}</span><button className="link" onClick={() => void loadFolders()}>{t("다시 시도")}</button></div>}
+          {!folders && !folderErr && <div className="muted small pad">{t("불러오는 중…")}</div>}
           {folders && <>
             <FolderGroup folders={folders.defaultFolders} cur={folder} onPick={pickFolder} />
-            <FolderGroup title="내 폴더" folders={folders.userFolders} cur={folder} onPick={pickFolder} />
-            <FolderGroup title="공유 폴더" folders={folders.userSharedFolders} cur={folder} onPick={pickFolder} />
+            <FolderGroup title={t("내 폴더")} folders={folders.userFolders} cur={folder} onPick={pickFolder} />
+            <FolderGroup title={t("공유 폴더")} folders={folders.userSharedFolders} cur={folder} onPick={pickFolder} />
           </>}
         </div>
         {folders && (
           <section className="mail-quota">
-            <div className="mail-quota-top"><span className="small">용량</span><span className="muted tiny">{percent}%{folders.quota.usageUnit ? ` · ${folders.quota.usageUnit} / ${folders.quota.limitUnit}` : ""}</span></div>
+            <div className="mail-quota-top"><span className="small">{t("용량")}</span><span className="muted tiny">{percent}%{folders.quota.usageUnit ? ` · ${folders.quota.usageUnit} / ${folders.quota.limitUnit}` : ""}</span></div>
             <div className="mail-quota-bar"><i style={{ width: `${percent}%` }} /></div>
           </section>
         )}
@@ -293,44 +297,44 @@ export function Mail() {
       <section className="mail-pane-list">
         <form className="search-box mail-search" onSubmit={search}>
           <Icon name="search" size={16} />
-          <input placeholder={`${curFolder?.name || "메일함"}에서 검색`} value={kw} onChange={(e) => setKw(e.target.value)} />
-          {query && <button type="button" className="link" onClick={() => search(undefined, "")}>지우기</button>}
-          <button className="link" type="submit" disabled={!kw.trim()}>검색</button>
+          <input placeholder={t("{folder}에서 검색", { folder: curFolder?.name || t("메일함") })} value={kw} onChange={(e) => setKw(e.target.value)} />
+          {query && <button type="button" className="link" onClick={() => search(undefined, "")}>{t("지우기")}</button>}
+          <button className="link" type="submit" disabled={!kw.trim()}>{t("검색")}</button>
         </form>
         <div className="mail-list-head">
-          <b className="ellipsis">{query ? `“${query}” 검색 결과` : curFolder?.name || list?.folderName || folder}</b>
-          <span className="muted small">{list ? `${list.total.toLocaleString()}통${!query && list.unread ? ` · 안 읽음 ${list.unread.toLocaleString()}` : ""}` : ""}</span>
+          <b className="ellipsis">{query ? t("“{query}” 검색 결과", { query }) : curFolder?.name || list?.folderName || folder}</b>
+          <span className="muted small">{list ? `${t("{n}통", { n: list.total.toLocaleString() })}${!query && list.unread ? t(" · 안 읽음 {n}", { n: list.unread.toLocaleString() }) : ""}` : ""}</span>
         </div>
         {canDelete && items.length > 0 && (
           <div className="mail-bulk">
-            <label className="mail-check-all"><input type="checkbox" checked={allChecked} onChange={() => setChecked(allChecked ? new Set() : new Set(items.map((m) => m.uid)))} /> 전체 선택</label>
-            {checked.size > 0 && <span className="small">{checked.size}통 선택</span>}
+            <label className="mail-check-all"><input type="checkbox" checked={allChecked} onChange={() => setChecked(allChecked ? new Set() : new Set(items.map((m) => m.uid)))} /> {t("전체 선택")}</label>
+            {checked.size > 0 && <span className="small">{t("{n}통 선택", { n: checked.size })}</span>}
             <span className="spacer" />
-            <button className="link small danger" disabled={!checked.size} onClick={() => askDelete([...checked])} title="삭제 (Delete)"><Icon name="trash" size={14} /> {inTrash ? "영구 삭제" : "삭제"}</button>
+            <button className="link small danger" disabled={!checked.size} onClick={() => askDelete([...checked])} title={t("삭제 (Delete)")}><Icon name="trash" size={14} /> {inTrash ? t("영구 삭제") : t("삭제")}</button>
           </div>
         )}
         <div className="mail-items" onScroll={onScroll}>
-          {listErr && <div className="mail-error"><span>{listErr}</span><button className="link" onClick={() => void loadPage(list ? list.page + (items.length ? 1 : 0) : 1)}>다시 시도</button></div>}
-          {listLoading && !items.length && <div className="muted small pad">불러오는 중…</div>}
-          {list && !items.length && !listLoading && !listErr && <div className="muted small pad">{query ? "검색 결과가 없습니다" : "메일이 없습니다"}</div>}
+          {listErr && <div className="mail-error"><span>{listErr}</span><button className="link" onClick={() => void loadPage(list ? list.page + (items.length ? 1 : 0) : 1)}>{t("다시 시도")}</button></div>}
+          {listLoading && !items.length && <div className="muted small pad">{t("불러오는 중…")}</div>}
+          {list && !items.length && !listLoading && !listErr && <div className="muted small pad">{query ? t("검색 결과가 없습니다") : t("메일이 없습니다")}</div>}
           {items.map((m) => (
             <div key={`${m.folder}/${m.uid}`} role="button" tabIndex={0} className={`mail-item ${m.seen ? "" : "unread"} ${sel?.uid === m.uid && sel.folder === m.folder ? "active" : ""} ${checked.has(m.uid) ? "checked" : ""}`}
               onClick={() => void openMsg(m)} onKeyDown={(e) => { if (e.key === "Enter") void openMsg(m); }}>
-              {canDelete && <input type="checkbox" className="mail-check" aria-label="선택" checked={checked.has(m.uid)} onClick={(e) => e.stopPropagation()} onChange={() => toggleCheck(m.uid)} />}
-              <span className="mail-dot" aria-label={m.seen ? "" : "안 읽음"} />
+              {canDelete && <input type="checkbox" className="mail-check" aria-label={t("선택")} checked={checked.has(m.uid)} onClick={(e) => e.stopPropagation()} onChange={() => toggleCheck(m.uid)} />}
+              <span className="mail-dot" aria-label={m.seen ? "" : t("안 읽음")} />
               <div className="mail-item-main">
                 <div className="mail-item-top">
-                  <span className="mail-from ellipsis">{m.from.name || m.from.address || "(보낸 사람 없음)"}</span>
-                  {m.hasAttach && <span className="muted" title="첨부파일"><Icon name="clip" size={13} /></span>}
+                  <span className="mail-from ellipsis">{m.from.name || m.from.address || t("(보낸 사람 없음)")}</span>
+                  {m.hasAttach && <span className="muted" title={t("첨부파일")}><Icon name="clip" size={13} /></span>}
                   <span className="muted tiny mail-date">{mailDate(m.dateUtc)}</span>
                 </div>
-                <div className="mail-subject ellipsis">{m.important && <span className="mail-imp">!</span>}{m.subject || "(제목 없음)"}</div>
+                <div className="mail-subject ellipsis">{m.important && <span className="mail-imp">!</span>}{m.subject || t("(제목 없음)")}</div>
                 <div className="mail-snippet ellipsis muted small">{m.preview}</div>
               </div>
             </div>
           ))}
           {list && !list.lastPage && items.length > 0 && (
-            <button className="link mail-more" disabled={listLoading} onClick={() => void loadPage(list.page + 1)}>{listLoading ? "불러오는 중…" : "더 보기"}</button>
+            <button className="link mail-more" disabled={listLoading} onClick={() => void loadPage(list.page + 1)}>{listLoading ? t("불러오는 중…") : t("더 보기")}</button>
           )}
         </div>
       </section>
@@ -342,52 +346,52 @@ export function Mail() {
           <div className="modal-back" onClick={() => setConfirmDel(null)}>
             <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
               <div className="modal-body">
-                <h3>{inTrash ? `${confirmDel.length}통을 영구 삭제할까요?` : `${confirmDel.length}통을 삭제할까요?`}</h3>
-                <p className="muted small">{inTrash ? "영구 삭제하면 복구할 수 없습니다." : "삭제하면 휴지통으로 이동합니다."}</p>
+                <h3>{inTrash ? t("{n}통을 영구 삭제할까요?", { n: confirmDel.length }) : t("{n}통을 삭제할까요?", { n: confirmDel.length })}</h3>
+                <p className="muted small">{inTrash ? t("영구 삭제하면 복구할 수 없습니다.") : t("삭제하면 휴지통으로 이동합니다.")}</p>
                 <div className="approval-modal-actions">
-                  <button className="link" onClick={() => setConfirmDel(null)}>취소</button>
-                  <button className="danger-btn" autoFocus onClick={() => void doDelete(confirmDel)}>{inTrash ? "영구 삭제" : "삭제"}</button>
+                  <button className="link" onClick={() => setConfirmDel(null)}>{t("취소")}</button>
+                  <button className="danger-btn" autoFocus onClick={() => void doDelete(confirmDel)}>{inTrash ? t("영구 삭제") : t("삭제")}</button>
                 </div>
               </div>
             </div>
           </div>
         )}
         {!compose && !sel && <Overview page={list} inboxUnread={inboxUnread} folders={folders} onSender={(q) => search(undefined, q)} onPick={(m) => void openMsg(m)} onWrite={() => startCompose("new")} />}
-        {!compose && sel && msgLoading && <div className="muted small pad">불러오는 중…</div>}
-        {!compose && sel && msgErr && <div className="mail-error pad"><span>{msgErr}</span><button className="link" onClick={() => void openMsg(sel)}>다시 시도</button></div>}
+        {!compose && sel && msgLoading && <div className="muted small pad">{t("불러오는 중…")}</div>}
+        {!compose && sel && msgErr && <div className="mail-error pad"><span>{msgErr}</span><button className="link" onClick={() => void openMsg(sel)}>{t("다시 시도")}</button></div>}
         {!compose && sel && msg && body && (
           <article className="mail-read">
             <header className="mail-read-head">
               <div className="mail-read-title">
-                <h3>{msg.important && <span className="mail-imp">!</span>}{msg.subject || "(제목 없음)"}</h3>
+                <h3>{msg.important && <span className="mail-imp">!</span>}{msg.subject || t("(제목 없음)")}</h3>
                 <div className="mail-read-actions">
-                  <button className="link" onClick={() => startCompose("reply")}>↩ 답장</button>
-                  <button className="link" onClick={() => startCompose("replyAll")}>전체 답장</button>
-                  <button className="link" onClick={() => startCompose("forward")}>→ 전달</button>
-                  {canDelete && <button className="link danger" title="삭제 (Delete)" onClick={() => askDelete([msg.uid])}><Icon name="trash" size={14} /> {inTrash ? "영구 삭제" : "삭제"}</button>}
-                  <button className="link" onClick={() => open(mailUrl(msg.folder, String(msg.uid)))}>웹에서 열기</button>
-                  <button className="icon-btn" title="닫기" onClick={() => { setSel(null); setMsg(null); }}><Icon name="close" size={16} /></button>
+                  <button className="link" onClick={() => startCompose("reply")}>{t("↩ 답장")}</button>
+                  <button className="link" onClick={() => startCompose("replyAll")}>{t("전체 답장")}</button>
+                  <button className="link" onClick={() => startCompose("forward")}>{t("→ 전달")}</button>
+                  {canDelete && <button className="link danger" title={t("삭제 (Delete)")} onClick={() => askDelete([msg.uid])}><Icon name="trash" size={14} /> {inTrash ? t("영구 삭제") : t("삭제")}</button>}
+                  <button className="link" onClick={() => open(mailUrl(msg.folder, String(msg.uid)))}>{t("웹에서 열기")}</button>
+                  <button className="icon-btn" title={t("닫기")} onClick={() => { setSel(null); setMsg(null); }}><Icon name="close" size={16} /></button>
                 </div>
               </div>
               <div className="mail-read-meta">
                 <span className="mail-ov-av">{(msg.from.name || "?").slice(0, 1)}</span>
                 <div className="mail-read-addrs">
                   <div><b>{msg.from.name}</b> <span className="muted small">&lt;{msg.from.address}&gt;</span></div>
-                  {msg.to.length > 0 && <div className="muted small ellipsis">받는 사람: {msg.to.map((a) => a.name).join(", ")}</div>}
-                  {msg.cc.length > 0 && <div className="muted small ellipsis">참조: {msg.cc.map((a) => a.name).join(", ")}</div>}
+                  {msg.to.length > 0 && <div className="muted small ellipsis">{t("받는 사람:")} {msg.to.map((a) => a.name).join(", ")}</div>}
+                  {msg.cc.length > 0 && <div className="muted small ellipsis">{t("참조:")} {msg.cc.map((a) => a.name).join(", ")}</div>}
                 </div>
                 <span className="muted small">{fullDate(msg.dateUtc)}</span>
               </div>
             </header>
             {body.blockedImages > 0 && !showImages && (
               <div className="mail-img-bar">
-                <span className="small">개인정보 보호를 위해 외부 이미지 {body.blockedImages}개를 차단했습니다.</span>
-                <button className="link" onClick={() => setShowImages(true)}>이미지 표시</button>
+                <span className="small">{t("개인정보 보호를 위해 외부 이미지 {n}개를 차단했습니다.", { n: body.blockedImages })}</span>
+                <button className="link" onClick={() => setShowImages(true)}>{t("이미지 표시")}</button>
               </div>
             )}
             {msg.attachments.length > 0 && (
               <section className="mail-attaches">
-                <h4 className="small">첨부파일 {msg.attachments.length}개</h4>
+                <h4 className="small">{t("첨부파일 {n}개", { n: msg.attachments.length })}</h4>
                 <div className="mail-attach-grid">
                   {msg.attachments.map((a) => {
                     const ic = fileIcon(a.name, a.type);
@@ -398,7 +402,7 @@ export function Mail() {
                           <div className="ellipsis" title={a.name}>{a.name}</div>
                           <div className="muted tiny">{a.sizeLabel}</div>
                         </div>
-                        <button className="icon-btn" title="웹 메일에서 내려받기" onClick={() => open(mailUrl(msg.folder, String(msg.uid)))}><Icon name="download" size={15} /></button>
+                        <button className="icon-btn" title={t("웹 메일에서 내려받기")} onClick={() => open(mailUrl(msg.folder, String(msg.uid)))}><Icon name="download" size={15} /></button>
                       </div>
                     );
                   })}

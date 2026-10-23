@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
+import { tk, useT } from "../lib/i18n";
 import { sanitizeHtml } from "../lib/sanitize";
 import {
   APPROVAL_BOXES, APPROVAL_BOX_LABELS,
@@ -9,6 +10,11 @@ import {
 
 const open = (url: string) => void api().portal.open(url).catch(() => undefined);
 const docUrl = (id: number) => `/app/approval/document/${id}`;
+/** Box labels come from APPROVAL_BOX_LABELS (core); listed here so the i18n key scanner sees them. */
+const BOX_LABEL: Record<ApprovalBox, string> = {
+  todo: tk("결재 대기"), upcoming: tk("결재 예정"), draft: tk("기안 문서"), approve: tk("결재한 문서"),
+};
+const boxLabel = (b: ApprovalBox) => APPROVAL_BOX_LABELS[b] || BOX_LABEL[b];
 
 function dt(s?: string) {
   if (!s) return "";
@@ -62,6 +68,7 @@ export const canAct = (d: ApprovalDocumentDetail) =>
   ["isApprovalWaitingUser", "isAgreementWaitingUser", "isCheckWaitingUser", "isInspectionWaitingUser", "isApprovalDeputy", "isAgreementDeputy"].some((k) => d.actionCheck?.[k]);
 
 export function Approval() {
+  const t = useT();
   const [box, setBox] = useState<ApprovalBox>("todo");
   const [page, setPage] = useState(0);
   const [kw, setKw] = useState("");
@@ -183,9 +190,9 @@ export function Approval() {
 
   const submitAction = async () => {
     if (!action || acting) return;
-    const label = action.kind === "approve" ? "승인" : "반려";
+    const label = action.kind === "approve" ? t("승인") : t("반려");
     if (action.kind === "return" && !comment.trim()) {
-      setActionError("반려 사유를 입력하세요");
+      setActionError(t("반려 사유를 입력하세요"));
       return;
     }
     setActing(true);
@@ -193,14 +200,14 @@ export function Approval() {
     try {
       await api().portal.approvalAction(action.kind, action.docId, comment.trim());
       setAction(null);
-      setToast(`${label} 처리되었습니다`);
+      setToast(t("{action} 처리되었습니다", { action: label }));
       setTimeout(() => setToast(""), 3000);
       setSel(null);
       setDetail(null);
       void loadCounts();
       void loadList();
     } catch (e) {
-      setActionError(`${label} 실패: ${(e as Error).message || "알 수 없는 오류"}`);
+      setActionError(t("{action} 실패: {error}", { action: label, error: (e as Error).message || t("알 수 없는 오류") }));
     } finally {
       setActing(false);
     }
@@ -212,14 +219,14 @@ export function Approval() {
   return (
     <div className="approval">
       <aside className="approval-boxes">
-        <div className="side-head home-head"><h2>전자결재</h2></div>
+        <div className="side-head home-head"><h2>{t("전자결재")}</h2></div>
         {APPROVAL_BOXES.map((b) => (
           <button key={b} className={`approval-box ${box === b ? "on" : ""}`} onClick={() => chooseBox(b)}>
-            <span>{APPROVAL_BOX_LABELS[b]}</span>
+            <span>{t(boxLabel(b))}</span>
             <span className="badge quiet">{counts[b] == null ? "-" : counts[b]! > 99 ? "99+" : counts[b]}</span>
           </button>
         ))}
-        <button className="icon-btn approval-refresh" title="새로고침" onClick={() => { void loadCounts(); void loadList(); }}>
+        <button className="icon-btn approval-refresh" title={t("새로고침")} onClick={() => { void loadCounts(); void loadList(); }}>
           <Icon name="refresh" size={18} />
         </button>
       </aside>
@@ -227,30 +234,30 @@ export function Approval() {
       <section className="approval-list">
         <form className="search-box approval-search" onSubmit={search}>
           <Icon name="search" size={16} />
-          <input placeholder="문서 제목 검색" value={kw} onChange={(e) => setKw(e.target.value)} />
-          <button className="link" type="submit" disabled={!kw.trim()}>검색</button>
+          <input placeholder={t("문서 제목 검색")} value={kw} onChange={(e) => setKw(e.target.value)} />
+          <button className="link" type="submit" disabled={!kw.trim()}>{t("검색")}</button>
         </form>
         <div className="approval-list-head">
-          <b>{APPROVAL_BOX_LABELS[box]}</b>
+          <b>{t(boxLabel(box))}</b>
           <span className="muted small">{currentPage + 1} / {totalPage}</span>
         </div>
         <div className="approval-items">
           {listError && (
             <div className="approval-error">
               <span>{listError}</span>
-              <button className="link" onClick={() => void loadList()}>다시 시도</button>
+              <button className="link" onClick={() => void loadList()}>{t("다시 시도")}</button>
             </div>
           )}
-          {listLoading && !list && <div className="muted small pad">불러오는 중…</div>}
-          {list && !list.items.length && !listError && <div className="muted small pad">문서가 없습니다</div>}
+          {listLoading && !list && <div className="muted small pad">{t("불러오는 중…")}</div>}
+          {list && !list.items.length && !listError && <div className="muted small pad">{t("문서가 없습니다")}</div>}
           {list?.items.map((d) => {
             const id = d.documentId ?? d.id;
             const on = sel != null && (sel.documentId ?? sel.id) === id;
             return (
               <button key={id} className={`approval-item ${on ? "active" : ""}`} onClick={() => void openDoc(d)}>
                 <div className="approval-item-top">
-                  <span className="ellipsis">{d.title || "(제목 없음)"}</span>
-                  {d.emergency && <span className="approval-emergency">긴급</span>}
+                  <span className="ellipsis">{d.title || t("(제목 없음)")}</span>
+                  {d.emergency && <span className="approval-emergency">{t("긴급")}</span>}
                 </div>
                 <div className="approval-item-meta">
                   <span className="tag">{d.formName}</span>
@@ -266,34 +273,34 @@ export function Approval() {
           })}
         </div>
         <div className="approval-pager">
-          <button className="link" disabled={page <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>◀ 이전</button>
+          <button className="link" disabled={page <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t("◀ 이전")}</button>
           <span className="muted small">{currentPage + 1} / {totalPage}</span>
-          <button className="link" disabled={page + 1 >= totalPage} onClick={() => setPage((p) => p + 1)}>다음 ▶</button>
+          <button className="link" disabled={page + 1 >= totalPage} onClick={() => setPage((p) => p + 1)}>{t("다음 ▶")}</button>
         </div>
       </section>
 
       <section className="approval-detail">
-        {detailLoading && !detail && <div className="muted small pad">불러오는 중…</div>}
+        {detailLoading && !detail && <div className="muted small pad">{t("불러오는 중…")}</div>}
         {detailError && !detailLoading && (
           <div className="approval-error pad">
             <span>{detailError}</span>
-            <button className="link" onClick={retryDetail}>다시 시도</button>
+            <button className="link" onClick={retryDetail}>{t("다시 시도")}</button>
           </div>
         )}
-        {!sel && !detailLoading && !detailError && <div className="muted small pad">문서를 선택하세요</div>}
+        {!sel && !detailLoading && !detailError && <div className="muted small pad">{t("문서를 선택하세요")}</div>}
         {detail && (
           <>
             <header className="approval-detail-head">
               <div className="approval-title">
                 <span className="tag">{detail.document.formName}</span>
-                <h3>{detail.document.title || "(제목 없음)"}</h3>
+                <h3>{detail.document.title || t("(제목 없음)")}</h3>
               </div>
               <div className="approval-actions">
                 {canAct(detail) && <>
-                  <button className="primary small" onClick={() => ask("approve")}>승인</button>
-                  <button className="danger-btn" onClick={() => ask("return")}>반려</button>
+                  <button className="primary small" onClick={() => ask("approve")}>{t("승인")}</button>
+                  <button className="danger-btn" onClick={() => ask("return")}>{t("반려")}</button>
                 </>}
-                <button className="link" onClick={() => open(docUrl(detail.document.id))}>웹에서 열기</button>
+                <button className="link" onClick={() => open(docUrl(detail.document.id))}>{t("웹에서 열기")}</button>
               </div>
             </header>
             <div className="approval-meta">
@@ -305,14 +312,14 @@ export function Approval() {
               {detail.apprFlow.activityGroups.map((g, i) => (
                 <FlowGroup key={i} name={g.name} activities={g.activities} />
               ))}
-              {!detail.apprFlow.activityGroups.length && <div className="muted small">결재선 정보가 없습니다</div>}
+              {!detail.apprFlow.activityGroups.length && <div className="muted small">{t("결재선 정보가 없습니다")}</div>}
             </section>
             <div className="approval-body-wrap">
               <div className="approval-body" dangerouslySetInnerHTML={{ __html: sanitizeHtml(detail.document.bodyHtml) }} />
             </div>
             <section className="approval-attaches">
-              <h4>첨부파일 {detail.document.attaches.length ? `(${detail.document.attaches.length})` : ""}</h4>
-              {!detail.document.attaches.length && <div className="muted small">첨부파일이 없습니다</div>}
+              <h4>{t("첨부파일")} {detail.document.attaches.length ? `(${detail.document.attaches.length})` : ""}</h4>
+              {!detail.document.attaches.length && <div className="muted small">{t("첨부파일이 없습니다")}</div>}
               {detail.document.attaches.map((a) => (
                 <button key={a.id} className="approval-attach" onClick={() => open(`/api/approval/document/${detail.document.id}/download/${encodeURIComponent(a.id)}`)}>
                   <Icon name="download" size={15} />
@@ -322,15 +329,15 @@ export function Approval() {
               ))}
             </section>
             <section className="approval-comments">
-              <h4>댓글 {detail.comments.length ? `(${detail.comments.length})` : ""}</h4>
-              {!detail.comments.length && <div className="muted small">댓글이 없습니다</div>}
+              <h4>{t("댓글")} {detail.comments.length ? `(${detail.comments.length})` : ""}</h4>
+              {!detail.comments.length && <div className="muted small">{t("댓글이 없습니다")}</div>}
               {detail.comments.map((c) => (
                 <div className="approval-comment" key={c.id}>
                   <div className="approval-comment-head">
-                    <b>{c.author || "알 수 없음"}</b>
+                    <b>{c.author || t("알 수 없음")}</b>
                     <span className="muted tiny">{dt(c.createdAt)}</span>
                   </div>
-                  <div className="approval-comment-body">{c.content || "(내용 없음)"}</div>
+                  <div className="approval-comment-body">{c.content || t("(내용 없음)")}</div>
                 </div>
               ))}
             </section>
@@ -342,20 +349,20 @@ export function Approval() {
         <div className="modal-back" onClick={() => !acting && setAction(null)}>
           <div className="modal approval-action-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="modal-body">
-              <h3>{action.kind === "approve" ? "결재 승인" : "결재 반려"}</h3>
-              <p className="muted small">{detail?.document.title || "(제목 없음)"}</p>
+              <h3>{action.kind === "approve" ? t("결재 승인") : t("결재 반려")}</h3>
+              <p className="muted small">{detail?.document.title || t("(제목 없음)")}</p>
               <label className="small">
-                {action.kind === "approve" ? "의견 (선택)" : "반려 사유 (필수)"}
+                {action.kind === "approve" ? t("의견 (선택)") : t("반려 사유 (필수)")}
                 <textarea className="approval-comment-input" rows={4} maxLength={1000} value={comment} autoFocus
-                  placeholder={action.kind === "approve" ? "의견을 입력하세요" : "반려 사유를 입력하세요"}
+                  placeholder={action.kind === "approve" ? t("의견을 입력하세요") : t("반려 사유를 입력하세요")}
                   onChange={(e) => setComment(e.target.value)} disabled={acting} />
               </label>
               {actionError && <div className="error small">{actionError}</div>}
               <div className="approval-modal-actions">
-                <button className="link" onClick={() => setAction(null)} disabled={acting}>취소</button>
+                <button className="link" onClick={() => setAction(null)} disabled={acting}>{t("취소")}</button>
                 <button className={action.kind === "approve" ? "primary small" : "danger-btn"} onClick={() => void submitAction()}
                   disabled={acting || (action.kind === "return" && !comment.trim())}>
-                  {acting ? "처리 중…" : action.kind === "approve" ? "승인" : "반려"}
+                  {acting ? t("처리 중…") : action.kind === "approve" ? t("승인") : t("반려")}
                 </button>
               </div>
             </div>

@@ -7,6 +7,7 @@ import {
 } from "../../electron/core/pubsub";
 import type { ToastFn } from "../App";
 import { Avatar, Icon } from "./ui";
+import { useT } from "../lib/i18n";
 
 type Tab = "sent" | "compose";
 
@@ -17,6 +18,7 @@ function day(iso?: string): string {
 }
 
 export function PubsubModal({ toast, onClose }: { toast: ToastFn; onClose: () => void }) {
+  const t = useT();
   const [tab, setTab] = useState<Tab>("sent");
   const [caps, setCaps] = useState<PubsubCaps | null>(null);
   const [me, setMe] = useState<SessionUser | null>(null);
@@ -36,12 +38,12 @@ export function PubsubModal({ toast, onClose }: { toast: ToastFn; onClose: () =>
         onContextMenu={(e) => e.stopPropagation()}
       >
         <div className="side-head">
-          <h3>공지톡</h3>
-          <button className="icon-btn" title="닫기" onClick={onClose}><Icon name="close" size={16} /></button>
+          <h3>{t("공지톡")}</h3>
+          <button className="icon-btn" title={t("닫기")} onClick={onClose}><Icon name="close" size={16} /></button>
         </div>
         <div className="chips" style={{ paddingTop: 8 }}>
-          <button className={`chip ${tab === "sent" ? "on" : ""}`} onClick={() => setTab("sent")}>보낸 공지톡</button>
-          <button className={`chip ${tab === "compose" ? "on" : ""}`} onClick={() => setTab("compose")}>새 공지톡</button>
+          <button className={`chip ${tab === "sent" ? "on" : ""}`} onClick={() => setTab("sent")}>{t("보낸 공지톡")}</button>
+          <button className={`chip ${tab === "compose" ? "on" : ""}`} onClick={() => setTab("compose")}>{t("새 공지톡")}</button>
         </div>
         {tab === "sent" ? (
           <SentList caps={caps} toast={toast} />
@@ -55,6 +57,7 @@ export function PubsubModal({ toast, onClose }: { toast: ToastFn; onClose: () =>
 }
 
 function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) {
+  const t = useT();
   const [page, setPage] = useState(0);
   const [data, setData] = useState<PubsubPage | null>(null);
   const [err, setErr] = useState("");
@@ -69,19 +72,19 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
   useEffect(() => load(0), [load]);
 
   const open = (id: number) =>
-    api().pubsub.detail(id).then(setDetail).catch((e) => toast(`공지톡을 불러오지 못했습니다: ${(e as Error).message}`));
+    api().pubsub.detail(id).then(setDetail).catch((e) => toast(t("공지톡을 불러오지 못했습니다: {error}", { error: (e as Error).message })));
 
   const remove = async () => {
     if (!detail) return;
     setBusy(true);
     try {
       await api().pubsub.remove(detail.id);
-      toast("공지톡을 삭제했습니다", "info");
+      toast(t("공지톡을 삭제했습니다"), "info");
       setDetail(null);
       setConfirmDelete(false);
       load(0);
     } catch (e) {
-      toast(`삭제하지 못했습니다: ${(e as Error).message}`);
+      toast(t("삭제하지 못했습니다: {error}", { error: (e as Error).message }));
     } finally {
       setBusy(false);
     }
@@ -90,9 +93,9 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
   if (detail) {
     return (
       <div className="modal-body pubsub-detail">
-        <button className="link" onClick={() => { setDetail(null); setConfirmDelete(false); }}>← 목록</button>
+        <button className="link" onClick={() => { setDetail(null); setConfirmDelete(false); }}>{t("← 목록")}</button>
         <div className="muted small">
-          {day(detail.createdAt)} · {detail.companyTarget ? "전체사용자" : "특정사용자"} · 확인 {detail.confirmCount}/{detail.recipientCount}
+          {day(detail.createdAt)} · {detail.companyTarget ? t("전체사용자") : t("특정사용자")} · {t("확인 {done}/{total}", { done: detail.confirmCount, total: detail.recipientCount })}
         </div>
         <div className="pubsub-message">{detail.message}</div>
         {detail.nodes.length > 0 && (
@@ -103,10 +106,10 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
         <div className="approval-modal-actions">
           {confirmDelete ? (
             <>
-              <span className="muted small">{PUBSUB_DELETE_CONFIRM}</span>
+              <span className="muted small">{t(PUBSUB_DELETE_CONFIRM)}</span>
               <div className="grow" />
-              <button className="link" disabled={busy} onClick={() => setConfirmDelete(false)}>취소</button>
-              <button className="danger-btn" disabled={busy} onClick={() => void remove()}>삭제</button>
+              <button className="link" disabled={busy} onClick={() => setConfirmDelete(false)}>{t("취소")}</button>
+              <button className="danger-btn" disabled={busy} onClick={() => void remove()}>{t("삭제")}</button>
             </>
           ) : (
             <>
@@ -114,10 +117,10 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
               <button
                 className="link"
                 disabled={!caps?.delete}
-                title={caps?.delete ? "공지톡 삭제" : caps?.reason}
+                title={caps?.delete ? t("공지톡 삭제") : caps?.reason}
                 onClick={() => setConfirmDelete(true)}
               >
-                삭제
+                {t("삭제")}
               </button>
             </>
           )}
@@ -130,8 +133,8 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
   return (
     <div className="modal-body">
       {err && <div className="muted small">{err}</div>}
-      {!data && !err && <div className="muted small pad">불러오는 중…</div>}
-      {data && !data.items.length && <div className="empty-list muted">보낸 공지톡이 없습니다</div>}
+      {!data && !err && <div className="muted small pad">{t("불러오는 중…")}</div>}
+      {data && !data.items.length && <div className="empty-list muted">{t("보낸 공지톡이 없습니다")}</div>}
       {data && data.items.length > 0 && (
         <div className="room-list pubsub-list">
           {data.items.map((it) => (
@@ -139,7 +142,7 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
               <div className="room-body">
                 <div className="room-name pubsub-subject">{it.message}</div>
                 <div className="room-preview">
-                  {day(it.createdAt)} · {it.companyTarget ? "전체사용자" : "특정사용자"} · 확인 {it.confirmCount}/{it.recipientCount}
+                  {day(it.createdAt)} · {it.companyTarget ? t("전체사용자") : t("특정사용자")} · {t("확인 {done}/{total}", { done: it.confirmCount, total: it.recipientCount })}
                 </div>
               </div>
             </div>
@@ -148,9 +151,9 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
       )}
       {data && data.total > PUBSUB_PAGE_SIZE && (
         <div className="approval-modal-actions">
-          <button className="link" disabled={page <= 0} onClick={() => load(page - 1)}>이전</button>
+          <button className="link" disabled={page <= 0} onClick={() => load(page - 1)}>{t("이전")}</button>
           <span className="muted small">{page + 1} / {pages}</span>
-          <button className="link" disabled={!data.hasMore} onClick={() => load(page + 1)}>다음</button>
+          <button className="link" disabled={!data.hasMore} onClick={() => load(page + 1)}>{t("다음")}</button>
         </div>
       )}
     </div>
@@ -160,6 +163,7 @@ function SentList({ caps, toast }: { caps: PubsubCaps | null; toast: ToastFn }) 
 function Composer({
   caps, me, toast, onSent,
 }: { caps: PubsubCaps | null; me: SessionUser | null; toast: ToastFn; onSent: () => void }) {
+  const t = useT();
   const [people, setPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
@@ -184,12 +188,12 @@ function Composer({
     () => people.filter((p) => !query || [p.name, p.position, p.email].some((x) => x.toLowerCase().includes(query))),
     [people, query]
   );
-  const isPicked = (id: number) => picked.some((t) => t.userId === id);
+  const isPicked = (id: number) => picked.some((x) => x.userId === id);
   const toggle = (id: number, name: string) => {
     setPicked((prev) => {
-      if (prev.some((t) => t.userId === id)) return prev.filter((t) => t.userId !== id);
+      if (prev.some((x) => x.userId === id)) return prev.filter((x) => x.userId !== id);
       if (prev.length >= PUBSUB_MAX_TARGETS) {
-        toast(`한 번에 최대 ${PUBSUB_MAX_TARGETS}명까지 보낼 수 있습니다`);
+        toast(t("한 번에 최대 {n}명까지 보낼 수 있습니다", { n: PUBSUB_MAX_TARGETS }));
         return prev;
       }
       return [...prev, { userId: id, name }];
@@ -199,8 +203,8 @@ function Composer({
   const canSend = !!caps?.send;
   const request = () => {
     if (!canSend) return;
-    if (!message.trim()) return toast("공지톡 내용을 입력하세요");
-    if (!picked.length) return toast("공지톡을 받을 대상을 선택하세요");
+    if (!message.trim()) return toast(t("공지톡 내용을 입력하세요"));
+    if (!picked.length) return toast(t("공지톡을 받을 대상을 선택하세요"));
     setConfirm(true);
   };
 
@@ -208,13 +212,13 @@ function Composer({
     setBusy(true);
     try {
       const r = await api().pubsub.send(message, picked);
-      toast(`${r.count}명에게 공지톡을 보냈습니다`, "info");
+      toast(t("{n}명에게 공지톡을 보냈습니다", { n: r.count }), "info");
       setMessage("");
       setPicked([]);
       setConfirm(false);
       onSent();
     } catch (e) {
-      toast(`공지톡을 보내지 못했습니다: ${(e as Error).message}`);
+      toast(t("공지톡을 보내지 못했습니다: {error}", { error: (e as Error).message }));
     } finally {
       setBusy(false);
     }
@@ -223,11 +227,11 @@ function Composer({
   if (confirm) {
     return (
       <div className="modal-body">
-        <p><strong>{picked.length}명</strong>에게 공지톡을 보냅니다. 보낸 뒤에는 받는 사람에게 바로 알림이 갑니다.</p>
+        <p>{t("{n}명에게 공지톡을 보냅니다. 보낸 뒤에는 받는 사람에게 바로 알림이 갑니다.", { n: picked.length })}</p>
         <div className="pubsub-message">{message.trim()}</div>
         <div className="approval-modal-actions">
-          <button className="link" disabled={busy} onClick={() => setConfirm(false)}>취소</button>
-          <button className="primary" disabled={busy} onClick={() => void send()}>{picked.length}명에게 보내기</button>
+          <button className="link" disabled={busy} onClick={() => setConfirm(false)}>{t("취소")}</button>
+          <button className="primary" disabled={busy} onClick={() => void send()}>{t("{n}명에게 보내기", { n: picked.length })}</button>
         </div>
       </div>
     );
@@ -235,12 +239,12 @@ function Composer({
 
   return (
     <>
-      {caps && !caps.send && <div className="pubsub-note muted small">{caps.reason}</div>}
-      {caps?.send && caps.selfOnly && <div className="pubsub-note muted small">{caps.reason}</div>}
+      {caps && !caps.send && <div className="pubsub-note muted small">{caps.reason && t(caps.reason)}</div>}
+      {caps?.send && caps.selfOnly && <div className="pubsub-note muted small">{caps.reason && t(caps.reason)}</div>}
       <div className="modal-body" style={{ paddingBottom: 0 }}>
         <textarea
           className="pubsub-input"
-          placeholder="공지 내용을 입력하세요"
+          placeholder={t("공지 내용을 입력하세요")}
           maxLength={PUBSUB_MAX_MESSAGE}
           value={message}
           onChange={(e) => setMessage(e.target.value)}
@@ -248,22 +252,22 @@ function Composer({
       </div>
       <div className="search-box">
         <Icon name="search" size={16} />
-        <input placeholder="받는 사람 검색 (이름, 직위, 이메일)" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input placeholder={t("받는 사람 검색 (이름, 직위, 이메일)")} value={q} onChange={(e) => setQ(e.target.value)} />
         {me && (
-          <button className="link" title="나에게 보내기" onClick={() => setPicked([{ userId: me.id, name: me.name }])}>나</button>
+          <button className="link" title={t("나에게 보내기")} onClick={() => setPicked([{ userId: me.id, name: me.name }])}>{t("나")}</button>
         )}
       </div>
       {picked.length > 0 && (
         <div className="pubsub-targets" style={{ padding: "0 18px" }}>
-          {picked.map((t) => (
-            <button key={t.userId} className="tag" title="빼기" onClick={() => toggle(t.userId, t.name ?? "")}>
-              {t.name || t.userId} ✕
+          {picked.map((x) => (
+            <button key={x.userId} className="tag" title={t("빼기")} onClick={() => toggle(x.userId, x.name ?? "")}>
+              {x.name || x.userId} ✕
             </button>
           ))}
         </div>
       )}
       <div className="room-list" style={{ maxHeight: 260, minHeight: 160 }}>
-        {loading && <div className="muted small pad">불러오는 중…</div>}
+        {loading && <div className="muted small pad">{t("불러오는 중…")}</div>}
         {!loading && shown.map((p) => (
           <div
             key={p.userId}
@@ -279,13 +283,13 @@ function Composer({
             </div>
           </div>
         ))}
-        {!loading && !shown.length && <div className="empty-list muted">검색 결과가 없습니다</div>}
+        {!loading && !shown.length && <div className="empty-list muted">{t("검색 결과가 없습니다")}</div>}
       </div>
       <div className="approval-modal-actions" style={{ padding: "0 18px 16px" }}>
-        {picked.length > 0 && <span className="muted small">{picked.length}명 선택</span>}
+        {picked.length > 0 && <span className="muted small">{t("{n}명 선택", { n: picked.length })}</span>}
         <div className="grow" />
-        <button className="primary" disabled={!canSend} title={canSend ? "공지톡 보내기" : caps?.reason} onClick={request}>
-          보내기
+        <button className="primary" disabled={!canSend} title={canSend ? t("공지톡 보내기") : caps?.reason} onClick={request}>
+          {t("보내기")}
         </button>
       </div>
     </>

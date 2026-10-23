@@ -1,6 +1,7 @@
 import { app, safeStorage } from "electron";
 import fs from "node:fs";
 import path from "node:path";
+import { normalizeLanguage, type Language } from "../src/lib/i18n-core";
 import { normalizePreset, normalizeThemeState, type CustomTheme, type ThemePresetId } from "./core/theme";
 
 export type Settings = {
@@ -47,6 +48,8 @@ export type Settings = {
   customThemes: CustomTheme[];
   /** id of the applied custom theme, "" = none. */
   activeThemeId: string;
+  /** 다국어: UI + tray/app menu language (ko/en/ja/zh_CN/zh_TW/vi). */
+  language: Language;
 };
 
 export const DEFAULTS: Settings = {
@@ -74,6 +77,7 @@ export const DEFAULTS: Settings = {
   themePreset: "default",
   customThemes: [],
   activeThemeId: "",
+  language: "ko",
 };
 
 const file = () => path.join(app.getPath("userData"), "settings.json");
@@ -87,6 +91,7 @@ export function loadSettings(): Settings {
     s.customThemes = themes.themes;
     s.activeThemeId = themes.activeThemeId;
     s.themePreset = normalizePreset(s.themePreset);
+    s.language = normalizeLanguage(s.language);
     return s;
   } catch {
     return { ...DEFAULTS };

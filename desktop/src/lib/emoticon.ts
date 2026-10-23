@@ -14,12 +14,14 @@
  * format below is a guess and must not be used for sending.
  */
 
+import { tk } from "./i18n-core";
+
 export type EmojiCategory = { id: string; label: string; emoji: string[] };
 
 export const EMOJI_CATEGORIES: EmojiCategory[] = [
   {
     id: "face",
-    label: "표정",
+    label: tk("표정"),
     emoji: [
       "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "🙂", "😉", "😊", "😇",
       "🥰", "😍", "😘", "😋", "😜", "🤪", "🤗", "🤭", "🤔", "🤨", "😐", "😑",
@@ -30,7 +32,7 @@ export const EMOJI_CATEGORIES: EmojiCategory[] = [
   },
   {
     id: "hand",
-    label: "손",
+    label: tk("손"),
     emoji: [
       "👍", "👎", "👌", "✌️", "🤞", "🤟", "🤙", "👈", "👉", "👆", "👇", "☝️",
       "✋", "👋", "👏", "🙌", "👐", "🤝", "🙏", "💪", "✍️", "🫡",
@@ -38,12 +40,12 @@ export const EMOJI_CATEGORIES: EmojiCategory[] = [
   },
   {
     id: "heart",
-    label: "하트",
+    label: tk("하트"),
     emoji: ["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "💔", "❣️", "💕", "💖", "💗", "💯"],
   },
   {
     id: "object",
-    label: "사물",
+    label: tk("사물"),
     emoji: [
       "🎉", "🎊", "🎁", "🎂", "🔥", "✨", "⭐", "🌟", "☕", "🍺", "🍕", "🍚",
       "💡", "📌", "📎", "📅", "📝", "📢", "💻", "📱", "⏰", "✅", "❌", "⚠️",
@@ -97,7 +99,7 @@ export function saveRecentEmoji(list: readonly string[], storage: StorageLike | 
 
 /** Picker tabs: 자주 사용 first (only when there are recents), then the built-in categories. */
 export function pickerCategories(recent: readonly string[]): EmojiCategory[] {
-  return recent.length ? [{ id: "recent", label: "자주 사용", emoji: [...recent] }, ...EMOJI_CATEGORIES] : EMOJI_CATEGORIES;
+  return recent.length ? [{ id: "recent", label: tk("자주 사용"), emoji: [...recent] }, ...EMOJI_CATEGORIES] : EMOJI_CATEGORIES;
 }
 
 /** Replace the [start, end) selection with `insert`; returns the new text and caret position. */

@@ -9,6 +9,8 @@
  *   delete   DELETE /api/chat/{roomSeq}/backup/{backupId}?userSeq=   (also used as "cancel" while PROGRESS)
  */
 
+import { tk } from "../../src/lib/i18n-core";
+
 export const BACKUP_FILE_TYPES = ["TXT", "HTML"] as const;
 export type BackupFileType = (typeof BACKUP_FILE_TYPES)[number];
 export const BACKUP_DEFAULT_FILE_TYPE: BackupFileType = "TXT";
@@ -216,11 +218,11 @@ export function shouldPollBackups(list: BackupItem[]): boolean {
 
 export function backupStatusLabel(status: BackupStatus): string {
   switch (status) {
-    case BACKUP_STATUS_DONE: return "완료";
-    case BACKUP_STATUS_FAIL: return "실패";
+    case BACKUP_STATUS_DONE: return tk("완료");
+    case BACKUP_STATUS_FAIL: return tk("실패");
     case BACKUP_STATUS_PROGRESS:
-    case "REQUEST": return "백업 중";
-    default: return status || "백업 중";
+    case "REQUEST": return tk("백업 중");
+    default: return status || tk("백업 중");
   }
 }
 

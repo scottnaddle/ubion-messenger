@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Person } from "../api";
 import { Icon } from "./ui";
+import { tk, useT } from "../lib/i18n";
 import type { MailAddr } from "../../electron/core/mail";
 import { MAIL_ATTACH_MAX_BYTES, MAIL_ATTACH_MAX_MB, tooBigMessage } from "../../electron/core/mail-attach";
 import {
@@ -9,7 +10,7 @@ import {
 } from "../../electron/core/mail-compose";
 
 export const WRITE_URL = "/app/mail?work=write";
-const TITLES = { new: "새 메일", reply: "답장", replyAll: "전체 답장", forward: "전달" } as const;
+const TITLES = { new: tk("새 메일"), reply: tk("답장"), replyAll: tk("전체 답장"), forward: tk("전달") };
 const fmtSize = (n: number) => (n < 1024 ? `${n}B` : n < 1048576 ? `${Math.round(n / 1024)}KB` : `${(n / 1048576).toFixed(1)}MB`);
 
 /** Pure: suggestions for a recipient query from org users (name / email / position), excluding already-picked. */
@@ -26,6 +27,7 @@ export function suggestRecipients(users: Pick<Person, "name" | "email" | "positi
 function RecipientField({ label, value, onChange, users, autoFocus }: {
   label: string; value: MailAddr[]; onChange: (v: MailAddr[]) => void; users: Person[]; autoFocus?: boolean;
 }) {
+  const t = useT();
   const [q, setQ] = useState("");
   const [hi, setHi] = useState(0);
   const sugg = useMemo(() => suggestRecipients(users, q, value), [users, q, value]);
@@ -42,10 +44,10 @@ function RecipientField({ label, value, onChange, users, autoFocus }: {
         {value.map((a) => (
           <span key={a.address} className={`compose-chip ${isEmail(a.address) ? "" : "bad"}`} title={a.address}>
             {a.name || a.address}
-            <button type="button" aria-label={`${a.address} 삭제`} onClick={() => onChange(value.filter((v) => v !== a))}>×</button>
+            <button type="button" aria-label={t("{name} 삭제", { name: a.address })} onClick={() => onChange(value.filter((v) => v !== a))}>×</button>
           </span>
         ))}
-        <input value={q} autoFocus={autoFocus} placeholder={value.length ? "" : "이름 또는 이메일"} className={bad ? "bad" : ""}
+        <input value={q} autoFocus={autoFocus} placeholder={value.length ? "" : t("이름 또는 이메일")} className={bad ? "bad" : ""}
           onChange={(e) => { setQ(e.target.value); setHi(0); if (/[,;]$/.test(e.target.value)) setTimeout(commitTyped); }}
           onBlur={() => setTimeout(commitTyped, 120)}
           onKeyDown={(e) => {
@@ -70,6 +72,7 @@ function RecipientField({ label, value, onChange, users, autoFocus }: {
 }
 
 export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; onClose: () => void; onSent?: () => void }) {
+  const t = useT();
   const [d, setD] = useState<MailDraft>(initial);
   const [users, setUsers] = useState<Person[]>([]);
   const [showCc, setShowCc] = useState(initial.cc.length > 0);
@@ -107,7 +110,7 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
           const up = await api().portal.mailUpload(f.name, await f.arrayBuffer(), f.type || undefined);
           patchAttach(key, { status: "done", uploaded: up, size: up.fileSize || f.size });
         } catch (e) {
-          patchAttach(key, { status: "error", error: (e as Error).message || "업로드 실패" });
+          patchAttach(key, { status: "error", error: (e as Error).message || t("업로드 실패") });
         }
       })();
     }
@@ -119,8 +122,8 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
     const cur = current();
     const v = validateDraft(cur);
     if (v && cur.to.length) { setErr(v); return; }
-    try { await navigator.clipboard.writeText(draftAsText(cur)); setNote("작성한 내용을 클립보드에 복사했습니다. 웹 메일 쓰기 창에 붙여넣으세요."); }
-    catch { setNote("클립보드 복사에 실패했습니다. 내용을 직접 옮겨 주세요."); }
+    try { await navigator.clipboard.writeText(draftAsText(cur)); setNote(t("작성한 내용을 클립보드에 복사했습니다. 웹 메일 쓰기 창에 붙여넣으세요.")); }
+    catch { setNote(t("클립보드 복사에 실패했습니다. 내용을 직접 옮겨 주세요.")); }
     void api().portal.open(WRITE_URL).catch(() => undefined);
   };
 
@@ -128,12 +131,12 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
     const cur = current();
     const v = validateDraft(cur);
     if (v) { setErr(v); return; }
-    if (cur.attachments.some((a) => a.status === "uploading")) { setErr("첨부파일 업로드가 끝난 뒤 보내 주세요"); return; }
-    if (cur.attachments.some((a) => !a.uploaded)) { setErr("업로드에 실패한 첨부파일을 제거해 주세요"); return; }
+    if (cur.attachments.some((a) => a.status === "uploading")) { setErr(t("첨부파일 업로드가 끝난 뒤 보내 주세요")); return; }
+    if (cur.attachments.some((a) => !a.uploaded)) { setErr(t("업로드에 실패한 첨부파일을 제거해 주세요")); return; }
     if (!cur.subject.trim() && !allowEmptySubject) { setConfirmNoSubject(true); return; }
     setConfirmNoSubject(false); setSending(true); setErr("");
     try { await api().portal.mailSend(cur); (onSent ?? onClose)(); }
-    catch (e) { setErr((e as Error).message || "메일 발송에 실패했습니다"); }
+    catch (e) { setErr((e as Error).message || t("메일 발송에 실패했습니다")); }
     finally { setSending(false); }
   };
 
@@ -142,53 +145,53 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
       onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragOver(true); } }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={(e) => { if (!e.dataTransfer.files.length) return; e.preventDefault(); setDragOver(false); pickFiles(e.dataTransfer.files); }}>
-      {dragOver && <div className="compose-drop">여기에 놓으면 첨부됩니다 (파일당 최대 {MAIL_ATTACH_MAX_MB}MB)</div>}
+      {dragOver && <div className="compose-drop">{t("여기에 놓으면 첨부됩니다 (파일당 최대 {mb}MB)", { mb: MAIL_ATTACH_MAX_MB })}</div>}
       <header className="mail-compose-head">
-        <h3>{TITLES[d.mode]}</h3>
+        <h3>{t(TITLES[d.mode])}</h3>
         <div className="mail-compose-actions">
-          <button className="primary small" disabled={!MAIL_SEND_ENABLED || sending || uploading} title={uploading ? "첨부파일 업로드 중" : undefined} onClick={() => void send()}>{sending ? "보내는 중…" : "보내기"}</button>
-          {!MAIL_SEND_ENABLED && <button className="link" onClick={() => void continueOnWeb()} title="내용을 복사하고 웹 메일 쓰기를 엽니다"><Icon name="external" size={13} /> 웹에서 이어 쓰기</button>}
-          <button className="link" onClick={discard}>취소</button>
+          <button className="primary small" disabled={!MAIL_SEND_ENABLED || sending || uploading} title={uploading ? t("첨부파일 업로드 중") : undefined} onClick={() => void send()}>{sending ? t("보내는 중…") : t("보내기")}</button>
+          {!MAIL_SEND_ENABLED && <button className="link" onClick={() => void continueOnWeb()} title={t("내용을 복사하고 웹 메일 쓰기를 엽니다")}><Icon name="external" size={13} /> {t("웹에서 이어 쓰기")}</button>}
+          <button className="link" onClick={discard}>{t("취소")}</button>
         </div>
       </header>
-      {!MAIL_SEND_ENABLED && <div className="mail-img-bar small">앱 내 발송은 서버 API 확인 후 활성화됩니다. 지금은 ‘웹에서 이어 쓰기’로 보내 주세요.</div>}
+      {!MAIL_SEND_ENABLED && <div className="mail-img-bar small">{t("앱 내 발송은 서버 API 확인 후 활성화됩니다. 지금은 ‘웹에서 이어 쓰기’로 보내 주세요.")}</div>}
       <div className="compose-fields">
-        <RecipientField label="받는 사람" value={d.to} onChange={(to) => set({ to })} users={users} autoFocus={d.mode === "new" || d.mode === "forward"} />
-        {showCc && <RecipientField label="참조" value={d.cc} onChange={(cc) => set({ cc })} users={users} />}
-        {showBcc && <RecipientField label="숨은참조" value={d.bcc} onChange={(bcc) => set({ bcc })} users={users} />}
+        <RecipientField label={t("받는 사람")} value={d.to} onChange={(to) => set({ to })} users={users} autoFocus={d.mode === "new" || d.mode === "forward"} />
+        {showCc && <RecipientField label={t("참조")} value={d.cc} onChange={(cc) => set({ cc })} users={users} />}
+        {showBcc && <RecipientField label={t("숨은참조")} value={d.bcc} onChange={(bcc) => set({ bcc })} users={users} />}
         {(!showCc || !showBcc) && (
           <div className="compose-toggles">
-            {!showCc && <button className="link small" onClick={() => setShowCc(true)}>참조</button>}
-            {!showBcc && <button className="link small" onClick={() => setShowBcc(true)}>숨은참조</button>}
+            {!showCc && <button className="link small" onClick={() => setShowCc(true)}>{t("참조")}</button>}
+            {!showBcc && <button className="link small" onClick={() => setShowBcc(true)}>{t("숨은참조")}</button>}
           </div>
         )}
         <div className="compose-row">
-          <span className="compose-label">제목</span>
-          <input className="compose-subject" value={d.subject} maxLength={500} onChange={(e) => set({ subject: e.target.value })} placeholder="제목" />
+          <span className="compose-label">{t("제목")}</span>
+          <input className="compose-subject" value={d.subject} maxLength={500} onChange={(e) => set({ subject: e.target.value })} placeholder={t("제목")} />
         </div>
       </div>
       <div className="compose-toolbar">
-        <button className="icon-btn" title="굵게" onMouseDown={(e) => { e.preventDefault(); fmt("bold"); }}><b>B</b></button>
-        <button className="icon-btn" title="기울임" onMouseDown={(e) => { e.preventDefault(); fmt("italic"); }}><i>I</i></button>
-        <button className="icon-btn" title="밑줄" onMouseDown={(e) => { e.preventDefault(); fmt("underline"); }}><u>U</u></button>
-        <button className="icon-btn" title="글머리 기호" onMouseDown={(e) => { e.preventDefault(); fmt("insertUnorderedList"); }}>•</button>
-        <button className="icon-btn" title="번호 매기기" onMouseDown={(e) => { e.preventDefault(); fmt("insertOrderedList"); }}>1.</button>
+        <button className="icon-btn" title={t("굵게")} onMouseDown={(e) => { e.preventDefault(); fmt("bold"); }}><b>B</b></button>
+        <button className="icon-btn" title={t("기울임")} onMouseDown={(e) => { e.preventDefault(); fmt("italic"); }}><i>I</i></button>
+        <button className="icon-btn" title={t("밑줄")} onMouseDown={(e) => { e.preventDefault(); fmt("underline"); }}><u>U</u></button>
+        <button className="icon-btn" title={t("글머리 기호")} onMouseDown={(e) => { e.preventDefault(); fmt("insertUnorderedList"); }}>•</button>
+        <button className="icon-btn" title={t("번호 매기기")} onMouseDown={(e) => { e.preventDefault(); fmt("insertOrderedList"); }}>1.</button>
         <span className="spacer" />
-        <button className="link small" onClick={() => fileRef.current?.click()}><Icon name="clip" size={13} /> 파일 첨부</button>
+        <button className="link small" onClick={() => fileRef.current?.click()}><Icon name="clip" size={13} /> {t("파일 첨부")}</button>
         <input ref={fileRef} type="file" multiple hidden onChange={(e) => { pickFiles(e.target.files); e.target.value = ""; }} />
       </div>
       {d.attachments.length > 0 && (
         <div className="compose-attaches">
-          <div className="muted tiny">첨부 {d.attachments.length}개 · {fmtSize(totalSize)}{uploading ? " · 업로드 중…" : ""}</div>
+          <div className="muted tiny">{t("첨부 {n}개", { n: d.attachments.length })} · {fmtSize(totalSize)}{uploading ? t(" · 업로드 중…") : ""}</div>
           {d.attachments.map((a, i) => (
             <div key={a.key ?? `${a.name}/${i}`} className={`compose-attach ${a.status ?? ""}`}>
               <Icon name="clip" size={13} />
               <span className="ca-name ellipsis" title={a.name}>{a.name}</span>
               <span className="muted tiny">{fmtSize(a.size)}</span>
-              {a.status === "uploading" && <span className="ca-progress" aria-label="업로드 중"><span /></span>}
-              {a.status === "done" && <span className="ca-ok tiny">완료</span>}
-              {a.status === "error" && <span className="error tiny" title={a.error}>{a.error || "실패"}</span>}
-              <button type="button" className="icon-btn" aria-label={`${a.name} 삭제`} onClick={() => setD((x) => ({ ...x, attachments: x.attachments.filter((_, j) => j !== i) }))}>×</button>
+              {a.status === "uploading" && <span className="ca-progress" aria-label={t("업로드 중")}><span /></span>}
+              {a.status === "done" && <span className="ca-ok tiny">{t("완료")}</span>}
+              {a.status === "error" && <span className="error tiny" title={a.error}>{a.error || t("실패")}</span>}
+              <button type="button" className="icon-btn" aria-label={t("{name} 삭제", { name: a.name })} onClick={() => setD((x) => ({ ...x, attachments: x.attachments.filter((_, j) => j !== i) }))}>×</button>
             </div>
           ))}
         </div>
@@ -200,11 +203,11 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
         <div className="modal-back" onClick={() => setConfirmNoSubject(false)}>
           <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="modal-body">
-              <h3>제목 없이 보낼까요?</h3>
-              <p className="muted small">제목이 비어 있습니다.</p>
+              <h3>{t("제목 없이 보낼까요?")}</h3>
+              <p className="muted small">{t("제목이 비어 있습니다.")}</p>
               <div className="approval-modal-actions">
-                <button className="link" onClick={() => setConfirmNoSubject(false)}>취소</button>
-                <button className="primary small" onClick={() => void send(true)}>보내기</button>
+                <button className="link" onClick={() => setConfirmNoSubject(false)}>{t("취소")}</button>
+                <button className="primary small" onClick={() => void send(true)}>{t("보내기")}</button>
               </div>
             </div>
           </div>
@@ -214,11 +217,11 @@ export function MailCompose({ initial, onClose, onSent }: { initial: MailDraft; 
         <div className="modal-back" onClick={() => setConfirmDiscard(false)}>
           <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="modal-body">
-              <h3>작성 중인 메일을 버릴까요?</h3>
-              <p className="muted small">임시 저장은 지원하지 않아 작성한 내용이 사라집니다.</p>
+              <h3>{t("작성 중인 메일을 버릴까요?")}</h3>
+              <p className="muted small">{t("임시 저장은 지원하지 않아 작성한 내용이 사라집니다.")}</p>
               <div className="approval-modal-actions">
-                <button className="link" onClick={() => setConfirmDiscard(false)}>계속 작성</button>
-                <button className="danger-btn" onClick={onClose}>버리기</button>
+                <button className="link" onClick={() => setConfirmDiscard(false)}>{t("계속 작성")}</button>
+                <button className="danger-btn" onClick={onClose}>{t("버리기")}</button>
               </div>
             </div>
           </div>

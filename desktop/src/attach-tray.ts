@@ -1,3 +1,5 @@
+import { t } from "./lib/i18n";
+
 /** Staged chat attachments: a file is only uploaded when the composer is submitted. */
 
 /** Same limit as main's files:sendPaths handler. */
@@ -61,7 +63,7 @@ export function formatSize(n: number): string {
 export function validateFile(file: Pick<AttachFileInput, "name" | "size">): string | null {
   const size = Number(file.size);
   if (Number.isFinite(size) && size > MAX_FILE_SIZE) {
-    return `${file.name}: ${MAX_FILE_SIZE_LABEL}를 초과합니다`;
+    return t("{name}: {limit}를 초과합니다", { name: file.name, limit: MAX_FILE_SIZE_LABEL });
   }
   return null;
 }
@@ -166,7 +168,7 @@ export function splitDroppedFiles<T extends DroppedItemLike>(
 
 export function folderSkipMessage(names: readonly string[]): string {
   const unique = [...new Set(names.filter(Boolean))];
-  return unique.length ? `폴더는 첨부할 수 없습니다: ${unique.join(", ")}` : "";
+  return unique.length ? t("폴더는 첨부할 수 없습니다: {names}", { names: unique.join(", ") }) : "";
 }
 
 export type SendOutcome<T extends AttachFileInput = AttachFileInput> = {

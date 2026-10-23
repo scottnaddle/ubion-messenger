@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
+import { t as tr, useT } from "../lib/i18n";
 import type {
   ApprovalDoc, BoardPost, CalendarEvent, MailItem, PortalBadge, PortalNoti, PortalSummary, PortalWidgetId, PortalWidgetState,
 } from "../../electron/core/portal";
@@ -19,9 +20,9 @@ function ago(s?: string) {
   const t = new Date(s).getTime();
   if (Number.isNaN(t)) return "";
   const m = Math.round((Date.now() - t) / 60000);
-  if (m < 1) return "방금";
-  if (m < 60) return `${m}분 전`;
-  if (m < 60 * 24) return `${Math.round(m / 60)}시간 전`;
+  if (m < 1) return tr("방금");
+  if (m < 60) return tr("{n}분 전", { n: m });
+  if (m < 60 * 24) return tr("{n}시간 전", { n: Math.round(m / 60) });
   return new Date(t).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
 }
 
@@ -35,14 +36,15 @@ const open = (url: string) => void api().portal.open(url).catch(() => undefined)
 function Card({ title, count, webUrl, state, children, isStatic }: {
   title: string; count?: number; webUrl: string; state?: PortalWidgetState; children: React.ReactNode; isStatic?: boolean;
 }) {
+  const t = useT();
   return (
     <section className="home-card">
       <header>
         <h3>{title}{count != null && <span className="muted"> {count}</span>}</h3>
-        <button className="link" onClick={() => open(webUrl)}>웹에서 보기 ▸</button>
+        <button className="link" onClick={() => open(webUrl)}>{t("웹에서 보기 ▸")}</button>
       </header>
-      {state?.error && <div className="muted small home-err">불러오지 못했습니다 · 웹에서 확인하세요</div>}
-      {!isStatic && !state?.data && !state?.error ? <div className="muted small">불러오는 중…</div> : children}
+      {state?.error && <div className="muted small home-err">{t("불러오지 못했습니다 · 웹에서 확인하세요")}</div>}
+      {!isStatic && !state?.data && !state?.error ? <div className="muted small">{t("불러오는 중…")}</div> : children}
     </section>
   );
 }
@@ -52,6 +54,7 @@ function Empty({ show, text }: { show: boolean; text: string }) {
 }
 
 export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") => void }) {
+  const t = useT();
   const [snap, setSnap] = useState<Snap | null>(null);
   const [busy, setBusy] = useState(false);
   const [at, setAt] = useState<number | null>(null);
@@ -95,9 +98,9 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") 
   return (
     <div className="home">
       <div className="side-head home-head">
-        <h2>홈</h2>
-        <span className="muted small">{at ? `마지막 ${new Date(at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}` : ""}</span>
-        <button className={`icon-btn ${busy ? "spin" : ""}`} title="새로고침" onClick={refresh}><Icon name="refresh" size={18} /></button>
+        <h2>{t("홈")}</h2>
+        <span className="muted small">{at ? t("마지막 {time}", { time: new Date(at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) }) : ""}</span>
+        <button className={`icon-btn ${busy ? "spin" : ""}`} title={t("새로고침")} onClick={refresh}><Icon name="refresh" size={18} /></button>
       </div>
       <div className="home-chips">
         {chips.map((c) => (
@@ -111,61 +114,61 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") 
             {c.gadgetName || c.appName} {c.count}
           </button>
         ))}
-        <button className={`chip ${flexCount ? "on" : ""}`} title="flex 승인 대기" onClick={openFlex}>
-          flex 승인 대기 {flexCount == null ? "-" : flexCount}
+        <button className={`chip ${flexCount ? "on" : ""}`} title={t("flex 승인 대기")} onClick={openFlex}>
+          {t("flex 승인 대기")} {flexCount == null ? "-" : flexCount}
         </button>
       </div>
-      <p className="muted tiny home-hint">항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.</p>
+      <p className="muted tiny home-hint">{t("항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.")}</p>
       <div className="home-grid">
-        <Card title="전사게시판 최근글" webUrl="/app/board" state={w.posts}>
+        <Card title={t("전사게시판 최근글")} webUrl="/app/board" state={w.posts}>
           <ul>{posts?.items.map((p) => (
             <li key={p.id}><button onClick={() => open(p.url)}>
               <span className="tag">{p.boardName}</span> <span className="ellipsis">{p.summary}</span>
               <span className="muted small"> {p.commentsCount ? `💬${p.commentsCount} ` : ""}{p.hasAttach ? "📎 " : ""}{ago(p.createdAt)}</span>
             </button></li>))}</ul>
-          <Empty show={!!posts && !posts.items.length} text="최근 글이 없습니다" />
+          <Empty show={!!posts && !posts.items.length} text={t("최근 글이 없습니다")} />
         </Card>
-        <Card title="flex 승인 대기" count={flexCount ?? undefined} webUrl="https://flex.team/home/todo/inbox" isStatic>
+        <Card title={t("flex 승인 대기")} count={flexCount ?? undefined} webUrl="https://flex.team/home/todo/inbox" isStatic>
           <ul><li><button onClick={openFlex}>
-            <span className="tag">flex</span> <span className="ellipsis">휴가·근무 승인 요청 보기</span>
-            <span className="muted small"> · {flexCount == null ? "건수 확인 중/불가" : `${flexCount}건`}</span>
+            <span className="tag">flex</span> <span className="ellipsis">{t("휴가·근무 승인 요청 보기")}</span>
+            <span className="muted small"> · {flexCount == null ? t("건수 확인 중/불가") : t("{n}건", { n: flexCount })}</span>
           </button></li></ul>
         </Card>
-        <Card title="오늘 일정" count={cal?.total} webUrl={`/app/calendar/daily/${new Date().toLocaleDateString("sv-SE")}`} state={w.calendar}>
+        <Card title={t("오늘 일정")} count={cal?.total} webUrl={`/app/calendar/daily/${new Date().toLocaleDateString("sv-SE")}`} state={w.calendar}>
           <ul>{cal?.items.map((e) => (
             <li key={`${e.calendarId}/${e.id}`}><button onClick={() => open(e.url)}>
-              <span className="tag">{e.allDay ? "종일" : `${hm(e.start)}–${hm(e.end)}`}</span> <span className="ellipsis">{e.summary}</span>
+              <span className="tag">{e.allDay ? t("종일") : `${hm(e.start)}–${hm(e.end)}`}</span> <span className="ellipsis">{e.summary}</span>
               {e.location && <span className="muted small"> · {e.location}</span>}
             </button></li>))}</ul>
-          <Empty show={!!cal && !cal.items.length} text="오늘 일정이 없습니다" />
+          <Empty show={!!cal && !cal.items.length} text={t("오늘 일정이 없습니다")} />
         </Card>
-        <Card title="결재 대기" count={todo?.total ?? snap?.badge.approval} webUrl="/app/approval" state={w.approvalTodo}>
+        <Card title={t("결재 대기")} count={todo?.total ?? snap?.badge.approval} webUrl="/app/approval" state={w.approvalTodo}>
           <ul>{todo?.items.map((d) => (
             <li key={d.id}><button onClick={() => open(d.url)}>
               <span className="tag">{d.formName}</span> <span className="ellipsis">{d.title}</span>
-              {d.emergency && <span className="badge"> 긴급</span>}
+              {d.emergency && <span className="badge"> {t("긴급")}</span>}
             </button></li>))}</ul>
-          <Empty show={!!todo && !todo.items.length} text="결재할 문서가 없습니다" />
+          <Empty show={!!todo && !todo.items.length} text={t("결재할 문서가 없습니다")} />
           {!!upcoming?.items.length && <>
-            <h4 className="muted small">결재 예정 {upcoming.total}</h4>
+            <h4 className="muted small">{t("결재 예정 {n}", { n: upcoming.total })}</h4>
             <ul>{upcoming.items.map((d) => (
               <li key={d.id}><button onClick={() => open(d.url)}><span className="tag">{d.formName}</span> <span className="ellipsis">{d.title}</span></button></li>))}</ul>
           </>}
         </Card>
-        <Card title="읽지 않은 알림" count={snap?.badge.noti} webUrl="/app/home" state={w.noti}>
+        <Card title={t("읽지 않은 알림")} count={snap?.badge.noti} webUrl="/app/home" state={w.noti}>
           <ul>{noti?.items.map((n) => (
             <li key={n.id}><button onClick={() => open(n.url)}>
               <span className="tag">{n.category}</span> <span className="ellipsis">{n.message}</span>
               <span className="muted small"> {ago(n.createdAt)}</span>
             </button></li>))}</ul>
-          <Empty show={!!noti && !noti.items.length} text="알림이 없습니다" />
+          <Empty show={!!noti && !noti.items.length} text={t("알림이 없습니다")} />
         </Card>
-        <Card title="메일 · 오늘 온 메일" count={mail?.today ?? snap?.badge.mail} webUrl="/app/mail?work=quick&folder=today" state={w.mail}>
+        <Card title={t("메일 · 오늘 온 메일")} count={mail?.today ?? snap?.badge.mail} webUrl="/app/mail?work=quick&folder=today" state={w.mail}>
           <ul>{mail?.items.map((m) => (
             <li key={`${m.folderFullName}/${m.id}`}><button onClick={() => open(m.url)} className={m.seen ? "" : "unseen"}>
               {!m.seen && <span className="dot">●</span>} <b>{m.from}</b> · <span className="ellipsis">{m.subject}</span>
             </button></li>))}</ul>
-          <Empty show={!!mail && !mail.items.length} text="메일이 없습니다" />
+          <Empty show={!!mail && !mail.items.length} text={t("메일이 없습니다")} />
         </Card>
       </div>
     </div>

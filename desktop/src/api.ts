@@ -10,6 +10,7 @@ import type { CaptureResult } from "../electron/core/capture";
 import type { PreviewMode } from "../electron/core/doc-preview";
 import type { CustomTheme, ThemePresetId, ThemeState } from "../electron/core/theme";
 import type { PubsubCaps, PubsubDetail, PubsubPage, PubsubTarget } from "../electron/core/pubsub";
+import type { Language } from "./lib/i18n-core";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
 
 export type LockStatus = { enabled: boolean; locked: boolean; timeoutMin: number };
@@ -39,6 +40,8 @@ export type Settings = {
   themePreset?: ThemePresetId;
   customThemes?: CustomTheme[];
   activeThemeId?: string;
+  /** 다국어 (ko/en/ja/zh_CN/zh_TW/vi), default "ko". */
+  language?: Language;
   hasSavedPassword?: boolean;
 };
 

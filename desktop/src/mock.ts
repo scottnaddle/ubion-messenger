@@ -42,7 +42,7 @@ export function installMockIfNeeded() {
     userId: id, name: ["김하늘", "이서준", "박지우", "최유나", "정도윤", "한소희"][i], position: ["책임", "선임", "수석", "주임", "책임", "선임"][i],
     email: `user${id}@example.com`, thumbnail: "", departmentIds: [i % 2 ? 20 : 21],
   }));
-  const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", awayMinutes: 10, mobileNotice: true, lockTimeoutMin: 0, themePreset: "default", customThemes: [], activeThemeId: "", hasSavedPassword: true };
+  const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", awayMinutes: 10, mobileNotice: true, lockTimeoutMin: 0, themePreset: "default", customThemes: [], activeThemeId: "", language: new URLSearchParams(location.search).get("lang") || "ko", hasSavedPassword: true };
   // Fake imported theme (no file dialog in the browser preview); goes through the real sanitizer.
   const mockThemeCss: Record<string, string> = {};
   const mockThemeState = (st?: ThemeState): ThemeState => {
