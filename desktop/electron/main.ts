@@ -121,6 +121,7 @@ function wireCore() {
     fwd("confirm"),
     fwd("receipts"),
     fwd("presence"),
+    fwd("botStatus"),
     fwd("connection"),
     fwd("loggedOut"),
     fwd("portalSummary"),

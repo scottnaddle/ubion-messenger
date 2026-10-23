@@ -8,6 +8,7 @@ import { xmppKeyFromLoginId } from "./xmpp-key";
 import { canonMessageId } from "./messages";
 import { isDeletedMessage } from "./chat-delete";
 import { parseNotice } from "./room-notice";
+import type { BotStatusUpdate, ParsedBotStatus } from "../../src/lib/bot-status";
 import type {
   ChatMessage,
   ConnState,
@@ -290,6 +291,13 @@ export class MessengerCore {
       else per.set(p.resource, v);
       this.presence.set(id, per);
       this.emit("presence", { userId: id, presence: this.presenceOf(id) });
+    });
+    x.on("botStatus", (p: ParsedBotStatus) => {
+      const me = this.client.user?.id;
+      if (!/^\d+$/.test(p.local) || (me != null && Number(p.local) === me)) return;
+      const roomKey = p.room ?? `buddy:${p.local}`;
+      const update: BotStatusUpdate = { roomKey, userId: Number(p.local), state: p.state, text: p.text };
+      this.emit("botStatus", update);
     });
     x.on("body", (obj: Record<string, any>) => {
       if (process.env.UBION_DEBUG_REALTIME) this.log(`realtime ${transport}: stanza type=${String(obj?.type)} subtype=${String(obj?.subtype ?? "")}`);

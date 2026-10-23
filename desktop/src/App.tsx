@@ -16,6 +16,9 @@ import { Approval } from "./components/Approval";
 import { Flex } from "./components/Flex";
 import { noticeStoreKey } from "../electron/core/room-notice";
 import { navForDigit, type NavView } from "./nav";
+import {
+  applyBotStatus, BOT_STATUS_TTL_MS, clearBotStatusForMessage, expireBotStatuses, type BotStatusMap,
+} from "./lib/bot-status";
 
 export type ToastAction = { label: string; run: () => void };
 export type Toast = { id: number; text: string; kind?: "error" | "info"; action?: ToastAction };
@@ -32,6 +35,7 @@ export function App() {
   const [conn, setConn] = useState<ConnState>("offline");
   const [netOnline, setNetOnline] = useState(navigator.onLine);
   const [presence, setPresence] = useState<Record<number, Presence>>({});
+  const [botStatuses, setBotStatuses] = useState<BotStatusMap>({});
   const [view, setView] = useState<NavView | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [focused, setFocused] = useState(document.hasFocus());
@@ -97,7 +101,10 @@ export function App() {
         } else if (type === "rooms") setRooms(payload);
         else if (type === "connection") setConn(payload.state);
         else if (type === "presence") setPresence((p) => ({ ...p, [payload.userId]: payload.presence }));
-        else if (type === "ready") setUser(payload);
+        else if (type === "botStatus") setBotStatuses((m) => applyBotStatus(m, payload, Date.now()));
+        else if (type === "message" && !payload.attachUpdate) {
+          setBotStatuses((m) => clearBotStatusForMessage(m, payload.roomKey, Number(payload.sendUserSeq)));
+        } else if (type === "ready") setUser(payload);
         else if (type === "portalBadge") setPortalBadge(payload);
         else if (type === "webLoginRequired") {
           // Web (OTP) session expired: back to login with the web-login prompt; never loop native logins.
@@ -136,6 +143,20 @@ export function App() {
   useEffect(() => {
     if (user) api().call("org:presence").then(setPresence).catch(() => undefined);
   }, [user, conn]);
+
+  // bot status timeout: 60s after the last update
+  useEffect(() => {
+    const next = Object.values(botStatuses).reduce(
+      (soonest, entry) => Math.min(soonest, entry.at + BOT_STATUS_TTL_MS),
+      Infinity,
+    );
+    if (!Number.isFinite(next)) return;
+    const timer = setTimeout(
+      () => setBotStatuses((m) => expireBotStatuses(m, Date.now())),
+      Math.max(0, next - Date.now()) + 50,
+    );
+    return () => clearTimeout(timer);
+  }, [botStatuses]);
 
   // Home tab visible + window focused → fast portal polling; otherwise light background set
   useEffect(() => {
@@ -295,6 +316,7 @@ export function App() {
                   me={user}
                   focused={focused}
                   presence={activeRoom.peerUserId ? presence[activeRoom.peerUserId] : undefined}
+                  botStatus={botStatuses[activeRoom.key]}
                   toast={toast}
                 />
               ) : (

@@ -1,4 +1,5 @@
 import type { PortalEvents } from "./portal";
+import type { BotStatusUpdate } from "../../src/lib/bot-status";
 export type RoomKind = "buddy" | "room" | "pubsub" | "unknown";
 
 export type NoticeStatus = "normal" | "summary" | "folded" | "closed";
@@ -131,6 +132,7 @@ export type MessengerEventMap = {
   /** Authoritative read counts from REST for the open room (sync fallback). */
   receipts: { roomKey: string; updates: Array<{ messageId: number; needConfirmCount: number; confirmUsers: number[] }> };
   presence: { userId: number; presence: Presence };
+  botStatus: BotStatusUpdate;
   connection: { state: ConnState; error?: string };
 } & PortalEvents;
 

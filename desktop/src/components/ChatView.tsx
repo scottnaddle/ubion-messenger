@@ -19,6 +19,7 @@ import {
 } from "../../electron/core/room-notice";
 import type { NoticeStatus } from "../../electron/core/types";
 import { isSendEnter } from "../lib/composer";
+import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { FileCard, MediaViewer } from "./FileCard";
 import { LinkPreview } from "./LinkPreview";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
@@ -58,8 +59,8 @@ function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
 }
 
 export function ChatView({
-  room, me, focused, presence, toast,
-}: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; toast: ToastFn }) {
+  room, me, focused, presence, botStatus, toast,
+}: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; botStatus?: BotStatusEntry; toast: ToastFn }) {
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
@@ -208,7 +209,7 @@ export function ChatView({
     } else if (stickBottom.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [msgs]);
+  }, [msgs, botStatus?.at]);
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder || !hasMore || loading) return;
@@ -409,6 +410,16 @@ export function ChatView({
       ? `그룹 대화${room.memberCount ? ` · ${room.memberCount}명` : ""}`
       : "알림 채널";
 
+  const statusAuthor = botStatus ? roomMembers.find((m) => m.userId === botStatus.userId) : undefined;
+  const statusMsg = botStatus ? [...msgs].reverse().find((m) => m.sendUserSeq === botStatus.userId) : undefined;
+  const statusName =
+    statusMsg?.sendUserName || statusAuthor?.name ||
+    (botStatus && room.peerUserId === botStatus.userId ? room.name : "") ||
+    (botStatus ? String(botStatus.userId) : "");
+  const statusImage =
+    statusMsg?.userImage || statusAuthor?.image ||
+    (botStatus && room.peerUserId === botStatus.userId ? room.avatar : "") || "";
+
   return (
     <section
       className={`chat ${dragOver ? "drag" : ""}`}
@@ -494,6 +505,22 @@ export function ChatView({
               );
             })
           )}
+          <div aria-live="polite">
+          {!loading && botStatus && (
+            <div className="msg bot-status">
+              <div className="msg-av"><Avatar name={statusName} src={statusImage} size={34} /></div>
+              <div className="msg-main">
+                {statusName && <div className="msg-name">{statusName}</div>}
+                <div className="msg-line">
+                  <div className="bubble bot-status-bubble">
+                    <span className="bot-status-text">{botStatusLabel(botStatus.state, botStatus.text)}</span>
+                    <span className="bot-status-dots" aria-hidden="true"><i /><i /><i /></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          </div>
         </div>
         {searchOpen && <SearchPanel room={room} onClose={() => setSearchOpen(false)} />}
       </div>

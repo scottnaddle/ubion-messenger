@@ -1,5 +1,6 @@
 import net from "node:net";
 import { EventEmitter } from "node:events";
+import { parseBotStatus, type ParsedBotStatus } from "../../src/lib/bot-status";
 
 export type XmppOptions = {
   host: string;
@@ -14,6 +15,7 @@ export type XmppEvents = {
   state: (s: "connecting" | "online" | "offline", err?: string) => void;
   body: (obj: Record<string, any>) => void;
   presence: (p: { local: string; resource: string; type?: string; status?: string; show?: string }) => void;
+  botStatus: (p: ParsedBotStatus) => void;
 };
 
 export function xmlUnescape(s: string): string {
@@ -305,7 +307,7 @@ export class XmppClient extends EventEmitter {
 }
 
 /** Online-phase stanza handling shared by the TCP and BOSH transports (iq ping/version, presence, JSON message bodies). */
-export function handleOnlineStanza(s: string, ctx: { write: (x: string) => void; domain: string; emit: (event: "presence" | "body", payload: any) => void }) {
+export function handleOnlineStanza(s: string, ctx: { write: (x: string) => void; domain: string; emit: (event: "presence" | "body" | "botStatus", payload: any) => void }) {
   const head = s.slice(0, s.indexOf(">") + 1);
   if (s.startsWith("<iq")) {
     const type = attr(head, "type");
@@ -335,7 +337,11 @@ export function handleOnlineStanza(s: string, ctx: { write: (x: string) => void;
   }
   if (s.startsWith("<message")) {
     const bm = /<body[^>]*>([\s\S]*?)<\/body>/.exec(s);
-    if (!bm) return;
+    if (!bm) {
+      const botStatus = parseBotStatus(s, xmlUnescape);
+      if (botStatus) ctx.emit("botStatus", botStatus);
+      return;
+    }
     const inner = bm[1].replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, "$1");
     const text = inner === bm[1] ? xmlUnescape(inner) : inner;
     let obj: Record<string, any>;
