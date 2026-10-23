@@ -10,6 +10,7 @@ export type BotServerOpts = {
   port: DaouPort; tokens: TokenStore; allowlist: Allowlist; mentionOnly?: boolean;
   heartbeatMs?: number; sendRate?: { cap: number; perSec: number }; roomRate?: { cap: number; perSec: number };
   audit?: Audit; maxTextLen?: number; now?: () => number;
+  statusThrottleMs?: number; placeholderTtlMs?: number; logger?: (m: string) => void;
 };
 type Err = { status: number; code: string; message: string };
 const E = (status: number, code: string, message: string): Err => ({ status, code, message });
@@ -24,6 +25,8 @@ export class BotServer {
   private inflight = new Map<string, Promise<{ status: number; body: unknown }>>();
   private sendRl: RateLimiter; private roomRl: RateLimiter;
   private roomNames = new Map<string, string>();
+  private ph = new Map<string, { id: number; timer: NodeJS.Timeout }>();
+  private lastStatus = new Map<string, number>();
   private hb: NodeJS.Timeout | null = null; private offs: Array<() => void> = [];
 
   constructor(private o: BotServerOpts) {
@@ -49,7 +52,7 @@ export class BotServer {
   }
 
   listen(p: number, host = "127.0.0.1") { return new Promise<number>((r) => this.http.listen(p, host, () => r((this.http.address() as any).port))); }
-  async close() { this.offs.forEach((f) => f()); if (this.hb) clearInterval(this.hb); for (const c of this.clients) c.ws.terminate(); this.wss.close(); await new Promise((r) => this.http.close(r)); }
+  async close() { for (const p of this.ph.values()) clearTimeout(p.timer); this.ph.clear(); this.offs.forEach((f) => f()); if (this.hb) clearInterval(this.hb); for (const c of this.clients) c.ws.terminate(); this.wss.close(); await new Promise((r) => this.http.close(r)); }
   private lastId() { const l = this.log.after("0"); return l && l.length ? l[l.length - 1].event_id : "0"; }
 
   private publish(ev: BotEvent) {
@@ -98,6 +101,12 @@ export class BotServer {
       const r = await this.send(tok, b);
       return this.json(s, r.status, r.body, r.status === 429 ? { "retry-after": String((r.body as any).error.retry_after_s) } : {});
     }
+    if (q.method === "POST" && path === "/bot/status") {
+      if (!hasScope(tok, "messages:send")) return this.fail(s, E(403, "forbidden_scope", "messages:send required"));
+      let b: any; try { b = JSON.parse(await readBody(q, 16 * 1024)); } catch { return this.fail(s, E(400, "bad_request", "invalid JSON body")); }
+      const r = await this.status(tok, b);
+      return this.json(s, r.status, r.body);
+    }
     return this.fail(s, E(404, "not_found", "no such endpoint"));
   }
 
@@ -121,6 +130,7 @@ export class BotServer {
         const out = { status: 200, body: { ok: true, message_id: r.message_id ?? null, client_msg_id: b.client_msg_id } };
         this.sent.set(key, { at: Date.now(), ...out }); this.gc();
         this.audit.log({ action: "send", token_id: tok.id, room_id: b.room_id, client_msg_id: b.client_msg_id, status: "ok" });
+        await this.clearPlaceholder(b.room_id, tok.id, "send");
         return out;
       } catch {
         this.audit.log({ action: "send", token_id: tok.id, room_id: b.room_id, client_msg_id: b.client_msg_id, status: "error", code: "upstream_error" });
@@ -128,6 +138,63 @@ export class BotServer {
       } finally { this.inflight.delete(key); }
     })();
     this.inflight.set(key, p); return p;
+  }
+  private logf(m: string) { try { (this.o.logger ?? ((x: string) => console.error(`[bot-status] ${x}`)))(m); } catch { /* ignore */ } }
+  /** Delete the room's placeholder (if any). Never throws. */
+  private async clearPlaceholder(room_id: string, token_id: string, reason: string): Promise<boolean> {
+    const p = this.ph.get(room_id); if (!p) return false;
+    this.ph.delete(room_id); clearTimeout(p.timer);
+    try {
+      if (!this.o.port.deleteMessages) throw new Error("port has no deleteMessages");
+      await this.o.port.deleteMessages(room_id, [p.id]);
+      this.audit.log({ action: "status.delete", token_id, room_id, status: "ok", code: reason });
+      return true;
+    } catch (e: any) {
+      this.logf(`placeholder delete failed room=${room_id} reason=${reason} err=${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 120)}`);
+      this.audit.log({ action: "status.delete", token_id, room_id, status: "error", code: reason });
+      return false;
+    }
+  }
+
+  async status(tok: TokenRecord, b: any): Promise<{ status: number; body: unknown }> {
+    const err = (e: Err) => ({ status: e.status, body: { error: { code: e.code, message: e.message } } });
+    try {
+      if (!b || typeof b.room_id !== "string" || !["thinking", "working", "done"].includes(b.state)) return err(E(400, "bad_request", "room_id and state (thinking|working|done) required"));
+      if (b.text != null && typeof b.text !== "string") return err(E(400, "bad_request", "text must be a string"));
+      if (!this.o.allowlist.allows(b.room_id, tok)) { this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "denied", code: "room_not_allowed" }); return err(E(403, "room_not_allowed", "room not allowlisted")); }
+      const now = (this.o.now ?? Date.now)(), gap = this.o.statusThrottleMs ?? 3000;
+      const last = this.lastStatus.get(b.room_id);
+      if (last != null && now - last < gap) { this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "throttled", code: b.state }); return { status: 200, body: { ok: true, throttled: true, state: b.state } }; }
+      this.lastStatus.set(b.room_id, now);
+      if (b.state === "done") {
+        const deleted = await this.clearPlaceholder(b.room_id, tok.id, "done");
+        this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "ok", code: "done" });
+        return { status: 200, body: { ok: true, state: "done", deleted } };
+      }
+      let text = "💭 생각 중…";
+      if (b.state === "working") {
+        const t = String(b.text ?? "").replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e]/g, " ").replace(/\s+/g, " ").trim();
+        text = t ? `⚙️ ${[...t].slice(0, 60).join("")}` : "⚙️ 작업 중…";
+      }
+      let r: { message_id?: number };
+      try { r = await this.o.port.sendText(b.room_id, text); }
+      catch (e: any) {
+        this.logf(`placeholder send failed room=${b.room_id} err=${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 120)}`);
+        this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "error", code: "upstream_error" });
+        return err(E(502, "upstream_error", "DaouOffice send failed"));
+      }
+      await this.clearPlaceholder(b.room_id, tok.id, "replace");
+      const id = Number(r?.message_id);
+      if (Number.isFinite(id) && id > 0) {
+        const timer = setTimeout(() => { void this.clearPlaceholder(b.room_id, tok.id, "expired"); }, this.o.placeholderTtlMs ?? 600_000);
+        timer.unref?.(); this.ph.set(b.room_id, { id, timer });
+      } else this.logf(`placeholder sent without message_id room=${b.room_id}; cannot auto-delete`);
+      this.audit.log({ action: "status", token_id: tok.id, room_id: b.room_id, status: "ok", code: b.state });
+      return { status: 200, body: { ok: true, state: b.state, message_id: Number.isFinite(id) && id > 0 ? id : null } };
+    } catch (e: any) {
+      this.logf(`status handler error: ${String(e?.message ?? e).slice(0, 120)}`);
+      return err(E(500, "internal", "internal error"));
+    }
   }
   private gc() { const cut = Date.now() - 24 * 3600_000; for (const [k, v] of this.sent) if (v.at < cut) this.sent.delete(k); else break; }
 }

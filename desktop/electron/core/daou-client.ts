@@ -294,6 +294,15 @@ export class DaouClient {
     await this.request(`/api/${p}/${seq}/${messageId}/before?userSeq=${uid}`, { method: "PUT" });
   }
 
+  /** Delete own chat messages by id (DaouOffice: PUT /api/chat/message/delete). */
+  async deleteChatMessages(ids: number[]): Promise<void> {
+    const uid = this.requireUser().id;
+    const clean = ids.map(Number).filter((n) => Number.isFinite(n) && n > 0);
+    if (!clean.length) return;
+    const res = await this.request(`/api/chat/message/delete?userSeq=${uid}`, { method: "PUT", json: { ids: clean } });
+    if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `delete failed (${res.status})`);
+  }
+
   async setPin(room: Room, pin: boolean) {
     const uid = this.requireUser().id;
     const base = pin ? "attachpin" : "detachpin";

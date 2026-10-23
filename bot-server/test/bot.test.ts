@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { Allowlist, hashToken, TokenStore } from "../src/auth";
 import { RateLimiter } from "../src/ratelimit";
@@ -13,6 +13,8 @@ class MockDaou implements DaouPort {
   botUserId() { return "99"; } botName() { return "봇"; } healthy() { return { state: "online" }; }
   async listRooms() { return [{ room_id: "room:1", room_name: "A" }, { room_id: "room:2", room_name: "Secret" }]; }
   async sendText(room_id: string, text: string) { if (this.delay) await new Promise((r) => setTimeout(r, this.delay)); if (this.failNext) { this.failNext = false; throw new Error("x"); } this.sends.push({ room_id, text }); return { message_id: this.sends.length }; }
+  deletes: Array<{ room_id: string; ids: number[] }> = [];
+  async deleteMessages(room_id: string, ids: number[]) { this.deletes.push({ room_id, ids }); }
   onMessage(cb: (m: InboundMessage) => void) { this.mcb.push(cb); return () => {}; }
   onRoomJoined(cb: (r: BotRoom) => void) { this.rcb.push(cb); return () => {}; }
   msg(room_id: string, text: string, extra: Partial<InboundMessage> = {}) { this.mcb.forEach((f) => f({ room_id, message_id: 1, sender: { id: "5", name: "kim" }, text, mentions: [], attachments: [], reply_to: null, ts: "t", is_mine: false, ...extra })); }
@@ -133,5 +135,58 @@ describe("units", () => {
   it("relogin backoff grows and halts after 2 auth failures", () => {
     const p = new ReloginPolicy(); const a = p.onFailure("net", 0.5)!, b = p.onFailure("net", 0.5)!; expect(b).toBe(a * 2);
     expect(p.onFailure("auth")).not.toBeNull(); expect(p.onFailure("auth")).toBeNull(); expect(p.halted).toBe(true);
+  });
+});
+
+const status = (b: object, t = FULL) => fetch(`${base}/bot/status`, { method: "POST", headers: { authorization: `Bearer ${t}`, "content-type": "application/json" }, body: JSON.stringify(b) });
+describe("status placeholder", () => {
+  it("thinking sends one placeholder; send() deletes it", async () => {
+    await setup({ statusThrottleMs: 0 });
+    const r = await status({ room_id: "room:1", state: "thinking" });
+    expect(r.status).toBe(200); expect(await r.json()).toMatchObject({ ok: true, state: "thinking", message_id: 1 });
+    expect(daou.sends).toEqual([{ room_id: "room:1", text: "💭 생각 중…" }]);
+    expect((await send({ room_id: "room:1", text: "answer", client_msg_id: "s1" })).status).toBe(200);
+    expect(daou.deletes).toEqual([{ room_id: "room:1", ids: [1] }]);
+    await send({ room_id: "room:1", text: "again", client_msg_id: "s2" }); expect(daou.deletes.length).toBe(1);
+    expect(srv.audit.entries.some((e) => e.action === "status" && e.code === "thinking")).toBe(true);
+  });
+  it("working replaces previous placeholder (sanitized, max 60), done deletes", async () => {
+    await setup({ statusThrottleMs: 0 });
+    await status({ room_id: "room:1", state: "thinking" });
+    await status({ room_id: "room:1", state: "working", text: "파일\n분석 " + "x".repeat(100) });
+    expect(daou.sends[1].text).toBe("⚙️ 파일 분석 " + "x".repeat(54));
+    expect(daou.deletes).toEqual([{ room_id: "room:1", ids: [1] }]);
+    await status({ room_id: "room:1", state: "working" }); expect(daou.sends[2].text).toBe("⚙️ 작업 중…");
+    const d = await (await status({ room_id: "room:1", state: "done" })).json();
+    expect(d).toMatchObject({ ok: true, deleted: true }); expect(daou.deletes.map((x) => x.ids[0])).toEqual([1, 2, 3]);
+    expect((await (await status({ room_id: "room:1", state: "done" })).json()).deleted).toBe(false);
+  });
+  it("throttles to 1 per window per room", async () => {
+    await setup();
+    expect((await (await status({ room_id: "room:1", state: "thinking" })).json()).throttled).toBeUndefined();
+    const r = await status({ room_id: "room:1", state: "working" });
+    expect(r.status).toBe(200); expect((await r.json()).throttled).toBe(true); expect(daou.sends.length).toBe(1);
+  });
+  it("auto-expires after 10 minutes", async () => {
+    await setup({ statusThrottleMs: 0 });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const tok = srv["o"].tokens.verify(`Bearer ${FULL}`)!;
+      await srv.status(tok, { room_id: "room:1", state: "thinking" });
+      vi.advanceTimersByTime(599_000); expect(daou.deletes.length).toBe(0);
+      vi.advanceTimersByTime(2_000); await Promise.resolve(); await Promise.resolve();
+      expect(daou.deletes).toEqual([{ room_id: "room:1", ids: [1] }]);
+    } finally { vi.useRealTimers(); }
+  });
+  it("403 for non-allowlisted room and missing scope; 400 bad state", async () => {
+    await setup({ statusThrottleMs: 0 });
+    const a = await status({ room_id: "room:2", state: "thinking" }); expect(a.status).toBe(403); expect((await a.json()).error.code).toBe("room_not_allowed");
+    const b = await status({ room_id: "room:1", state: "thinking" }, RO); expect(b.status).toBe(403); expect((await b.json()).error.code).toBe("forbidden_scope");
+    expect((await status({ room_id: "room:1", state: "nap" })).status).toBe(400); expect(daou.sends).toEqual([]);
+  });
+  it("delete failure never throws out", async () => {
+    await setup({ statusThrottleMs: 0, logger: () => {} }); daou.deleteMessages = async () => { throw new Error("boom"); };
+    await status({ room_id: "room:1", state: "thinking" });
+    expect((await send({ room_id: "room:1", text: "a", client_msg_id: "f1" })).status).toBe(200);
   });
 });
