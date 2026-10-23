@@ -7,6 +7,10 @@ import { PATH_KIND, roomPushPath, ROOM_PUSH_METHOD } from "./room-push";
 import { favoriteBody, favoritePath, parseFavorites } from "./favorites";
 import { FORWARD_METHOD, forwardMembersPath, forwardRoomPath, normalizeForwardCryptIds } from "./forward";
 import { parseNotice, roomNoticePath, ROOM_NOTICE_METHOD } from "./room-notice";
+import {
+  backupBodyError, backupDeletePath, backupDownloadPath, backupListPath, backupRequestPath, buildBackupRequest,
+  HISTORY_CLEAR_METHOD, historyClearPath, parseBackupList, type BackupItem,
+} from "./backup";
 import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
 import { fromElectronCookie, needsWebLogin, onSessionExpired, WEB_LOGIN_MESSAGE, type ElectronCookieIn } from "./web-login";
 
@@ -413,6 +417,51 @@ export class DaouClient {
 
   setRoomNotice(roomSeq: number, messageId: number): Promise<{ ok: true }> {
     return this.registerRoomNotice(roomSeq, messageId);
+  }
+
+  // ---------- chat backup ----------
+  /** ⚠ MUTATES server state (creates a backup job): POST /api/chat/{roomSeq}/backup?userSeq=, JSON {fromDate,toDate,fileType}. */
+  async requestBackup(roomSeq: number, from: string, to: string, fileType?: string): Promise<{ ok: true }> {
+    const uid = this.requireUser().id;
+    const path = backupRequestPath(roomSeq, uid);
+    const res = await this.request(path, { method: "POST", json: buildBackupRequest(from, to, fileType) });
+    this.checkBackupRes(res, "백업 요청 실패");
+    return { ok: true };
+  }
+
+  async listBackups(): Promise<BackupItem[]> {
+    const uid = this.requireUser().id;
+    return parseBackupList(await this.getJson(backupListPath(uid)));
+  }
+
+  async downloadBackup(roomSeq: number, backupId: number): Promise<{ data: Buffer; contentType: string }> {
+    const uid = this.requireUser().id;
+    return this.fetchBinary(backupDownloadPath(roomSeq, backupId, uid));
+  }
+
+  /** ⚠ MUTATES server state: DELETE /api/chat/{roomSeq}/backup/{backupId}?userSeq= (also cancels an in-progress job). */
+  async deleteBackup(roomSeq: number, backupId: number): Promise<{ ok: true }> {
+    const uid = this.requireUser().id;
+    const res = await this.request(backupDeletePath(roomSeq, backupId, uid), { method: "DELETE" });
+    this.checkBackupRes(res, "백업 삭제 실패");
+    return { ok: true };
+  }
+
+  /**
+   * ⚠ DESTRUCTIVE + UNVERIFIED: PUT /api/chat/{roomSeq}/{messageId}/before?userSeq=, no body.
+   * Callers must gate on HISTORY_CLEAR_ENABLED, user confirmation and the self-only guard (see main.ts).
+   */
+  async clearHistoryBefore(roomSeq: number, messageId: number): Promise<{ ok: true }> {
+    const uid = this.requireUser().id;
+    const res = await this.request(historyClearPath(roomSeq, messageId, uid), { method: HISTORY_CLEAR_METHOD });
+    this.checkBackupRes(res, "대화 기록 삭제 실패");
+    return { ok: true };
+  }
+
+  private checkBackupRes(res: Res, label: string): void {
+    if (res.status < 200 || res.status >= 300) throw new HttpError(res.status, `${label} (HTTP ${res.status})`);
+    const err = backupBodyError(res.text);
+    if (err) throw new HttpError(err.status, String(err.message ?? `${label} (code ${err.status})`));
   }
 
   // ---------- favorites ----------

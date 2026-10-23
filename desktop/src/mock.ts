@@ -41,6 +41,7 @@ export function installMockIfNeeded() {
   const mockSaved: Record<string, number> = {};
   const mockDeleted: string[] = [];
   const mockBotAutonomy: Record<string, boolean> = {};
+  const mockBackups: import("../electron/core/backup").BackupItem[] = [];
   const handlers: Record<string, (...a: any[]) => any> = {
     "bot:roomSettings:get": (key: string) => ({ ok: true, settings: { roomId: key, autonomy: !!mockBotAutonomy[key] } }),
     "bot:roomSettings:set": (key: string, autonomy: boolean) => {
@@ -124,6 +125,25 @@ export function installMockIfNeeded() {
     setRoomPush: async (key: string, usePush: boolean) => {
       const room = rooms.find((r) => r.key === key);
       if (room) room.usePush = usePush;
+    },
+    backup: {
+      config: async () => ({ historyClearEnabled: new URLSearchParams(location.search).has("historyClear") }),
+      request: async (key: string, _from: string, _to: string, fileType: "TXT" | "HTML") => {
+        const room = rooms.find((r) => r.key === key);
+        const roomSeq = Number((room as any)?.kind === "buddy" ? (room as any).buddyRoomSeq : room?.seq) || 1;
+        const id = (mockBackups.at(-1)?.id ?? 0) + 1;
+        mockBackups.push({ id, roomSeq, status: "PROGRESS", fileName: `backup_${id}.${fileType.toLowerCase()}`, fileType });
+        setTimeout(() => { const b = mockBackups.find((x) => x.id === id); if (b) b.status = "DONE"; }, 2500);
+        return { ok: true as const };
+      },
+      list: async () => mockBackups.map((b) => ({ ...b })),
+      download: async (_key: string, id: number) => `/Users/hong/Downloads/${mockBackups.find((b) => b.id === id)?.fileName ?? "backup.txt"}`,
+      remove: async (_key: string, id: number) => {
+        const i = mockBackups.findIndex((b) => b.id === id);
+        if (i >= 0) mockBackups.splice(i, 1);
+        return { ok: true as const };
+      },
+      clearHistory: async () => ({ ok: true as const }),
     },
     listFavorites: async () => users.slice(0, 2),
     addFavorite: async () => ({ ok: true as const }),

@@ -24,6 +24,7 @@ import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { FileCard, MediaViewer } from "./FileCard";
+import { BackupModal } from "./BackupModal";
 import { LinkPreview } from "./LinkPreview";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
@@ -76,6 +77,7 @@ export function ChatView({
   const [confirmNotice, setConfirmNotice] = useState<ChatMessage | null>(null);
   const [noticeStatus, setNoticeStatus] = useState<NoticeStatus>("normal");
   const [roomMenu, setRoomMenu] = useState<{ x: number; y: number } | null>(null);
+  const [backupOpen, setBackupOpen] = useState(false);
   const [roomMembers, setRoomMembers] = useState<MentionCandidate[]>([]);
   const [botAutonomy, setBotAutonomy] = useState(false);
   const [botLoading, setBotLoading] = useState(false);
@@ -636,8 +638,16 @@ export function ChatView({
         <RoomMenu
           x={roomMenu.x} y={roomMenu.y} usePush={room.usePush}
           onToggle={() => void toggleRoomPush()} onClose={() => setRoomMenu(null)}
+          onBackup={room.kind !== "pubsub" ? () => setBackupOpen(true) : undefined}
           showBot={botRoom} botAutonomy={botAutonomy} botBusy={botLoading || botSaving}
           botDisabled={botDisabled} botError={botError} onToggleBot={() => void toggleBotAutonomy()}
+        />
+      )}
+      {backupOpen && (
+        <BackupModal
+          room={room} toast={toast} onClose={() => setBackupOpen(false)}
+          lastMessageId={[...msgs].reverse().find((m) => m.messageId != null && !m.pending && !m.failed)?.messageId}
+          onHistoryCleared={() => setMsgs([])}
         />
       )}
       {confirmDelete && (
@@ -701,10 +711,10 @@ function MentionedText({ text, memberNames, myName }: { text: string; memberName
 }
 
 function RoomMenu({
-  x, y, usePush, onToggle, onClose,
+  x, y, usePush, onToggle, onClose, onBackup,
   showBot, botAutonomy, botBusy, botDisabled, botError, onToggleBot,
 }: {
-  x: number; y: number; usePush: boolean; onToggle: () => void; onClose: () => void;
+  x: number; y: number; usePush: boolean; onToggle: () => void; onClose: () => void; onBackup?: () => void;
   showBot: boolean; botAutonomy: boolean; botBusy: boolean; botDisabled: boolean;
   botError: string; onToggleBot: () => void;
 }) {
@@ -718,6 +728,11 @@ function RoomMenu({
       <button role="menuitem" onClick={() => { onClose(); onToggle(); }}>
         <Icon name={usePush ? "bellOff" : "bell"} size={14} /> {usePush ? "알림 끄기" : "알림 켜기"}
       </button>
+      {onBackup && (
+        <button role="menuitem" onClick={() => { onClose(); onBackup(); }}>
+          <Icon name="download" size={14} /> 대화 백업
+        </button>
+      )}
       {showBot && (
         <div className="bot-autonomy">
           <label className="bot-autonomy-row">

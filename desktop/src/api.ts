@@ -5,6 +5,7 @@ import type {
   ApprovalBox, ApprovalDocumentDetail, ApprovalList, MailFolders, MailListPage, MailMessage, MenuEntry,
 } from "../electron/core/portal";
 import type { BotSettingsResult } from "../electron/core/bot-settings";
+import type { BackupFileType, BackupItem } from "../electron/core/backup";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
 
 export type LockStatus = { enabled: boolean; locked: boolean; timeoutMin: number };
@@ -41,6 +42,14 @@ export type Bridge = {
   forwardToMembers(memberSeqs: number[], cryptIds: string[], roomType: "single" | "group"): Promise<{ ok: true; count: number }>;
   registerNotice(key: string, messageId: number): Promise<Room>;
   setRoomPush(key: string, usePush: boolean): Promise<void>;
+  backup: {
+    config(): Promise<{ historyClearEnabled: boolean }>;
+    request(key: string, from: string, to: string, fileType: BackupFileType): Promise<{ ok: true }>;
+    list(): Promise<BackupItem[]>;
+    download(key: string, backupId: number, mode?: "downloads" | "saveAs" | "open"): Promise<string | null>;
+    remove(key: string, backupId: number): Promise<{ ok: true }>;
+    clearHistory(key: string, messageId: number, confirmed: boolean): Promise<{ ok: true }>;
+  };
   listFavorites(): Promise<Person[]>;
   addFavorite(id: number): Promise<{ ok: true }>;
   removeFavorite(id: number): Promise<{ ok: true }>;

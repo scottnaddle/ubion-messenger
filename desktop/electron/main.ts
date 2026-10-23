@@ -32,6 +32,8 @@ import {
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
 import { shouldNotify } from "./core/room-push";
 import { apiRoomSeq, checkForwardTarget } from "./core/forward";
+import { backupFileName, historyClearEnabled, normalizeBackupFileType } from "./core/backup";
+import { maskSecrets } from "./core/mask";
 import { chatBotUrl, isChatBotUrl } from "./core/chatbot";
 import { isMentioningMe } from "../src/lib/mention";
 import { createBotSettingsClient } from "./core/bot-settings";
@@ -838,6 +840,66 @@ function registerIpc() {
     return core.getRooms().find((r) => r.key === key) || room;
   });
   handle("msg:markRead", (key: string, mid?: number) => core.markRead(key, mid));
+  // 대화 백업 / 대화 기록 삭제. Mutations go through the same self-only guard as forward/notice.
+  const HISTORY_CLEAR_ENABLED = historyClearEnabled(process.env);
+  const guardedRoomSeq = (key: unknown): number => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const room = core.getRooms().find((r) => r.key === key);
+    if (!room) throw new Error("알 수 없는 대화방입니다");
+    const roomSeq = apiRoomSeq(room);
+    checkForwardTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", target: { roomSeq }, me, selfRoomSeq: selfRoomApiSeq() });
+    return roomSeq;
+  };
+  const roomSeqOf = (key: unknown): number => {
+    const room = core.getRooms().find((r) => r.key === key);
+    if (!room) throw new Error("알 수 없는 대화방입니다");
+    return apiRoomSeq(room);
+  };
+  const logged = <T>(what: string, p: Promise<T>): Promise<T> =>
+    p.catch((e) => {
+      console.warn(`${what} failed:`, maskSecrets(String((e as Error)?.message ?? e)));
+      throw e;
+    });
+  handle("backup:config", () => ({ historyClearEnabled: HISTORY_CLEAR_ENABLED }));
+  handle("backup:request", (key: string, from: string, to: string, fileType?: string) =>
+    logged("backup request", core.client.requestBackup(guardedRoomSeq(key), from, to, normalizeBackupFileType(fileType)))
+  );
+  handle("backup:list", () => logged("backup list", core.client.listBackups()));
+  handle("backup:delete", (key: string, backupId: number) =>
+    logged("backup delete", core.client.deleteBackup(guardedRoomSeq(key), backupId))
+  );
+  handle("backup:download", async (key: string, backupId: number, mode: SaveMode = "downloads") => {
+    if (!["downloads", "saveAs", "open"].includes(mode)) throw new Error("invalid save mode");
+    const roomSeq = roomSeqOf(key);
+    const item = (await core.client.listBackups()).find((b) => b.id === Number(backupId) && b.roomSeq === roomSeq);
+    if (!item) throw new Error("백업 파일을 찾을 수 없습니다");
+    const r = await resolveSaveTarget(
+      { mode, name: backupFileName(item), downloadDir: settings.downloadDir, askEveryTime: !!settings.askSaveLocation, lastSaveDir: settings.lastSaveDir, defaultDownloads: app.getPath("downloads") },
+      {
+        exists: (p) => fs.existsSync(p),
+        showSaveDialog: async (defaultPath) => {
+          const d = await dialog.showSaveDialog(win!, { defaultPath });
+          return d.canceled || !d.filePath ? null : d.filePath;
+        },
+      },
+    );
+    if (!r) return null;
+    const { data } = await logged("backup download", core.client.downloadBackup(roomSeq, item.id));
+    fs.mkdirSync(path.dirname(r.target), { recursive: true });
+    fs.writeFileSync(r.target, data);
+    savedPaths.add(r.target);
+    if (r.dir !== settings.lastSaveDir) { settings = { ...settings, lastSaveDir: r.dir }; saveSettings(settings); }
+    if (mode === "open") await shell.openPath(r.target);
+    return r.target;
+  });
+  handle("history:clear", async (key: string, messageId: number, confirmed: unknown) => {
+    if (!HISTORY_CLEAR_ENABLED) throw new Error("대화 기록 삭제는 아직 지원되지 않습니다");
+    if (confirmed !== true) throw new Error("대화 기록 삭제를 확인해 주세요");
+    const roomSeq = guardedRoomSeq(key);
+    await logged("history clear", core.client.clearHistoryBefore(roomSeq, messageId));
+    return { ok: true as const };
+  });
   handle("files:sendPaths", async (key: string, paths: string[]) => {
     for (const p of paths) {
       const st = fs.statSync(p);

@@ -548,3 +548,15 @@ input, textarea, select { font: inherit; color: inherit; }
 .lock-card .primary { width: 100%; margin-top: 4px; }
 .lock-icon { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft, rgba(58,91,220,.12)); color: var(--accent); }
 .lock-cooldown { color: var(--danger, #e03131); font-size: .85em; }
+
+/* 대화 백업 */
+.backup-modal { width: 440px; }
+.backup-range { display: flex; align-items: center; gap: 8px; }
+.backup-range input[type="date"] { flex: 1; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: inherit; font: inherit; }
+.backup-types { padding: 0; }
+.backup-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+.backup-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.backup-item-body { flex: 1; min-width: 0; }
+.backup-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.backup-status.fail { color: var(--danger); }
+.backup-clear { margin-top: 8px; border-top: 1px solid var(--line); }
