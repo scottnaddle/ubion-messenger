@@ -13,7 +13,7 @@ import type { MailAddr, MailMessage } from "./mail";
 
 export const MAIL_SEND_ENABLED = false;
 export const MAIL_SEND_METHOD = "POST"; // UNVERIFIED
-export const MAIL_SEND_PATH = "/api/mail/message/send"; // UNVERIFIED
+export const MAIL_SEND_PATH = "/api/mail/message/send"; // PATH CONFIRMED from Scott capture (2026-10-23); method/payload still UNVERIFIED. Attachments: web uses XHR "upload?dext=test" (not implemented).
 export const MAIL_SEND_WHITELIST: RegExp[] = [/^\/api\/mail\/message\/send$/];
 
 export type ComposeMode = "new" | "reply" | "replyAll" | "forward";
