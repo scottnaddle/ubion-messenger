@@ -40,7 +40,7 @@ export class BotServer {
       if (m.is_mine || !o.allowlist.allows(m.room_id)) return;
       if (m.message_id) void o.port.markRead?.(m.room_id, m.message_id).catch(() => {});
       const me = o.port.botUserId();
-      if (o.mentionOnly && !(me && m.mentions.includes(me)) && !m.text.includes(`@${o.port.botName()}`)) return;
+      if (o.mentionOnly && !m.room_id.startsWith("buddy:") && !(me && m.mentions.includes(me)) && !m.text.includes(`@${o.port.botName()}`)) return;
       this.publish({ type: "message.created", event_id: this.log.nextId(), room_id: m.room_id, room_name: this.roomNames.get(m.room_id) ?? "", sender: m.sender, text: m.text, mentions: m.mentions, attachments: m.attachments, reply_to: m.reply_to, ts: m.ts });
     }));
     this.offs.push(o.port.onRoomJoined((r) => {
