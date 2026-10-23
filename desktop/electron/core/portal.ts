@@ -140,9 +140,9 @@ export const PORTAL_WHITELIST: RegExp[] = [
  *   PUT /api/approval/document/{docId}/approval  (application/json → 200)
  *   {"<docId>":{}, activityId, apprAction:"APPROVAL", apprFlowVersionId, arbtAddReferrer:false, comment, docVersionId, userApprSetting:{…}}
  * RETURN (반려) — ⚠ UNVERIFIED best guess: same path/body with apprAction:"RETURN" (DaouOffice term), comment required.
- * activityId / apprFlowVersionId / docVersionId are read from GET /api/approval/document/{id}; the exact field
- * locations are NOT yet confirmed by a saved response, so several candidate locations are tried and the action
- * fails closed (nothing sent) if any id is missing or ambiguous.
+ * The doc 120728 detail response contains no action list and no "RETURN" string (enums seen: DRAFT, APPROVAL,
+ * AGREEMENT, WAIT, COMPLETE, INPROGRESS…), so RETURN is still a guess. actionCheck.usePreviousReturn=true only
+ * shows 반려-type features are enabled.
  */
 export type ApprovalActionKind = "approve" | "return";
 export const APPROVAL_ACTION_METHOD = "PUT";
@@ -166,34 +166,30 @@ const posInt = (v: unknown): number | null => {
   const n = typeof v === "string" && /^\d+$/.test(v) ? Number(v) : v;
   return typeof n === "number" && Number.isSafeInteger(n) && n > 0 ? n : null;
 };
-const firstId = (...c: unknown[]) => { for (const v of c) { const n = posInt(v); if (n) return n; } return null; };
-const WAITING = /^(WAIT|WAITING|ING|PROGRESS|IN_PROGRESS|STANDBY|CURRENT)$/i;
 
 /**
  * Pull the three ids the approve PUT needs out of the raw GET /api/approval/document/{id} body.
- * activityId = the activity of the current user (userId === me) that is waiting; must be exactly one.
- * Throws a user-facing message instead of guessing.
+ * Field paths PINNED from a real response (doc 120728, tests/fixtures/approval-doc-120728.sanitized.json):
+ *   docVersionId      = data.document.docVersionId
+ *   apprFlowVersionId = data.document.apprFlowVersionId
+ *   activityId        = data.apprFlow.currentActivityId, which must be an activity in
+ *                       data.apprFlow.activityGroups[].activities[] with status "WAIT" and userId === me.
+ * Fails closed (throws a user-facing message, nothing is sent) on anything missing or inconsistent.
  */
 export function extractApprovalActionContext(body: any, myUserId: number | null): ApprovalActionContext {
   const data = body?.data ?? {};
-  const d = data?.document ?? {};
-  const flow = data?.apprFlow ?? {};
-  const docVersionId = firstId(d?.docVersionId, data?.docVersionId, d?.versionId, d?.docVersion?.id);
-  const apprFlowVersionId = firstId(flow?.apprFlowVersionId, data?.apprFlowVersionId, d?.apprFlowVersionId, flow?.versionId, flow?.apprFlowVersion?.id);
-  let activityId = firstId(data?.activityId, data?.currentActivity?.id, data?.currentActivityId, data?.myActivity?.id);
-  if (!activityId) {
-    const acts = arr(flow?.activityGroups ?? data?.activityGroups).flatMap((g: any) => arr(g?.activities));
-    const mine = acts.filter((a: any) => {
-      const uid = posInt(a?.userId ?? a?.user?.id);
-      return myUserId != null && uid === myUserId && WAITING.test(String(a?.status ?? ""));
-    });
-    const ids = [...new Set(mine.map((a: any) => firstId(a?.id, a?.activityId)).filter(Boolean))] as number[];
-    if (ids.length > 1) throw new Error("결재선에서 내 결재 단계를 하나로 특정할 수 없습니다. 웹에서 처리해 주세요.");
-    activityId = ids[0] ?? null;
-  }
-  const missing = [!activityId && "activityId", !apprFlowVersionId && "apprFlowVersionId", !docVersionId && "docVersionId"].filter(Boolean);
+  const docVersionId = posInt(data?.document?.docVersionId);
+  const apprFlowVersionId = posInt(data?.document?.apprFlowVersionId);
+  const currentId = posInt(data?.apprFlow?.currentActivityId);
+  const missing = [!currentId && "activityId", !apprFlowVersionId && "apprFlowVersionId", !docVersionId && "docVersionId"].filter(Boolean);
   if (missing.length) throw new Error(`결재 정보(${missing.join(", ")})를 문서에서 찾지 못해 처리하지 않았습니다. 웹에서 처리해 주세요.`);
-  return { activityId: activityId!, apprFlowVersionId: apprFlowVersionId!, docVersionId: docVersionId! };
+  const acts = arr(data?.apprFlow?.activityGroups).flatMap((g: any) => arr(g?.activities));
+  const cur = acts.find((a: any) => posInt(a?.id) === currentId);
+  if (!cur || String(cur?.status) !== "WAIT")
+    throw new Error("현재 결재 단계가 대기 상태가 아니어서 처리하지 않았습니다. 새로고침 후 다시 시도하세요.");
+  if (myUserId == null || posInt(cur?.userId) !== myUserId)
+    throw new Error("현재 결재 차례가 내 단계가 아니어서 처리하지 않았습니다. 웹에서 처리해 주세요.");
+  return { activityId: currentId!, apprFlowVersionId: apprFlowVersionId!, docVersionId: docVersionId! };
 }
 
 /** Body exactly as observed from the web client, incl. the odd `"<docId>": {}` key. We never navigate → useNextApproval:false. */

@@ -1,25 +1,12 @@
+import fixture from "./fixtures/approval-doc-120728.sanitized.json";
 import { describe, expect, it, vi } from "vitest";
 import {
   PortalService, normalizeApprovalActionArgs, parseApprovalActionResult, APPROVAL_ACTION_PATH,
   extractApprovalActionContext, approvalActionBody,
 } from "../electron/core/portal";
 
-const ME = 501;
-const detail = (over: any = {}) => ({
-  code: "200",
-  data: {
-    document: { id: 120738, docVersionId: 86797, ...(over.document ?? {}) },
-    apprFlow: {
-      apprFlowVersionId: 87095,
-      activityGroups: [{ name: "결재", activities: over.activities ?? [
-        { id: 742009, userId: 400, status: "COMPLETE" },
-        { id: 742010, userId: ME, status: "WAIT" },
-      ] }],
-      ...(over.apprFlow ?? {}),
-    },
-    actionCheck: { isApprovalWaitingUser: true },
-  },
-});
+const ME = 312; // waiting approver in the real doc 120728 fixture
+const detail = (mut: (d: any) => void = () => undefined) => { const d = structuredClone(fixture) as any; mut(d.data); return d; };
 
 describe("approval actions (mocked fetcher — never hits the real server)", () => {
   it("validates args; 반려 requires a comment", () => {
@@ -31,12 +18,16 @@ describe("approval actions (mocked fetcher — never hits the real server)", () 
   it("uses the observed path", () => {
     expect(APPROVAL_ACTION_PATH("120738")).toBe("/api/approval/document/120738/approval");
   });
-  it("extracts ids; fails closed when missing or ambiguous", () => {
-    expect(extractApprovalActionContext(detail(), ME)).toEqual({ activityId: 742010, apprFlowVersionId: 87095, docVersionId: 86797 });
-    expect(() => extractApprovalActionContext(detail({ document: { docVersionId: undefined } }), ME)).toThrow("docVersionId");
-    expect(() => extractApprovalActionContext(detail({ apprFlow: { apprFlowVersionId: null } }), ME)).toThrow("apprFlowVersionId");
-    expect(() => extractApprovalActionContext(detail(), null)).toThrow("activityId");
-    expect(() => extractApprovalActionContext(detail({ activities: [{ id: 1, userId: ME, status: "WAIT" }, { id: 2, userId: ME, status: "WAIT" }] }), ME)).toThrow("특정");
+  it("extracts ids from the real (sanitized) doc 120728 response", () => {
+    expect(extractApprovalActionContext(fixture, ME)).toEqual({ activityId: 741950, apprFlowVersionId: 87084, docVersionId: 86786 });
+  });
+  it("fails closed when missing or inconsistent", () => {
+    expect(() => extractApprovalActionContext(detail((d) => delete d.document.docVersionId), ME)).toThrow("docVersionId");
+    expect(() => extractApprovalActionContext(detail((d) => delete d.document.apprFlowVersionId), ME)).toThrow("apprFlowVersionId");
+    expect(() => extractApprovalActionContext(detail((d) => delete d.apprFlow.currentActivityId), ME)).toThrow("activityId");
+    expect(() => extractApprovalActionContext(fixture, 1045)).toThrow("내 단계");
+    expect(() => extractApprovalActionContext(fixture, null)).toThrow("내 단계");
+    expect(() => extractApprovalActionContext(detail((d) => { d.apprFlow.currentActivityId = 741949; }), ME)).toThrow("대기");
   });
   it("builds the observed body", () => {
     const b = approvalActionBody("120738", "approve", { activityId: 742010, apprFlowVersionId: 87095, docVersionId: 86797 }, "");
@@ -60,9 +51,10 @@ describe("approval actions (mocked fetcher — never hits the real server)", () 
     await svc.approvalAction("return", 120738, " 금액 확인 ");
     const put = calls.find((c) => c[1]?.method === "PUT");
     expect(put[0]).toBe("/api/approval/document/120738/approval");
-    expect(put[1].json).toMatchObject({ apprAction: "RETURN", comment: "금액 확인", activityId: 742010 });
+    expect(put[1].json).toMatchObject({ "120738": {}, apprFlowVersionId: 87084, docVersionId: 86786 });
+    expect(put[1].json).toMatchObject({ apprAction: "RETURN", comment: "금액 확인", activityId: 741950 });
     calls.length = 0;
-    body = detail({ document: { docVersionId: undefined } });
+    body = detail((d) => delete d.document.docVersionId);
     await expect(svc.approvalAction("approve", 120739)).rejects.toThrow("docVersionId");
     expect(calls.some((c) => c[1]?.method === "PUT")).toBe(false);
   });
