@@ -60,6 +60,8 @@ export type ChatMessage = {
   needConfirmCount?: number;
   /** userSeqs who have read this message (REST `confirmUsers`) */
   confirmUsers?: number[];
+  /** Realtime file message re-emitted after REST filled in its attach; UI-only update. */
+  attachUpdate?: boolean;
 };
 
 export type SessionUser = {

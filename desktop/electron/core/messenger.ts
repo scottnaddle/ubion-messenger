@@ -113,6 +113,8 @@ export class MessengerCore {
   /** highest messageId already delivered to listeners, per room */
   private lastIds = new Map<string, number>();
   private emitted = new Set<number>();
+  /** ids emitted from realtime without an attach; syncRoom re-emits them if REST has one (files) */
+  private pendingAttach = new Set<number>();
   private pollTimer: NodeJS.Timeout | null = null;
   private syncing: Promise<void> | null = null;
   private roomSyncTimers = new Map<string, NodeJS.Timeout>();
@@ -205,6 +207,7 @@ export class MessengerCore {
     this.presence.clear();
     this.lastIds.clear();
     this.emitted.clear();
+    this.pendingAttach.clear();
     this.usersCache = this.deptCache = null;
     this.setConn("offline");
     this.emit("loggedOut", { reason });
@@ -359,6 +362,15 @@ export class MessengerCore {
     } else {
       void this.refreshRooms().catch(() => undefined);
     }
+    // XMPP bodies for SENDFILE carry no attach model (and may lack messageType): track every attach-less
+    // realtime message so the REST reconcile can fill the attach in.
+    if (msg.messageId != null && !msg.attach) {
+      this.pendingAttach.add(msg.messageId);
+      if (this.pendingAttach.size > 500) {
+        const oldest = this.pendingAttach.values().next().value;
+        if (oldest != null) this.pendingAttach.delete(oldest);
+      }
+    }
     this.emit("message", {
       ...msg,
       roomKey: key,
@@ -463,6 +475,19 @@ export class MessengerCore {
       room.messageId = Math.max(room.messageId || 0, lastMsg.messageId || 0);
       room.createdAt = lastMsg.createdAt || room.createdAt;
       this.emitRooms();
+    }
+    for (const m of page) {
+      if (m.messageId == null || !this.pendingAttach.has(m.messageId) || !m.attach) continue;
+      this.pendingAttach.delete(m.messageId);
+      const isMine = m.sendUserSeq === me;
+      // UI-only fill-in: keep live receipt counts (omit REST receipt fields); main skips notifications on attachUpdate
+      const { needConfirmCount: _n, confirmUsers: _c, ...rest } = m;
+      this.emit("message", { ...rest, roomKey: key, roomKind: kind, roomSeq: seq, isMine, usePush: room ? room.usePush : true, attachUpdate: true });
+      if (room && m.messageId === room.messageId) {
+        room.preview = `📎 ${m.attach.name}`;
+        room.createdAt = m.createdAt || room.createdAt;
+        this.emitRooms();
+      }
     }
     return fresh.length;
   }

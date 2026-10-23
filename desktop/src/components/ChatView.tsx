@@ -101,9 +101,15 @@ export function ChatView({
     const h = (ev: Event) => {
       const { type, payload } = (ev as CustomEvent).detail;
       if (type === "message" && payload.roomKey === room.key) {
-        const el = listRef.current;
-        stickBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120 || payload.isMine;
-        setMsgs((l) => upsertMessage(l, payload));
+        if (payload.attachUpdate) {
+          // attach fill-in: replace the existing card only (never append), keep scroll position
+          const { attachUpdate: _u, ...upd } = payload;
+          setMsgs((l) => (l.some((x) => x.messageId === upd.messageId) ? upsertMessage(l, upd) : l));
+        } else {
+          const el = listRef.current;
+          stickBottom.current = !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120 || payload.isMine;
+          setMsgs((l) => upsertMessage(l, payload));
+        }
       } else if (type === "confirm" && payload.roomKey === room.key) {
         setMsgs((l) => applyReadReceipt(l, payload));
       } else if (type === "receipts" && payload.roomKey === room.key) {

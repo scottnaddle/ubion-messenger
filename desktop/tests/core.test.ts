@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { splitStanzas, xmlUnescape } from "../electron/core/xmpp";
-import { parsePresence, routeXmppBody } from "../electron/core/messenger";
+import { MessengerCore, parsePresence, routeXmppBody } from "../electron/core/messenger";
 import { xmppKeyFromLoginId } from "../electron/core/xmpp-key";
 import { canonMessageId, dedupeByMessageId, upsertMessage } from "../electron/core/messages";
 import { normalizeRestMessage, sortRooms } from "../electron/core/daou-client";
@@ -96,6 +96,40 @@ describe("messages", () => {
       { ...base, key: "c", usePin: true, createdAt: "2020-01-01T00:00:00+09:00" },
     ];
     expect(sortRooms(rs).map((r) => r.key)).toEqual(["c", "b", "a"]);
+  });
+});
+
+describe("realtime file attach reconciliation", () => {
+  it("re-emits a SENDFILE body that arrived without attach after syncRoom", async () => {
+    const core = new MessengerCore("https://example.invalid");
+    core.client.user = { id: 1, repId: 1, name: "me", loginId: "me" };
+    const room: Room = {
+      key: "buddy:2", kind: "buddy", seq: 2, name: "peer", preview: "", messageId: 11, unread: 0,
+      usePin: false, usePush: true, avatar: "", isSelf: false, createdAt: new Date(1e12 + 11).toISOString(),
+    };
+    core.client.listRooms = async () => [{ ...room }];
+    const base: ChatMessage = {
+      messageId: 11, sendUserSeq: 2, sendUserName: "peer", message: "", userImage: "",
+      createdAt: new Date(1e12 + 11).toISOString(), messageType: "SENDFILE",
+    };
+    let page: ChatMessage[] = [{ ...base }];
+    core.client.fetchMessages = async () => page.map((m) => ({ ...m }));
+    await core.refreshRooms();
+    const got: ChatMessage[] = [];
+    core.on("message", (m) => got.push(m));
+    (core as any).onBody({ type: "message", subtype: "single", from: { userSeq: 2 }, toSeq: 1, message: "", messageId: 11, messageType: "SENDFILE" });
+    expect(got).toHaveLength(1);
+    expect(got[0].attach).toBeUndefined();
+    page = [{ ...base, attach: { cryptId: "c1", name: "a.png", imageFile: true } }];
+    await core.syncRoom("buddy:2");
+    expect(got).toHaveLength(2);
+    expect(got[1]).toMatchObject({ messageId: 11, roomKey: "buddy:2", isMine: false, attachUpdate: true });
+    expect(got[1].attach?.cryptId).toBe("c1");
+    expect(core.getRooms()[0].preview).toBe("📎 a.png");
+    const cards = upsertMessage([{ ...base }], got[1]);
+    expect(cards).toHaveLength(1);
+    expect(cards[0].attach?.name).toBe("a.png");
+    core.shutdown();
   });
 });
 

@@ -125,7 +125,10 @@ function wireCore() {
     core.on("portalNewPost", (p) => notifyNewPost(p)),
     core.on("portalNewPostSummary", (p) => notifyNewPostSummary(p)),
     core.on("rooms", () => updateBadge()),
-    core.on("message", (m) => maybeNotify(m)),
+    core.on("message", (m) => {
+      if (m.attachUpdate) return; // attach fill-in of an already-delivered file message (renderer upserts it)
+      maybeNotify(m);
+    }),
   ];
 }
 
