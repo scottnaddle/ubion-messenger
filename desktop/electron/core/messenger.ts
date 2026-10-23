@@ -112,6 +112,8 @@ export class MessengerCore {
   /** Optimistic per-room notification toggles; kept until the server reports the same value. */
   private roomPushOverrides = new Map<string, boolean>();
   private presence = new Map<number, Map<string, Presence>>();
+  /** Free-text presence <status> messages, per user (latest seen). */
+  private presenceStatus = new Map<number, string>();
   private usersCache: Person[] | null = null;
   private deptCache: Department[] | null = null;
   conn: ConnState = "offline";
@@ -211,6 +213,7 @@ export class MessengerCore {
     this.pendingGroupRooms.clear();
     this.roomPushOverrides.clear();
     this.presence.clear();
+    this.presenceStatus.clear();
     this.lastIds.clear();
     this.emitted.clear();
     this.pendingAttach.clear();
@@ -283,15 +286,21 @@ export class MessengerCore {
       } else if (s === "connecting") this.setConn(wasOnline ? "reconnecting" : "connecting");
       else this.setConn(this.xmpp ? "reconnecting" : "offline", err);
     });
-    x.on("presence", (p: { local: string; resource: string; type?: string; status?: string; show?: string }) => {
+    x.on("presence", (p: { local: string; resource: string; type?: string; status?: string; show?: string; statusText?: string | null }) => {
       const id = Number(p.local);
       if (!Number.isFinite(id)) return;
       const per = this.presence.get(id) || new Map<string, Presence>();
       const v = parsePresence(p.type, p.status, p.show);
-      if (v === "offline") per.delete(p.resource);
-      else per.set(p.resource, v);
+      if (v === "offline") {
+        per.delete(p.resource);
+        this.presenceStatus.delete(id);
+      } else {
+        per.set(p.resource, v);
+        if (p.statusText) this.presenceStatus.set(id, p.statusText);
+        else this.presenceStatus.delete(id);
+      }
       this.presence.set(id, per);
-      this.emit("presence", { userId: id, presence: this.presenceOf(id) });
+      this.emit("presence", { userId: id, presence: this.presenceOf(id), statusMessage: this.presenceStatus.get(id) });
     });
     x.on("botStatus", (p: ParsedBotStatus) => {
       const me = this.client.user?.id;
@@ -315,6 +324,21 @@ export class MessengerCore {
 
   setAway(away: boolean) {
     this.xmpp?.setStatus(away ? "away:on" : "online:on");
+  }
+
+  /** Send a free-text presence <status> message (keeps the current away/online code). */
+  setStatusMessage(text: string) {
+    this.xmpp?.setStatusMessage(text);
+  }
+
+  statusMessageOf(userId: number): string | undefined {
+    return this.presenceStatus.get(userId);
+  }
+
+  allStatusMessages(): Record<number, string> {
+    const out: Record<number, string> = {};
+    for (const [id, text] of this.presenceStatus) out[id] = text;
+    return out;
   }
 
   presenceOf(userId: number): Presence {

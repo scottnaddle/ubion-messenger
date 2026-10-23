@@ -70,8 +70,8 @@ function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
 }
 
 export function ChatView({
-  room, me, focused, presence, botStatus, toast,
-}: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; botStatus?: BotStatusEntry; toast: ToastFn }) {
+  room, me, focused, presence, statusMessage, botStatus, toast,
+}: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; statusMessage?: string; botStatus?: BotStatusEntry; toast: ToastFn }) {
   const t = useT();
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -345,6 +345,14 @@ export function ChatView({
       toast(t("알림을 설정하지 못했습니다: {error}", { error: (e as Error).message }));
     }
   };
+  const scheduleSend = async (text: string, sendAt: number, sendOnMissedLaunch: boolean) => {
+    try {
+      await api().scheduled.add({ roomKey: room.key, roomName: room.name, text, sendAt, sendOnMissedLaunch });
+      toast(t("예약 메시지를 설정했습니다"), "info");
+    } catch (e) {
+      toast(t("예약 메시지를 설정하지 못했습니다: {error}", { error: (e as Error).message }));
+    }
+  };
   const doRegisterNotice = async () => {
     const target = confirmNotice;
     if (!target?.messageId) return;
@@ -549,7 +557,7 @@ export function ChatView({
   const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
   const subtitle =
     room.kind === "buddy"
-      ? [room.position, t(presence ? PRES_LABEL[presence] : PRES_LABEL.offline)].filter(Boolean).join(" · ")
+      ? [room.position, t(presence ? PRES_LABEL[presence] : PRES_LABEL.offline), statusMessage].filter(Boolean).join(" · ")
       : room.kind === "room"
       ? (room.memberCount ? t("그룹 대화 · {n}명", { n: room.memberCount }) : t("그룹 대화"))
       : t("알림 채널");
@@ -711,6 +719,7 @@ export function ChatView({
             roomKey={room.key} meId={me.id} isGroup={isGroupRoom}
             hasFiles={staged.length > 0}
             onSend={sendAll}
+            onSchedule={scheduleSend}
             onPick={() => void pickStaged()}
             onCapture={() => void captureScreen()}
             onPasteFiles={stagePasted}
@@ -933,6 +942,44 @@ function ReminderModal({ m, onPick, onClose }: {
   );
 }
 
+function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMissedLaunch: boolean) => void; onClose: () => void }) {
+  const t = useT();
+  const [at, setAt] = useState("");
+  const [sendOnMissed, setSendOnMissed] = useState(false);
+  const now = new Date();
+  const minLocal = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  const submit = () => {
+    if (!at) return;
+    const sendAt = new Date(at).getTime();
+    if (Number.isNaN(sendAt) || sendAt <= Date.now()) return;
+    onPick(sendAt, sendOnMissed);
+  };
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal compose-discard" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-body">
+          <p className="muted small">{t("예약 전송")}</p>
+          <input
+            type="datetime-local"
+            min={minLocal(now)}
+            value={at}
+            autoFocus
+            onChange={(e) => setAt(e.target.value)}
+          />
+          <label className="reminder-missed">
+            <input type="checkbox" checked={sendOnMissed} onChange={(e) => setSendOnMissed(e.target.checked)} />
+            <span>{t("놓친 경우 앱 실행 시 전송")}</span>
+          </label>
+          <div className="approval-modal-actions">
+            <button className="link" onClick={onClose}>{t("취소")}</button>
+            <button className="primary" disabled={!at} onClick={submit}>{t("설정")}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
 }: {
@@ -995,14 +1042,16 @@ function MessageRow({
 type ComposerInsert = { roomKey: string; text: string; id: number };
 
 function Composer({
-  roomKey, meId, isGroup, hasFiles, onSend, onPick, onCapture, onPasteFiles, onEscapeTray, insert,
+  roomKey, meId, isGroup, hasFiles, onSend, onSchedule, onPick, onCapture, onPasteFiles, onEscapeTray, insert,
 }: {
   roomKey: string; meId: number; isGroup: boolean; hasFiles: boolean;
-  onSend: (t: string) => Promise<boolean>; onPick: () => void; onCapture: () => void; onPasteFiles: (files: File[]) => void;
+  onSend: (t: string) => Promise<boolean>; onSchedule: (text: string, sendAt: number, sendOnMissedLaunch: boolean) => void;
+  onPick: () => void; onCapture: () => void; onPasteFiles: (files: File[]) => void;
   onEscapeTray: () => boolean; insert?: ComposerInsert | null;
 }) {
   const t = useT();
   const [text, setText] = useState("");
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [members, setMembers] = useState<MentionCandidate[]>([]);
   const [trigger, setTrigger] = useState<MentionTrigger | null>(null);
   const [cursorEnd, setCursorEnd] = useState(0);
@@ -1211,7 +1260,21 @@ function Composer({
           }
         }}
       />
+      <button className="icon-btn" disabled={hasFiles || !text.trim()} title={t("예약 전송")} aria-label={t("예약 전송")} onClick={() => setScheduleOpen(true)}><Icon name="clock" size={18} /></button>
       <button className="send-btn" disabled={!text.trim() && !hasFiles} title={t("전송")} onClick={submit}><Icon name="send" size={18} /></button>
+      {scheduleOpen && (
+        <ScheduleModal
+          onPick={(sendAt, sendOnMissedLaunch) => {
+            const original = text;
+            const trimmed = original.replace(/\s+$/, "");
+            if (!trimmed.trim()) return;
+            setScheduleOpen(false);
+            onSchedule(trimmed, sendAt, sendOnMissedLaunch);
+            setText((current) => (current === original ? "" : current));
+          }}
+          onClose={() => setScheduleOpen(false)}
+        />
+      )}
     </div>
   );
 }

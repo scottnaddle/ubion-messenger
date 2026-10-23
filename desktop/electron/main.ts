@@ -44,6 +44,13 @@ import {
 import { SearchCacheStore } from "./core/search-cache";
 import { normalizeSavedInput, SavedStore } from "./core/saved";
 import { dueReminders, nextDueAt, normalizeReminderInput, ReminderStore, type Reminder } from "./core/reminders";
+import {
+  dueScheduled, guardScheduledTarget, nextScheduledAt, normalizeScheduledInput, ScheduledStore,
+  type ScheduledMessage,
+} from "./core/scheduled-send";
+import { computeManualUntil, isInDnd, normalizeDndDays, normalizeDndMin } from "./core/dnd";
+import { normalizeStatusText, statusCaps, statusServerEnabled, statusXmppEnabled } from "./core/status-message";
+import { createStatusClient } from "./core/status-server";
 import { normalizeGlobalQuery } from "../src/lib/global-search";
 import {
   activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
@@ -129,9 +136,28 @@ const reminders = () => {
   if (!reminderStore) reminderStore = new ReminderStore(path.join(app.getPath("userData"), "reminders"), fs, { join: path.join });
   return reminderStore;
 };
+// 예약 전송: client-local JSON under <userData>/scheduled/<userSeq>.json, no server calls until the timer fires.
+let scheduledStore: ScheduledStore | null = null;
+const scheduled = () => {
+  if (!scheduledStore) scheduledStore = new ScheduledStore(path.join(app.getPath("userData"), "scheduled"), fs, { join: path.join });
+  return scheduledStore;
+};
+let scheduledTimer: ReturnType<typeof setTimeout> | null = null;
 let reminderTimer: ReturnType<typeof setTimeout> | null = null;
+// 상태 메시지: XMPP text is transient (re-sent on connect); server text persists on bot.ubion.global.
+let currentStatusText: string | null = null;
+/** 방해 금지 시간: suppress desktop notifications/sound (badges are unaffected). */
+function dndActive(): boolean {
+  return isInDnd(Date.now(), {
+    enabled: settings.dndEnabled,
+    days: settings.dndDays,
+    startMin: settings.dndStartMin,
+    endMin: settings.dndEndMin,
+    manualUntil: settings.dndManualUntil,
+  });
+}
 function fireReminder(r: Reminder) {
-  if (!Notification.isSupported()) return;
+  if (dndActive() || !Notification.isSupported()) return;
   const n = new Notification({
     title: `나중에 알림${r.roomName ? ` · ${r.roomName}` : ""}`,
     body: r.message ? r.message.slice(0, 140) : "알림 시간이 되었습니다",
@@ -165,6 +191,66 @@ function scheduleReminderTimer() {
   }, Math.max(1000, next - now));
   (reminderTimer as any)?.unref?.();
 }
+
+/** The self room's API seq (used by the self-only guard). */
+function selfRoomApiSeq(): number | undefined {
+  const selfRoom = core.getRooms().find((r) => r.isSelf);
+  if (!selfRoom) return undefined;
+  try {
+    return apiRoomSeq(selfRoom);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Send a scheduled message through the normal send path, with the self-only guard applied. */
+async function sendScheduled(item: ScheduledMessage): Promise<void> {
+  const me = core.user?.id;
+  if (me == null) throw new Error("로그인이 필요합니다");
+  let room = core.getRooms().find((r) => r.key === item.roomKey);
+  if (!room) {
+    await core.refreshRooms();
+    room = core.getRooms().find((r) => r.key === item.roomKey);
+  }
+  guardScheduledTarget({ selfOnly: process.env.UBM_SELF_ONLY === "1", me, selfRoomSeq: selfRoomApiSeq(), room: room ?? null });
+  await core.sendText(item.roomKey, item.text);
+}
+
+/**
+ * Fire past-due scheduled messages, then arm a timer for the next one.
+ * `startup` marks missed items (app was closed at send time) without auto-sending unless the
+ * per-item "놓친 경우 앱 실행 시 전송" option is set.
+ */
+function armScheduledTimer(startup = false) {
+  if (scheduledTimer) {
+    clearTimeout(scheduledTimer);
+    scheduledTimer = null;
+  }
+  if (core.user == null) return;
+  const store = scheduled();
+  store.for(core.user.id);
+  const now = Date.now();
+  for (const item of dueScheduled(store.list(), now)) {
+    if (startup && !item.sendOnMissedLaunch) {
+      store.markMissed(item.id);
+      continue;
+    }
+    void sendScheduled(item)
+      .then(() => store.remove(item.id))
+      .catch((e) => {
+        console.warn("scheduled send failed:", maskSecrets(String((e as Error)?.message ?? e)));
+        store.markMissed(item.id);
+      });
+  }
+  const next = nextScheduledAt(store.list(), now);
+  if (next == null) return;
+  scheduledTimer = setTimeout(() => {
+    scheduledTimer = null;
+    armScheduledTimer(false);
+  }, Math.max(1000, next - now));
+  (scheduledTimer as any)?.unref?.();
+}
+
 let locked = false;
 const lockState = createLockState({ now: () => Date.now() });
 const updater = new Updater(() => win);
@@ -175,6 +261,15 @@ const botSettings = createBotSettingsClient({
     return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
   },
 });
+
+const statusClient = () =>
+  createStatusClient({
+    baseUrl: process.env.UBM_BOT_API_URL || "https://bot.ubion.global",
+    getCookieHeader: async () => {
+      const cookies = await core.client.sessionCookies();
+      return cookies.map((c) => `${c.key}=${c.value}`).join("; ");
+    },
+  });
 
 const resPath = (f: string) =>
   app.isPackaged ? path.join(process.resourcesPath, "resources", f) : path.join(__dirname, "../../resources", f);
@@ -269,10 +364,14 @@ function wireCore() {
     core.on("loggedOut", () => resetZoom()),
     core.on("rooms", () => updateBadge()),
     core.on("ready", () => scheduleReminderTimer()),
+    core.on("ready", () => armScheduledTimer(true)),
     core.on("loggedOut", () => {
       if (reminderTimer) { clearTimeout(reminderTimer); reminderTimer = null; }
+      if (scheduledTimer) { clearTimeout(scheduledTimer); scheduledTimer = null; }
       reminderStore?.for(null);
+      scheduledStore?.for(null);
       savedStore?.for(null);
+      currentStatusText = null;
     }),
     core.on("message", (m) => {
       indexMessages(m.roomKey, [m]);
@@ -776,7 +875,7 @@ function connectZoomWindow(authorizeUrl: string, redirectUri: string): Promise<b
 }
 
 function notifyNewPost(p: MessengerEventMap["portalNewPost"]) {
-  if (!settings.notifications || !settings.portalPostNotify || !Notification.isSupported()) return;
+  if (dndActive() || !settings.notifications || !settings.portalPostNotify || !Notification.isSupported()) return;
   const n = new Notification({
     title: `전사게시판${p.boardName ? ` · ${p.boardName}` : ""}: 새 글`,
     body: settings.notificationPreview ? p.summary.slice(0, 140) : "새 글이 등록되었습니다",
@@ -787,7 +886,7 @@ function notifyNewPost(p: MessengerEventMap["portalNewPost"]) {
 }
 
 function notifyNewPostSummary(p: MessengerEventMap["portalNewPostSummary"]) {
-  if (!settings.notifications || !settings.portalPostNotify || !Notification.isSupported()) return;
+  if (dndActive() || !settings.notifications || !settings.portalPostNotify || !Notification.isSupported()) return;
   const n = new Notification({
     title: "전사게시판",
     body: `${p.count}${p.atLeast ? "개 이상의" : "개"} 새 글이 있습니다`,
@@ -800,6 +899,7 @@ function notifyNewPostSummary(p: MessengerEventMap["portalNewPostSummary"]) {
 // ---------- notifications ----------
 function maybeNotify(m: MessengerEventMap["message"]) {
   if (!settings.notifications) return;
+  if (dndActive()) return;
   const room = core.getRooms().find((r) => r.key === m.roomKey);
   const mentioned = !!room && room.kind === "room" && !room.isSelf &&
     isMentioningMe(m.message || "", core.user?.name || "");
@@ -983,6 +1083,9 @@ function registerIpc() {
     // Custom theme list/selection only change through theme:* (validated ids, files on disk).
     const { customThemes: _ct, activeThemeId: _at, ...patch } = input || {};
     if ("themePreset" in patch) patch.themePreset = normalizePreset(patch.themePreset);
+    if ("dndDays" in patch) patch.dndDays = normalizeDndDays(patch.dndDays);
+    if ("dndStartMin" in patch) patch.dndStartMin = normalizeDndMin(patch.dndStartMin);
+    if ("dndEndMin" in patch) patch.dndEndMin = normalizeDndMin(patch.dndEndMin);
     filterLanguagePatch(patch, process.env);
     settings = { ...settings, ...patch };
     saveSettings(settings);
@@ -1187,15 +1290,6 @@ function registerIpc() {
   });
   handle("msg:send", (key: string, text: string) => core.sendText(key, text));
   handle("msg:delete", (ids: unknown) => core.client.deleteChatMessages(ids));
-  const selfRoomApiSeq = (): number | undefined => {
-    const selfRoom = core.getRooms().find((r) => r.isSelf);
-    if (!selfRoom) return undefined;
-    try {
-      return apiRoomSeq(selfRoom);
-    } catch {
-      return undefined;
-    }
-  };
   handle("msg:forwardRoom", (roomSeq: number, cryptIds: string[]) => {
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
@@ -1564,6 +1658,63 @@ function registerIpc() {
     scheduleReminderTimer();
     return { ok: true as const };
   });
+  // 예약 전송: client-local queue; the timer fires the normal send path (with the self-only guard).
+  handle("schedule:list", () => scheduled().for(core.user?.id).slice());
+  handle("schedule:add", (input: unknown) => {
+    if (core.user == null) throw new Error("로그인이 필요합니다");
+    scheduled().for(core.user.id);
+    const item = scheduled().add(normalizeScheduledInput(input, Date.now()));
+    armScheduledTimer(false);
+    return item;
+  });
+  handle("schedule:cancel", (id: unknown) => {
+    if (typeof id !== "string" || !id) throw new Error("잘못된 요청입니다");
+    scheduled().for(core.user?.id);
+    scheduled().remove(id);
+    armScheduledTimer(false);
+    return { ok: true as const };
+  });
+  handle("schedule:sendNow", async (id: unknown) => {
+    if (typeof id !== "string" || !id) throw new Error("잘못된 요청입니다");
+    const store = scheduled();
+    store.for(core.user?.id);
+    const item = store.list().find((s) => s.id === id);
+    if (!item) throw new Error("예약 메시지를 찾을 수 없습니다");
+    await sendScheduled(item);
+    store.remove(id);
+    return { ok: true as const };
+  });
+  // 방해 금지 시간: manual window is computed in main (server-agnostic).
+  handle("dnd:manual", (hours: unknown) => {
+    const manualUntil = computeManualUntil(Date.now(), hours);
+    settings = { ...settings, dndManualUntil: manualUntil };
+    saveSettings(settings);
+    return { manualUntil };
+  });
+  // 상태 메시지 (XMPP free-text presence + server fallback), gated by UBM_STATUS_XMPP / UBM_STATUS_SERVER.
+  handle("status:caps", () => statusCaps(process.env));
+  handle("status:get", async () => {
+    const me = core.user?.id;
+    if (me == null) return { text: null as string | null };
+    if (statusServerEnabled(process.env) && !currentStatusText) {
+      const r = await statusClient().get(me);
+      if (r.ok && r.text) currentStatusText = r.text;
+    }
+    return { text: currentStatusText };
+  });
+  handle("status:set", async (text: unknown) => {
+    const me = core.user?.id;
+    if (me == null) throw new Error("로그인이 필요합니다");
+    const value = normalizeStatusText(text);
+    if (statusXmppEnabled(process.env)) core.setStatusMessage(value || "");
+    if (statusServerEnabled(process.env)) {
+      const r = await statusClient().put(me, value);
+      if (!r.ok) throw new Error(r.message);
+    }
+    currentStatusText = value || null;
+    return { text: currentStatusText };
+  });
+  handle("status:presenceStatus", () => core.allStatusMessages());
   handle("app:badgeOverlay", (dataUrl: string | null) => {
     if (process.platform !== "win32" || !win) return;
     win.setOverlayIcon(dataUrl ? nativeImage.createFromDataURL(dataUrl) : null, dataUrl ? "읽지 않은 메시지" : "");
@@ -1659,6 +1810,7 @@ app.on("before-quit", () => {
   searchCache?.flush();
   savedStore?.flush();
   reminderStore?.flush();
+  scheduledStore?.flush();
   clearPreviewTemp();
 });
 app.on("window-all-closed", () => {

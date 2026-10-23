@@ -102,6 +102,11 @@ export class BoshClient extends EventEmitter {
     if (this.online) this.write(presenceStanza(status));
   }
 
+  /** Re-send presence carrying a free-text status message (keeps the current away/online code). */
+  setStatusMessage(text: string) {
+    if (this.online) this.write(presenceStanza(this.status as "online:on" | "away:on", text));
+  }
+
   private reset() {
     this.gen++;
     this.sid = "";

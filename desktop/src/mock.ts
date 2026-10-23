@@ -272,6 +272,24 @@ export function installMockIfNeeded() {
       },
       remove: async () => ({ ok: true as const }),
     },
+    scheduled: {
+      list: async () => [] as import("../electron/core/scheduled-send").ScheduledMessage[],
+      add: async (input: import("../electron/core/scheduled-send").ScheduledInput) => ({
+        ...input, roomName: input.roomName ?? "", sendOnMissedLaunch: input.sendOnMissedLaunch ?? false,
+        id: `s${Date.now().toString(36)}`, state: "scheduled" as const, created: Date.now(),
+      }) as import("../electron/core/scheduled-send").ScheduledMessage,
+      cancel: async () => ({ ok: true as const }),
+      sendNow: async () => ({ ok: true as const }),
+    },
+    dnd: {
+      manual: async (hours: number) => ({ manualUntil: Date.now() + hours * 3600_000 }),
+    },
+    status: {
+      caps: async () => ({ xmpp: new URLSearchParams(location.search).has("statusXmpp"), server: new URLSearchParams(location.search).has("statusServer") }),
+      get: async () => ({ text: null as string | null }),
+      set: async (text: string) => ({ text: text || null }),
+      presenceStatus: async () => ({}) as Record<number, string>,
+    },
     openChatBot: async () => undefined,
     onEvent: () => () => undefined,
     onOpenRoom: (cb) => {

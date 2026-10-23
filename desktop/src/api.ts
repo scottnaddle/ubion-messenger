@@ -12,6 +12,8 @@ import type { CustomTheme, ThemePresetId, ThemeState } from "../electron/core/th
 import type { PubsubCaps, PubsubDetail, PubsubPage, PubsubTarget } from "../electron/core/pubsub";
 import type { SavedInput, SavedMessage } from "../electron/core/saved";
 import type { Reminder, ReminderInput } from "../electron/core/reminders";
+import type { ScheduledMessage, ScheduledInput } from "../electron/core/scheduled-send";
+import type { StatusCaps } from "../electron/core/status-message";
 import type { Language } from "./lib/i18n-core";
 import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
@@ -40,6 +42,11 @@ export type Settings = {
   awayMinutes: 0 | 1 | 5 | 10 | 15;
   mobileNotice: boolean;
   lockTimeoutMin: 0 | 1 | 5 | 10 | 30 | 60;
+  dndEnabled: boolean;
+  dndDays: number[];
+  dndStartMin: number;
+  dndEndMin: number;
+  dndManualUntil?: number;
   themePreset?: ThemePresetId;
   customThemes?: CustomTheme[];
   activeThemeId?: string;
@@ -111,6 +118,24 @@ export type Bridge = {
     list(): Promise<Reminder[]>;
     add(input: ReminderInput): Promise<Reminder>;
     remove(id: string): Promise<{ ok: true }>;
+  };
+  /** 예약 전송: client-local queue; main sends on a timer via the normal send path. */
+  scheduled: {
+    list(): Promise<ScheduledMessage[]>;
+    add(input: ScheduledInput): Promise<ScheduledMessage>;
+    cancel(id: string): Promise<{ ok: true }>;
+    sendNow(id: string): Promise<{ ok: true }>;
+  };
+  /** 방해 금지 시간: main computes the manual window; suppression is client-side. */
+  dnd: {
+    manual(hours: number): Promise<{ manualUntil: number }>;
+  };
+  /** 상태 메시지 (XMPP / server fallback), gated by UBM_STATUS_XMPP=1 or UBM_STATUS_SERVER=1. */
+  status: {
+    caps(): Promise<StatusCaps>;
+    get(): Promise<{ text: string | null }>;
+    set(text: string): Promise<{ text: string | null }>;
+    presenceStatus(): Promise<Record<number, string>>;
   };
   openChatBot(brandName?: string): Promise<void>;
   onEvent(cb: (e: { type: string; payload: any }) => void): () => void;

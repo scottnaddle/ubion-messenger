@@ -3,12 +3,13 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import type { SavedMessage } from "../../electron/core/saved";
 import type { Reminder } from "../../electron/core/reminders";
+import type { ScheduledMessage } from "../../electron/core/scheduled-send";
 import type { ToastFn } from "../App";
 import { Icon } from "./ui";
 import { useT } from "../lib/i18n";
 import { roomTimeLabel } from "../lib/format";
 
-type Tab = "saved" | "reminders";
+type Tab = "saved" | "reminders" | "scheduled";
 
 function formatDue(dueAt: number): string {
   const d = new Date(dueAt);
@@ -25,13 +26,16 @@ export function SavedMessages({ toast, onOpenRoom, onClose }: {
   const [tab, setTab] = useState<Tab>("saved");
   const [saved, setSaved] = useState<SavedMessage[] | null>(null);
   const [reminders, setReminders] = useState<Reminder[] | null>(null);
+  const [scheduled, setScheduled] = useState<ScheduledMessage[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
     setSaved(null);
     setReminders(null);
+    setScheduled(null);
     api().saved.list().then(setSaved).catch(() => setSaved([]));
     api().reminders.list().then(setReminders).catch(() => setReminders([]));
+    api().scheduled.list().then(setScheduled).catch(() => setScheduled([]));
   }, []);
   useEffect(() => load(), [load]);
 
@@ -61,6 +65,32 @@ export function SavedMessages({ toast, onOpenRoom, onClose }: {
     }
   };
 
+  const cancelScheduled = async (item: ScheduledMessage) => {
+    setBusy(true);
+    try {
+      await api().scheduled.cancel(item.id);
+      setScheduled((l) => (l || []).filter((x) => x.id !== item.id));
+      toast(t("예약을 취소했습니다"), "info");
+    } catch (e) {
+      toast(t("예약을 취소하지 못했습니다: {error}", { error: (e as Error).message }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendNow = async (item: ScheduledMessage) => {
+    setBusy(true);
+    try {
+      await api().scheduled.sendNow(item.id);
+      setScheduled((l) => (l || []).filter((x) => x.id !== item.id));
+      toast(t("메시지를 보냈습니다"), "info");
+    } catch (e) {
+      toast(t("메시지를 보내지 못했습니다: {error}", { error: (e as Error).message }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const open = (key: string) => {
     onClose();
     onOpenRoom(key);
@@ -76,6 +106,7 @@ export function SavedMessages({ toast, onOpenRoom, onClose }: {
         <div className="chips" style={{ paddingTop: 8 }}>
           <button className={`chip ${tab === "saved" ? "on" : ""}`} onClick={() => setTab("saved")}>{t("저장한 메시지")}</button>
           <button className={`chip ${tab === "reminders" ? "on" : ""}`} onClick={() => setTab("reminders")}>{t("나중에 알림")}</button>
+          <button className={`chip ${tab === "scheduled" ? "on" : ""}`} onClick={() => setTab("scheduled")}>{t("예약 메시지")}</button>
         </div>
         <div className="modal-body">
           {tab === "saved" ? (
@@ -90,7 +121,7 @@ export function SavedMessages({ toast, onOpenRoom, onClose }: {
                 </Row>
               ))}
             </List>
-          ) : (
+          ) : tab === "reminders" ? (
             <List empty={reminders && !reminders.length ? t("알림이 없습니다") : undefined}>
               {(reminders || []).map((item) => (
                 <Row key={item.id} onClick={() => open(item.roomKey)} onRemove={() => removeReminder(item)} busy={busy}>
@@ -99,6 +130,13 @@ export function SavedMessages({ toast, onOpenRoom, onClose }: {
                   </div>
                   <div className="room-preview">{item.message || t("(내용 없음)")}</div>
                 </Row>
+              ))}
+            </List>
+          ) : (
+            <List empty={scheduled && !scheduled.length ? t("예약 메시지가 없습니다") : undefined}>
+              {(scheduled || []).map((item) => (
+                <ScheduledRow key={item.id} item={item} busy={busy}
+                  onOpen={() => open(item.roomKey)} onSendNow={() => sendNow(item)} onCancel={() => cancelScheduled(item)} />
               ))}
             </List>
           )}
@@ -131,6 +169,35 @@ function Row({ onClick, onRemove, busy, children }: {
         onClick={(e) => { e.stopPropagation(); onRemove(); }}
       >
         <Icon name="trash" size={14} />
+      </button>
+    </div>
+  );
+}
+
+function ScheduledRow({ item, busy, onOpen, onSendNow, onCancel }: {
+  item: ScheduledMessage; busy: boolean; onOpen: () => void; onSendNow: () => void; onCancel: () => void;
+}) {
+  const t = useT();
+  return (
+    <div className="room" role="button" onClick={onOpen}>
+      <div className="room-body">
+        <div className="room-name">
+          {item.roomName || item.roomKey}
+          <span className="muted small"> · {formatDue(item.sendAt)}</span>
+          {item.state === "missed" && <span className="muted small"> · {t("놓침")}</span>}
+        </div>
+        <div className="room-preview">{item.text || t("(내용 없음)")}</div>
+      </div>
+      {item.state === "missed" && (
+        <button className="link small" disabled={busy} onClick={(e) => { e.stopPropagation(); onSendNow(); }}>{t("보내기")}</button>
+      )}
+      <button
+        className="icon-btn"
+        title={t("취소")}
+        disabled={busy}
+        onClick={(e) => { e.stopPropagation(); onCancel(); }}
+      >
+        <Icon name="close" size={14} />
       </button>
     </div>
   );

@@ -3,6 +3,7 @@ import { api, type LockStatus, type SessionUser, type Settings } from "../api";
 import { Avatar, Icon } from "./ui";
 import { useUpdateStatus } from "./UpdateBanner";
 import { THEME_MAX_BYTES, THEME_PRESETS, type ThemePresetId, type ThemeState } from "../../electron/core/theme";
+import { DND_DAY_LABELS } from "../../electron/core/dnd";
 import { LANGUAGES, LANGUAGE_NAMES, tk, useT, type Language } from "../lib/i18n";
 
 const PRESET_LABELS: Record<ThemePresetId, string> = { default: tk("기본"), blue: tk("블루"), green: tk("그린"), purple: tk("퍼플") };
@@ -20,9 +21,15 @@ export function SettingsModal({
   const [lockBusy, setLockBusy] = useState(false);
   const [themeMsg, setThemeMsg] = useState<{ text: string; error?: boolean } | null>(null);
   const [themeBusy, setThemeBusy] = useState(false);
+  const [statusCaps, setStatusCaps] = useState<{ xmpp: boolean; server: boolean } | null>(null);
+  const [statusText, setStatusText] = useState("");
+  const [statusMsg, setStatusMsg] = useState<{ text: string; error?: boolean } | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
   useEffect(() => {
     api().call("app:info").then(setInfo).catch(() => undefined);
     api().call<LockStatus>("lock:status").then(setLock).catch(() => undefined);
+    api().call<{ xmpp: boolean; server: boolean }>("status:caps").then(setStatusCaps).catch(() => setStatusCaps(null));
+    api().call<{ text: string | null }>("status:get").then((r) => setStatusText(r?.text || "")).catch(() => undefined);
     const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
@@ -113,6 +120,34 @@ export function SettingsModal({
       <input type="checkbox" className="switch" disabled={disabled} checked={!!settings[k]} onChange={(e) => set({ [k]: e.target.checked } as Partial<Settings>)} />
     </label>
   );
+
+  const minToTime = (m: number) => {
+    const v = Number.isFinite(m) && m >= 0 && m <= 1439 ? m : 0;
+    return `${Math.floor(v / 60).toString().padStart(2, "0")}:${(v % 60).toString().padStart(2, "0")}`;
+  };
+  const timeToMin = (v: string) => {
+    const [h, m] = v.split(":").map(Number);
+    return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : 0;
+  };
+  const manualLeft = settings.dndManualUntil ? Math.max(0, settings.dndManualUntil - Date.now()) : 0;
+  const setManual = async (hours: number) => {
+    const r = await api().dnd.manual(hours);
+    onChange({ ...settings, dndManualUntil: r.manualUntil });
+  };
+  const clearManual = () => set({ dndManualUntil: undefined });
+  const saveStatus = async () => {
+    setStatusMsg(null);
+    setStatusBusy(true);
+    try {
+      const r = await api().call<{ text: string | null }>("status:set", statusText);
+      setStatusText(r?.text || "");
+      setStatusMsg({ text: t("상태 메시지가 저장되었습니다") });
+    } catch (e) {
+      setStatusMsg({ text: t("상태 메시지를 저장하지 못했습니다: {error}", { error: (e as Error).message }), error: true });
+    } finally {
+      setStatusBusy(false);
+    }
+  };
 
   return (
     <div className="modal-back" onClick={onClose}>
@@ -223,6 +258,72 @@ export function SettingsModal({
             </select>
           </div>
           <Toggle k="mobileNotice" label={t("PC 미사용 시 모바일로 알림")} desc={t("자리비움 상태가 되면 모바일 앱으로 알림을 전송합니다 (모바일 푸시 동작은 서버 정책에 따름)")} />
+          <h4>{t("방해 금지 시간")}</h4>
+          <Toggle k="dndEnabled" label={t("방해 금지 시간 사용")} desc={t("알림과 소리를 표시하지 않습니다 (배지는 유지)")} />
+          {settings.dndEnabled && (
+            <>
+              <div className="row">
+                <div>{t("요일")}</div>
+                <div className="seg">
+                  {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                    <button
+                      key={d}
+                      className={(settings.dndDays || []).includes(d) ? "on" : ""}
+                      onClick={() => {
+                        const has = (settings.dndDays || []).includes(d);
+                        const days = has ? settings.dndDays.filter((x) => x !== d) : [...(settings.dndDays || []), d].sort((a, b) => a - b);
+                        set({ dndDays: days });
+                      }}
+                    >
+                      {DND_DAY_LABELS[d]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="row">
+                <div>{t("시작 시간")}</div>
+                <input type="time" value={minToTime(settings.dndStartMin)} onChange={(e) => set({ dndStartMin: timeToMin(e.target.value) })} />
+              </div>
+              <div className="row">
+                <div>{t("종료 시간")}</div>
+                <input type="time" value={minToTime(settings.dndEndMin)} onChange={(e) => set({ dndEndMin: timeToMin(e.target.value) })} />
+              </div>
+            </>
+          )}
+          <div className="row">
+            <div>
+              <div>{t("지금부터 방해 금지")}</div>
+              <div className="muted tiny">
+                {manualLeft > 0 ? t("~ {n}분 후까지", { n: Math.ceil(manualLeft / 60000) }) : t("원하는 시간만큼 알림을 멈춥니다")}
+              </div>
+            </div>
+            <div className="row-actions">
+              {manualLeft > 0 ? (
+                <button className="link small" onClick={clearManual}>{t("방해 금지 해제")}</button>
+              ) : (
+                <select value="" onChange={(e) => { const n = Number(e.target.value); if (n) void setManual(n); }}>
+                  <option value="" disabled>{t("선택")}</option>
+                  {[1, 2, 4, 8].map((n) => <option key={n} value={n}>{t("지금부터 {n}시간", { n })}</option>)}
+                </select>
+              )}
+            </div>
+          </div>
+          {(statusCaps?.xmpp || statusCaps?.server) && (
+            <>
+              <h4>{t("상태 메시지")}</h4>
+              <div className="row">
+                <div>
+                  <div>{t("상태 메시지")}</div>
+                  <div className="muted tiny">{t("UBION Messenger에서 표시할 상태 메시지입니다 (실험 기능)")}</div>
+                </div>
+              </div>
+              <div className="row">
+                <input value={statusText} placeholder={t("상태 메시지를 입력하세요")} onChange={(e) => setStatusText(e.target.value)} />
+                <button className="primary small" disabled={statusBusy} onClick={() => void saveStatus()}>{t("저장")}</button>
+              </div>
+              {statusMsg && <div className={statusMsg.error ? "lock-error" : "muted tiny"}>{statusMsg.text}</div>}
+            </>
+          )}
           <h4>{t("메신저 잠금")}</h4>
           <div className="row">
             <div>

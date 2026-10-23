@@ -42,6 +42,16 @@ export type Settings = {
   mobileNotice: boolean;
   /** 자동 잠금까지의 유휴 시간(분). 0 = 자동 잠금 안 함. */
   lockTimeoutMin: 0 | 1 | 5 | 10 | 30 | 60;
+  /** 방해 금지 시간: 활성화 여부. */
+  dndEnabled: boolean;
+  /** 방해 금지 시간: 적용 요일 (0=일 … 6=토). */
+  dndDays: number[];
+  /** 방해 금지 시간: 시작 (하루 중 분, 0~1439). */
+  dndStartMin: number;
+  /** 방해 금지 시간: 종료 (하루 중 분, 0~1439). */
+  dndEndMin: number;
+  /** "지금부터 N시간" 수동 방해 금지 만료 시각(ms). */
+  dndManualUntil?: number;
   /** Built-in color preset (CSS-variable overrides in styles.css). */
   themePreset: ThemePresetId;
   /** 테마 업로드: metadata only — CSS text lives in userData/themes/<id>.css. */
@@ -74,6 +84,10 @@ export const DEFAULTS: Settings = {
   awayMinutes: 10,
   mobileNotice: true,
   lockTimeoutMin: 0,
+  dndEnabled: false,
+  dndDays: [],
+  dndStartMin: 1320, // 22:00
+  dndEndMin: 480, // 08:00 (overnight)
   themePreset: "default",
   customThemes: [],
   activeThemeId: "",

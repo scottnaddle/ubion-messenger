@@ -1,6 +1,9 @@
 import net from "node:net";
 import { EventEmitter } from "node:events";
 import { parseBotStatus, type ParsedBotStatus } from "../../src/lib/bot-status";
+import { parseStatusMessage, presenceStanza } from "./status-message";
+
+export { presenceStanza } from "./status-message";
 
 export type XmppOptions = {
   host: string;
@@ -14,16 +17,11 @@ export type XmppOptions = {
 export type XmppEvents = {
   state: (s: "connecting" | "online" | "offline", err?: string) => void;
   body: (obj: Record<string, any>) => void;
-  presence: (p: { local: string; resource: string; type?: string; status?: string; show?: string }) => void;
+  presence: (p: { local: string; resource: string; type?: string; status?: string; show?: string; statusText?: string | null }) => void;
   botStatus: (p: ParsedBotStatus) => void;
 };
 
-/** Presence stanza for the two states this client uses. Away also carries <show>away</show>. */
-export function presenceStanza(status: "online:on" | "away:on"): string {
-  return status === "away:on"
-    ? "<presence><show>away</show><status>away:on</status></presence>"
-    : "<presence><status>online:on</status></presence>";
-}
+/** Presence stanza builder is provided by status-message.ts and re-exported above. */
 
 export function xmlUnescape(s: string): string {
   return s
@@ -148,6 +146,11 @@ export class XmppClient extends EventEmitter {
   setStatus(status: "online:on" | "away:on") {
     this.status = status;
     if (this.online) this.write(presenceStanza(status));
+  }
+
+  /** Re-send presence carrying a free-text status message (keeps the current away/online code). */
+  setStatusMessage(text: string) {
+    if (this.online) this.write(presenceStanza(this.status as "online:on" | "away:on", text));
   }
 
   private write(s: string) {
@@ -339,7 +342,8 @@ export function handleOnlineStanza(s: string, ctx: { write: (x: string) => void;
     const local = bare.split("@")[0];
     const status = /<status>([\s\S]*?)<\/status>/.exec(s)?.[1];
     const show = /<show>([\s\S]*?)<\/show>/.exec(s)?.[1];
-    ctx.emit("presence", { local, resource, type: attr(head, "type"), status: status && xmlUnescape(status), show });
+    const unescapedStatus = status && xmlUnescape(status);
+    ctx.emit("presence", { local, resource, type: attr(head, "type"), status: unescapedStatus, show, statusText: parseStatusMessage(unescapedStatus, show) });
     return;
   }
   if (s.startsWith("<message")) {

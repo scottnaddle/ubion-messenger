@@ -506,6 +506,22 @@ const dict: Record<string, string> = {
   "3시간": "3 giờ",
   "내일 오전 9시": "9 giờ sáng mai",
   "사용자 지정": "Tùy chỉnh",
+  "방해 금지 시간": "Giờ không làm phiền",
+  "방해 금지 시간 사용": "Dùng giờ không làm phiền",
+  "알림과 소리를 표시하지 않습니다 (배지는 유지)": "Không hiện thông báo và âm thanh (vẫn giữ huy hiệu)",
+  "요일": "Ngày",
+  "시작 시간": "Thời gian bắt đầu",
+  "종료 시간": "Thời gian kết thúc",
+  "지금부터 방해 금지": "Không làm phiền từ bây giờ",
+  "~ {n}분 후까지": "Đến ~{n} phút sau",
+  "원하는 시간만큼 알림을 멈춥니다": "Tạm dừng thông báo trong khoảng thời gian đã chọn",
+  "방해 금지 해제": "Tắt không làm phiền",
+  "지금부터 {n}시간": "{n} giờ từ bây giờ",
+  "상태 메시지": "Trạng thái",
+  "UBION Messenger에서 표시할 상태 메시지입니다 (실험 기능)": "Trạng thái hiển thị trong UBION Messenger (thử nghiệm)",
+  "상태 메시지를 입력하세요": "Nhập trạng thái",
+  "상태 메시지가 저장되었습니다": "Đã lưu trạng thái",
+  "상태 메시지를 저장하지 못했습니다: {error}": "Không thể lưu trạng thái: {error}",
 };
 
 export default dict;

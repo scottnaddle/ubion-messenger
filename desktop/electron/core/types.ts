@@ -131,7 +131,7 @@ export type MessengerEventMap = {
   confirm: ReadReceipt;
   /** Authoritative read counts from REST for the open room (sync fallback). */
   receipts: { roomKey: string; updates: Array<{ messageId: number; needConfirmCount: number; confirmUsers: number[] }> };
-  presence: { userId: number; presence: Presence };
+  presence: { userId: number; presence: Presence; statusMessage?: string };
   botStatus: BotStatusUpdate;
   connection: { state: ConnState; error?: string };
   /** Main-process only (never forwarded to the renderer): Zoom access token from an XMPP "zoom" stanza. */

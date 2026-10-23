@@ -45,6 +45,7 @@ export function App() {
   const [conn, setConn] = useState<ConnState>("offline");
   const [netOnline, setNetOnline] = useState(navigator.onLine);
   const [presence, setPresence] = useState<Record<number, Presence>>({});
+  const [statusMessages, setStatusMessages] = useState<Record<number, string>>({});
   const [botStatuses, setBotStatuses] = useState<BotStatusMap>({});
   const [view, setView] = useState<NavView | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
@@ -160,7 +161,15 @@ export function App() {
           if (key) localStorage.setItem(key, "normal");
         } else if (type === "rooms") setRooms(payload);
         else if (type === "connection") setConn(payload.state);
-        else if (type === "presence") setPresence((p) => ({ ...p, [payload.userId]: payload.presence }));
+        else if (type === "presence") {
+          setPresence((p) => ({ ...p, [payload.userId]: payload.presence }));
+          setStatusMessages((m) => {
+            const next = { ...m };
+            if (payload.statusMessage) next[payload.userId] = payload.statusMessage;
+            else delete next[payload.userId];
+            return next;
+          });
+        }
         else if (type === "botStatus") setBotStatuses((m) => applyBotStatus(m, payload, Date.now()));
         else if (type === "message" && !payload.attachUpdate) {
           setBotStatuses((m) => clearBotStatusForMessage(m, payload.roomKey, Number(payload.sendUserSeq)));
@@ -203,6 +212,9 @@ export function App() {
   useEffect(() => {
     if (user) api().call("org:presence").then(setPresence).catch(() => undefined);
   }, [user, conn]);
+  useEffect(() => {
+    if (user) api().status.presenceStatus().then(setStatusMessages).catch(() => undefined);
+  }, [user]);
 
   // bot status timeout: 60s after the last update
   useEffect(() => {
@@ -448,6 +460,7 @@ export function App() {
                   me={user}
                   focused={focused}
                   presence={activeRoom.peerUserId ? presence[activeRoom.peerUserId] : undefined}
+                  statusMessage={activeRoom.peerUserId ? statusMessages[activeRoom.peerUserId] : undefined}
                   botStatus={botStatuses[activeRoom.key]}
                   toast={toast}
                 />

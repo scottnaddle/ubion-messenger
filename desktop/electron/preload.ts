@@ -75,6 +75,21 @@ const api = {
     add: (input: import("./core/reminders").ReminderInput) => call<import("./core/reminders").Reminder>("reminder:add", input),
     remove: (id: string) => call<{ ok: true }>("reminder:remove", id),
   },
+  scheduled: {
+    list: () => call<import("./core/scheduled-send").ScheduledMessage[]>("schedule:list"),
+    add: (input: import("./core/scheduled-send").ScheduledInput) => call<import("./core/scheduled-send").ScheduledMessage>("schedule:add", input),
+    cancel: (id: string) => call<{ ok: true }>("schedule:cancel", id),
+    sendNow: (id: string) => call<{ ok: true }>("schedule:sendNow", id),
+  },
+  dnd: {
+    manual: (hours: number) => call<{ manualUntil: number }>("dnd:manual", hours),
+  },
+  status: {
+    caps: () => call<import("./core/status-message").StatusCaps>("status:caps"),
+    get: () => call<{ text: string | null }>("status:get"),
+    set: (text: string) => call<{ text: string | null }>("status:set", text),
+    presenceStatus: () => call<Record<number, string>>("status:presenceStatus"),
+  },
   openChatBot: (brandName?: string) => call<void>("app:openChatBot", brandName),
   onEvent: (cb: (e: { type: string; payload: any }) => void) => sub("core:event", cb),
   onOpenRoom: (cb: (key: string) => void) => sub("nav:openRoom", cb),
