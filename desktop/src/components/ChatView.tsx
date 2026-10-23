@@ -1,9 +1,14 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, media, type ChatMessage, type Presence, type Room, type SessionUser } from "../api";
+import { api, media, type ChatMessage, type PickedStagingResult, type Presence, type Room, type SessionUser } from "../api";
 import {
   filterMembers, findMentionTrigger, insertMention, parseMentionTokens,
   type MentionMember, type MentionTrigger,
 } from "../lib/mention";
+import {
+  addFilesWithReport, executeSendPlan, folderSkipMessage, formatSize, isImageFile,
+  mergeStaged, removeFile, sendPlan, splitDroppedFiles,
+  type AttachFileInput, type StagedFile,
+} from "../attach-tray";
 import { applyReadReceipt, dedupeByMessageId, mergeReceipts, upsertMessage } from "../../electron/core/messages";
 import {
   applyChatDelete, canDeleteMessage, CHAT_DELETE_CONFIRM, CHAT_DELETED_PLACEHOLDER, isDeletedMessage,
@@ -74,6 +79,49 @@ export function ChatView({
   const stickBottom = useRef(true);
   const prevHeight = useRef<number | null>(null);
   const lastReadSent = useRef<number>(0);
+  const [staged, setStaged] = useState<StagedFile[]>([]);
+  const stagedRef = useRef<StagedFile[]>([]);
+  const setStagedFiles = useCallback((next: StagedFile[]) => {
+    stagedRef.current = next;
+    setStaged(next);
+  }, []);
+  const revokePreviews = useCallback((files: readonly StagedFile[]) => {
+    for (const file of files) if (file.previewUrl) URL.revokeObjectURL(file.previewUrl);
+  }, []);
+  const makePreview = useCallback((file: StagedFile): StagedFile => {
+    if (file.previewUrl || !isImageFile(file)) return file;
+    try {
+      if (file.file instanceof Blob) return { ...file, previewUrl: URL.createObjectURL(file.file) };
+      if (file.previewData) {
+        const blob = new Blob([file.previewData as unknown as BlobPart], { type: file.type || "image/*" });
+        return { ...file, previewUrl: URL.createObjectURL(blob) };
+      }
+    } catch {
+      // Thumbnail is optional; keep the file chip usable.
+    }
+    return file;
+  }, []);
+  const stageFiles = useCallback((incoming: AttachFileInput[]) => {
+    if (!incoming.length) return;
+    const report = addFilesWithReport(stagedRef.current, incoming);
+    report.errors.forEach((e) => toast(e));
+    if (!report.added.length) return;
+    const prepared = new Map(report.added.map((f) => [f.id, makePreview(f)]));
+    setStagedFiles(report.files.map((f) => prepared.get(f.id) ?? f));
+  }, [makePreview, setStagedFiles, toast]);
+  const removeStaged = useCallback((file: StagedFile | string) => {
+    const before = stagedRef.current;
+    const next = removeFile(before, file);
+    const kept = new Set(next.map((f) => f.id));
+    revokePreviews(before.filter((f) => !kept.has(f.id)));
+    setStagedFiles(next);
+  }, [revokePreviews, setStagedFiles]);
+  const clearStaged = useCallback(() => {
+    revokePreviews(stagedRef.current);
+    setStagedFiles([]);
+  }, [revokePreviews, setStagedFiles]);
+
+  useEffect(() => () => revokePreviews(stagedRef.current), [revokePreviews]);
 
   // initial history
   useEffect(() => {
@@ -248,38 +296,99 @@ export function ChatView({
     }
   };
 
-  const uploadPaths = async (paths: string[]) => {
-    if (!paths.length) return;
-    setUploading((n) => n + paths.length);
+  const sendStagedFile = async (file: StagedFile): Promise<boolean> => {
     try {
-      await api().call("files:sendPaths", room.key, paths);
+      if (file.path) {
+        await api().call("files:sendPaths", room.key, [file.path]);
+      } else if (file.file instanceof Blob) {
+        await api().call("files:sendBuffer", room.key, file.name, await file.file.arrayBuffer(), file.type);
+      } else {
+        throw new Error("파일을 읽을 수 없습니다");
+      }
+      return true;
     } catch (e) {
       toast(`업로드 실패: ${(e as Error).message}`);
-    } finally {
-      setUploading((n) => Math.max(0, n - paths.length));
+      return false;
     }
   };
 
-  const uploadBlob = async (f: File) => {
-    setUploading((n) => n + 1);
-    try {
-      const name = f.name && f.name !== "image.png" ? f.name : `캡처_${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
-      await api().call("files:sendBuffer", room.key, name, await f.arrayBuffer(), f.type);
-    } catch (e) {
-      toast(`업로드 실패: ${(e as Error).message}`);
-    } finally {
-      setUploading((n) => Math.max(0, n - 1));
+  const runSend = async (text: string): Promise<boolean> => {
+    const before = stagedRef.current;
+    const plan = sendPlan(before, text);
+    if (!plan.length) return false;
+    const fileCount = plan.filter((step) => step.type === "file").length;
+    if (fileCount > 0) setUploading(fileCount);
+    const outcome = await executeSendPlan(
+      plan,
+      sendStagedFile,
+      sendText,
+      () => setUploading((n) => Math.max(0, n - 1)),
+    );
+    if (fileCount > 0) {
+      const succeeded = new Set<StagedFile>(outcome.succeeded);
+      const remaining = stagedRef.current.filter((file) => !succeeded.has(file));
+      revokePreviews(outcome.succeeded);
+      setStagedFiles(mergeStaged(remaining, outcome.failed));
     }
+    return outcome.failed.length > 0;
+  };
+
+  const sendQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const sendAll = (text: string): Promise<boolean> => {
+    const run = sendQueue.current.then(() => runSend(text));
+    sendQueue.current = run.catch(() => undefined);
+    return run;
+  };
+
+  const pickStaged = async () => {
+    try {
+      const picked = await api().call<PickedStagingResult>("files:pickForStaging");
+      picked.errors.forEach((e) => toast(e));
+      stageFiles(picked.files.map((p) => ({
+        name: p.name, size: p.size, lastModified: p.lastModified, type: p.type,
+        path: p.path, previewData: p.preview,
+      })));
+    } catch (e) {
+      toast(`파일을 선택하지 못했습니다: ${(e as Error).message}`);
+    }
+  };
+
+  const stagePasted = (files: File[]) => {
+    stageFiles(files.map((f) => ({
+      name: f.name && f.name !== "image.png" ? f.name : `캡처_${new Date().toISOString().replace(/[:.]/g, "-")}.png`,
+      size: f.size, lastModified: f.lastModified, type: f.type, file: f,
+    })));
   };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const files = [...e.dataTransfer.files];
-    const paths = files.map((f) => api().pathForFile(f)).filter(Boolean);
-    if (paths.length) void uploadPaths(paths);
-    else files.forEach((f) => void uploadBlob(f));
+    const items = [...(e.dataTransfer.items || [])].filter((item) => item.kind === "file");
+    const candidates = items.length
+      ? items.map((item) => {
+          const entry = item.webkitGetAsEntry?.();
+          const file = item.getAsFile();
+          return { name: entry?.name || file?.name || "폴더", isDirectory: !!entry?.isDirectory, file };
+        })
+      : [...e.dataTransfer.files].map((file) => ({ name: file.name, isDirectory: false, file }));
+    const { files, folders } = splitDroppedFiles(candidates);
+    const folderMessage = folderSkipMessage(folders.map((folder) => folder.name));
+    if (folderMessage) toast(folderMessage);
+    stageFiles(files.flatMap((entry) => {
+      if (!entry.file) return [];
+      const path = api().pathForFile(entry.file);
+      return [{
+        name: entry.file.name, size: entry.file.size, lastModified: entry.file.lastModified, type: entry.file.type,
+        path: path || undefined, file: entry.file,
+      }];
+    }));
   };
+
+  const escapeTray = useCallback(() => {
+    if (!stagedRef.current.length) return false;
+    clearStaged();
+    return true;
+  }, [clearStaged]);
 
   const canSend = room.kind !== "pubsub" && room.kind !== "unknown";
   const toggleRoomPush = async () => {
@@ -390,12 +499,45 @@ export function ChatView({
       </div>
       {uploading > 0 && <div className="upload-bar">파일 {uploading}개 업로드 중…</div>}
       {canSend ? (
-        <Composer
-          roomKey={room.key} meId={me.id} isGroup={isGroupRoom}
-          onSend={sendText}
-          onPick={async () => uploadPaths(await api().call<string[]>("files:pick"))}
-          onPasteFile={uploadBlob}
-        />
+        <>
+          {staged.length > 0 && (
+            <div
+              className="attach-tray"
+              onKeyDown={(e) => {
+                if (e.key !== "Escape") return;
+                if (escapeTray()) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
+            >
+              {staged.map((f) => (
+                <div className="attach-chip" key={f.id} tabIndex={0}>
+                  {f.previewUrl ? (
+                    <img className="attach-thumb" src={f.previewUrl} alt="" />
+                  ) : (
+                    <span className="attach-ic"><Icon name={isImageFile(f) ? "image" : "file"} size={16} /></span>
+                  )}
+                  <div className="attach-info">
+                    <span className="attach-name" title={f.name}>{f.name}</span>
+                    <span className="attach-size muted">{formatSize(f.size)}</span>
+                  </div>
+                  <button className="attach-remove" title="첨부 취소" onClick={() => removeStaged(f)}>
+                    <Icon name="close" size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <Composer
+            roomKey={room.key} meId={me.id} isGroup={isGroupRoom}
+            hasFiles={staged.length > 0}
+            onSend={sendAll}
+            onPick={() => void pickStaged()}
+            onPasteFiles={stagePasted}
+            onEscapeTray={escapeTray}
+          />
+        </>
       ) : (
         <div className="composer readonly muted">이 채널은 읽기 전용입니다</div>
       )}
@@ -558,10 +700,11 @@ function MessageRow({
 }
 
 function Composer({
-  roomKey, meId, isGroup, onSend, onPick, onPasteFile,
+  roomKey, meId, isGroup, hasFiles, onSend, onPick, onPasteFiles, onEscapeTray,
 }: {
-  roomKey: string; meId: number; isGroup: boolean;
-  onSend: (t: string) => void; onPick: () => void; onPasteFile: (f: File) => void;
+  roomKey: string; meId: number; isGroup: boolean; hasFiles: boolean;
+  onSend: (t: string) => Promise<boolean>; onPick: () => void; onPasteFiles: (files: File[]) => void;
+  onEscapeTray: () => boolean;
 }) {
   const [text, setText] = useState("");
   const [members, setMembers] = useState<MentionCandidate[]>([]);
@@ -569,6 +712,7 @@ function Composer({
   const [cursorEnd, setCursorEnd] = useState(0);
   const [active, setActive] = useState(0);
   const composing = useRef(false);
+  const sending = useRef(false);
   const ta = useRef<HTMLTextAreaElement>(null);
   const drafts = useRef<Record<string, string>>({});
 
@@ -625,11 +769,20 @@ function Composer({
   };
 
   const submit = () => {
-    const t = text.replace(/\s+$/, "");
-    if (!t.trim()) return;
-    setText("");
+    if (sending.current) return;
+    const original = text;
+    const t = original.replace(/\s+$/, "");
+    if (!t.trim() && !hasFiles) return;
+    sending.current = true;
     setTrigger(null);
-    onSend(t);
+    void (async () => {
+      try {
+        const failed = await onSend(t);
+        if (!failed) setText((current) => (current === original ? "" : current));
+      } finally {
+        sending.current = false;
+      }
+    })();
   };
 
   return (
@@ -696,6 +849,12 @@ function Composer({
               return;
             }
           }
+          if (!ime && e.key === "Escape") {
+            if (onEscapeTray()) {
+              e.preventDefault();
+              return;
+            }
+          }
           if (e.key !== "Enter") return;
           if (isSendEnter({ key: e.key, shiftKey: e.shiftKey, isComposing: native.isComposing, keyCode: native.keyCode, composingRef: composing.current })) {
             e.preventDefault();
@@ -708,11 +867,11 @@ function Composer({
           const files = [...e.clipboardData.files];
           if (files.length) {
             e.preventDefault();
-            files.forEach(onPasteFile);
+            onPasteFiles(files);
           }
         }}
       />
-      <button className="send-btn" disabled={!text.trim()} title="전송" onClick={submit}><Icon name="send" size={18} /></button>
+      <button className="send-btn" disabled={!text.trim() && !hasFiles} title="전송" onClick={submit}><Icon name="send" size={18} /></button>
     </div>
   );
 }

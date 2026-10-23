@@ -159,6 +159,16 @@ input, textarea, select { font: inherit; color: inherit; }
 .sk.r { align-self: flex-end; width: 34%; }
 @keyframes sh { to { background-position: -200% 0; } }
 
+.attach-tray { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 14px 0; border-top: 1px solid var(--line); }
+.attach-tray + .composer { border-top: 0; }
+.attach-chip { display: flex; align-items: center; gap: 8px; max-width: 280px; min-width: 140px; padding: 5px 6px 5px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg2); }
+.attach-thumb { width: 34px; height: 34px; border-radius: 7px; object-fit: cover; flex: none; background: var(--bg3); }
+.attach-ic { width: 34px; height: 34px; border-radius: 7px; display: grid; place-items: center; flex: none; color: var(--muted); background: var(--bg3); }
+.attach-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.attach-name { font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-size { font-size: .75em; }
+.attach-remove { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none; color: var(--muted); }
+.attach-remove:hover { background: var(--bg3); color: var(--danger); }
 .composer { position: relative; display: flex; align-items: flex-end; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--line); }
 .composer.readonly { justify-content: center; padding: 16px; font-size: .9em; }
 .composer textarea { flex: 1; resize: none; border: 1px solid var(--line); background: var(--bg2); border-radius: 12px; padding: 9px 12px; outline: none; max-height: 200px; line-height: 1.45; }

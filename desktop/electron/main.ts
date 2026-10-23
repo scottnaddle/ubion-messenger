@@ -35,6 +35,7 @@ import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { chatBotUrl, isChatBotUrl } from "./core/chatbot";
 import { isMentioningMe } from "../src/lib/mention";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
+import { guessMime } from "./core/mime";
 import {
   accountKey, isWebLoginNavAllowed, isWebLoginSuccessUrl, markWebAccount, planLogin, unmarkWebAccount,
   webLoginUrl, WEB_LOGIN_MESSAGE,
@@ -746,6 +747,38 @@ function registerIpc() {
     const r = await dialog.showOpenDialog(win!, { properties: ["openFile", "multiSelections"] });
     return r.canceled ? [] : r.filePaths;
   });
+  /** Pick files for the renderer's staging tray (metadata + small image previews); sending still uses paths. */
+  handle("files:pickForStaging", async () => {
+    const r = await dialog.showOpenDialog(win!, { properties: ["openFile", "multiSelections"] });
+    if (r.canceled) return { files: [], errors: [] };
+    const files: Array<{ path: string; name: string; size: number; lastModified: number; type: string; preview?: Buffer }> = [];
+    const errors: string[] = [];
+    for (const p of r.filePaths) {
+      const name = path.basename(p);
+      try {
+        const st = fs.statSync(p);
+        if (!st.isFile()) {
+          errors.push(`${name}: 폴더는 첨부할 수 없습니다`);
+          continue;
+        }
+        const type = guessMime(p);
+        const file = { path: p, name, size: st.size, lastModified: Math.round(st.mtimeMs), type };
+        // Read only (small) images so the renderer can make an object URL thumbnail. Never for sending.
+        if (type.startsWith("image/") && st.size <= 12 * 1024 * 1024) {
+          try {
+            files.push({ ...file, preview: fs.readFileSync(p) });
+          } catch {
+            files.push(file);
+          }
+        } else {
+          files.push(file);
+        }
+      } catch (e) {
+        errors.push(`${name}: ${(e as Error).message}`);
+      }
+    }
+    return { files, errors };
+  });
   handle("files:download", async (cryptId: string, messageId: number, name: string, open?: boolean) => {
     const { data } = await core.client.fetchBinary(core.client.fileUrlPath(cryptId, messageId));
     let target: string;
@@ -856,15 +889,6 @@ function uniquePath(p: string) {
     const c = path.join(dir, `${name} (${i})${ext}`);
     if (!fs.existsSync(c)) return c;
   }
-}
-
-function guessMime(p: string) {
-  const ext = path.extname(p).toLowerCase().slice(1);
-  const m: Record<string, string> = {
-    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
-    pdf: "application/pdf", txt: "text/plain", zip: "application/zip",
-  };
-  return m[ext] || "application/octet-stream";
 }
 
 // ---------- media protocol: authenticated thumbnails/avatars/images ----------

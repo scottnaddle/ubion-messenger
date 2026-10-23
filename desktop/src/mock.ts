@@ -44,6 +44,8 @@ export function installMockIfNeeded() {
     "settings:get": () => ({ ...mockSettings }),
     "settings:set": (patch: any) => Object.assign(mockSettings, patch),
     "settings:pickDownloadDir": () => "/Users/hong/Documents/UBION 받은파일",
+    "files:pick": () => [],
+    "files:pickForStaging": () => ({ files: [], errors: [] }),
     "files:save": (_c: string, _m: number, name: string, mode: string) => {
       const n = String(name).split(/[\\/]/).pop();
       if (mode === "saveAs" || mockSettings.askSaveLocation) return `/Users/hong/Desktop/${n}`;

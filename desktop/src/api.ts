@@ -6,6 +6,18 @@ import type {
 } from "../electron/core/portal";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState };
 
+/** Metadata returned by the pick-only IPC; the file is uploaded by path when the tray is sent. */
+export type PickedStagingFile = {
+  path: string; name: string; size: number; lastModified: number; type: string;
+  /** Image bytes (small files only) for an object-URL thumbnail. */
+  preview?: Uint8Array;
+};
+
+export type PickedStagingResult = {
+  files: PickedStagingFile[];
+  errors: string[];
+};
+
 export type Settings = {
   serverUrl: string; username: string; rememberMe: boolean; autoLogin: boolean;
   theme: "system" | "light" | "dark"; notifications: boolean; notificationPreview: boolean;
