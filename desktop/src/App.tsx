@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, type ConnState, type LockStatus, type Presence, type Room, type SessionUser, type Settings } from "./api";
+import { api, type ConnState, type LockStatus, type Person, type Presence, type Room, type SessionUser, type Settings } from "./api";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
@@ -23,6 +23,10 @@ import { navForDigit, type NavView } from "./nav";
 import {
   applyBotStatus, BOT_STATUS_TTL_MS, clearBotStatusForMessage, expireBotStatuses, type BotStatusMap,
 } from "./lib/bot-status";
+import { isTypingTarget, matchShortcut } from "./lib/shortcuts";
+import type { PaletteItem } from "./lib/palette";
+import { CommandPalette } from "./components/CommandPalette";
+import { ShortcutsHelp } from "./components/ShortcutsHelp";
 
 export type ToastAction = { label: string; run: () => void };
 export type Toast = { id: number; text: string; kind?: "error" | "info"; action?: ToastAction };
@@ -44,6 +48,9 @@ export function App() {
   const [view, setView] = useState<NavView | "approval">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [globalSearch, setGlobalSearch] = useState<{ keyword: string } | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [orgUsers, setOrgUsers] = useState<Person[]>([]);
   const [lockStatus, setLockStatus] = useState<LockStatus | null>(null);
   const [focused, setFocused] = useState(document.hasFocus());
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -225,39 +232,93 @@ export function App() {
     api().call("rooms:setActive", activeKey).catch(() => undefined);
   }, [activeKey]);
 
-  // keyboard shortcuts
+  // keyboard shortcuts (see src/lib/shortcuts.ts for the keymap)
   useEffect(() => {
+    const stepRoom = (dir: number) => {
+      const idx = rooms.findIndex((r) => r.key === activeRef.current);
+      const next = rooms[Math.max(0, Math.min(rooms.length - 1, idx + dir))];
+      if (next) setActiveKey(next.key);
+    };
+    const nextUnread = () => {
+      if (!rooms.length) return;
+      const idx = rooms.findIndex((r) => r.key === activeRef.current);
+      const start = idx < 0 ? 0 : idx + 1;
+      for (let i = 0; i < rooms.length; i++) {
+        const r = rooms[(start + i) % rooms.length];
+        if (r.unread > 0) return setActiveKey(r.key);
+      }
+    };
     const h = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key === ",") {
-        e.preventDefault();
-        setShowSettings(true);
-      } else if (mod && e.shiftKey && e.key.toLowerCase() === "f") {
-        e.preventDefault();
-        setGlobalSearch({ keyword: "" });
-      } else if (mod && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setView("chats");
-        document.getElementById("room-filter")?.focus();
-      } else if (mod && e.key.toLowerCase() === "n") {
-        e.preventDefault();
-        setView("people");
-      } else if (mod && /^[1-6]$/.test(e.key)) {
-        const v = navForDigit(e.key);
-        if (v) {
-          e.preventDefault();
-          setView(v);
+      const action = matchShortcut(e);
+      if (!action) return;
+      // The palette toggle (⌘/Ctrl+K) works even while typing; everything else
+      // is ignored inside inputs/textarea/select/contenteditable.
+      if (action !== "palette" && isTypingTarget(e.target)) return;
+      e.preventDefault();
+      switch (action) {
+        case "palette": setPaletteOpen((v) => !v); break;
+        case "settings": setShowSettings(true); break;
+        case "globalSearch": setGlobalSearch({ keyword: "" }); break;
+        case "roomSearch": setView("chats"); document.getElementById("room-filter")?.focus(); break;
+        case "people": setView("people"); break;
+        case "nextUnread": nextUnread(); break;
+        case "prevRoom": stepRoom(-1); break;
+        case "nextRoom": stepRoom(1); break;
+        case "shortcutsHelp": setShowShortcuts((v) => !v); break;
+        default: {
+          const v = navForDigit(action.slice(4));
+          if (v) setView(v);
         }
-      } else if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-        e.preventDefault();
-        const idx = rooms.findIndex((r) => r.key === activeRef.current);
-        const next = rooms[Math.max(0, Math.min(rooms.length - 1, idx + (e.key === "ArrowDown" ? 1 : -1)))];
-        if (next) setActiveKey(next.key);
       }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [rooms]);
+
+  // command palette people: fetch the org once, lazily, the first time it opens
+  useEffect(() => {
+    if (!paletteOpen || orgUsers.length) return;
+    api().call<Person[]>("org:users").then(setOrgUsers).catch(() => setOrgUsers([]));
+  }, [paletteOpen, orgUsers.length]);
+
+  const paletteItems: PaletteItem[] = [
+    { id: "view:chats", kind: "screen", label: t("메시지"), icon: "chat", view: "chats" },
+    { id: "view:people", kind: "screen", label: t("조직도"), icon: "people", view: "people" },
+    { id: "view:mail", kind: "screen", label: t("메일"), icon: "mail", view: "mail" },
+    { id: "view:approval", kind: "screen", label: t("전자결재"), icon: "approval", view: "approval" },
+    { id: "view:flex", kind: "screen", label: t("플렉스"), icon: "flex", view: "flex" },
+    { id: "view:home", kind: "screen", label: t("홈"), icon: "home", view: "home" },
+    { id: "view:menu", kind: "screen", label: t("앱"), icon: "grid", view: "menu" },
+    { id: "action:settings", kind: "action", label: t("설정"), icon: "gear", keywords: "settings 단축키" },
+    { id: "action:globalSearch", kind: "action", label: t("전체 대화 검색"), icon: "search", keywords: "global search" },
+    ...rooms.map((r) => ({
+      id: `room:${r.key}`, kind: "room" as const, label: r.name, sublabel: r.preview || undefined,
+      roomKey: r.key, icon: "chat", unread: r.unread,
+    })),
+    ...orgUsers
+      .filter((u) => u.userId !== user?.id)
+      .map((u) => ({
+        id: `person:${u.userId}`, kind: "person" as const, label: u.name, sublabel: u.position || undefined,
+        userId: u.userId, icon: "people",
+      })),
+  ];
+
+  const pickPalette = (item: PaletteItem) => {
+    if (item.kind === "room" && item.roomKey) {
+      setView("chats");
+      setActiveKey(item.roomKey);
+    } else if (item.kind === "person" && item.userId != null) {
+      api().call<{ key: string }>("rooms:openDirect", item.userId)
+        .then((room) => { setView("chats"); setActiveKey(room.key); })
+        .catch((e) => toast(e.message));
+    } else if (item.id === "action:settings") {
+      setShowSettings(true);
+    } else if (item.id === "action:globalSearch") {
+      setGlobalSearch({ keyword: "" });
+    } else if (item.view) {
+      setView(item.view as NavView | "approval");
+    }
+  };
 
   const activeRoom = useMemo(() => rooms.find((r) => r.key === activeKey) || null, [rooms, activeKey]);
   const totalUnread = rooms.reduce((n, r) => n + r.unread, 0);
@@ -393,7 +454,7 @@ export function App() {
                   <div className="logo-mark big">U</div>
                   <h2>UBION Messenger</h2>
                   <p>{t("왼쪽에서 대화를 선택하거나 조직도에서 동료를 찾아 대화를 시작하세요.")}</p>
-                  <p className="muted small">{t("⌘/Ctrl+K 대화 검색 · ⌘/Ctrl+N 조직도 · ⌘/Ctrl+1..6 탭 이동 · Alt+↑↓ 대화 이동")}</p>
+                  <p className="muted small">{t("⌘/Ctrl+K 명령 팔레트 · ⌘/Ctrl+Shift+F 전체 검색 · ⌘/Ctrl+/ 단축키")}</p>
                 </div>
               )}
             </>
@@ -429,6 +490,10 @@ export function App() {
           onClose={() => setGlobalSearch(null)}
         />
       )}
+      {paletteOpen && user && (
+        <CommandPalette items={paletteItems} onPick={pickPalette} onClose={() => setPaletteOpen(false)} />
+      )}
+      {showShortcuts && <ShortcutsHelp onClose={() => setShowShortcuts(false)} />}
       <Toasts toasts={toasts} />
       {lockScreen}
     </div>
