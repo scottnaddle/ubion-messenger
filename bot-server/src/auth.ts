@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "crypto";
-export type Scope = "events:read" | "messages:send" | "rooms:read";
+export type Scope = "events:read" | "messages:send" | "rooms:read" | "files:read";
 export type TokenRecord = { id: string; sha256: string; scopes: Scope[]; rooms?: string[] };
 export const hashToken = (t: string) => createHash("sha256").update(t, "utf8").digest("hex");
 export class TokenStore {
@@ -21,4 +21,5 @@ export class Allowlist {
   private set: Set<string>;
   constructor(rooms: string[]) { this.set = new Set(rooms); }
   allows(room: string, tok?: TokenRecord) { return this.set.has(room) && (!tok?.rooms || tok.rooms.includes(room)); }
+  rooms(): string[] { return [...this.set]; }
 }

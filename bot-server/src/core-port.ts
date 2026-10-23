@@ -1,6 +1,8 @@
 import { MessengerCore } from "../../desktop/electron/core/messenger";
 import { HttpError } from "../../desktop/electron/core/daou-client";
+import type { AttachModel, RoomKind } from "../../desktop/electron/core/types";
 import type { BotRoom, DaouPort, InboundMessage } from "./types";
+import { mimeFor } from "./mime";
 import { mask, ReloginPolicy } from "./session";
 
 const SECRETISH = /(pass(word)?|pwd|token|cookie|session|sso|auth|key|secret|otp|ticket)=([^&\s"';]+)/gi;
@@ -62,12 +64,36 @@ export class CorePort implements DaouPort {
   async sendFile(room_id: string, file: { name: string; data: Buffer; mime?: string }) { const r: any = await this.core.sendFile(room_id, file); return { message_id: r?.messageId }; }
   async deleteMessages(_room_id: string, ids: number[]) { await this.core.client.deleteChatMessages(ids); }
   async markRead(room_id: string, message_id: number) { try { await this.core.markRead(room_id, message_id); } catch (e) { this.log(`markRead failed ${room_id}: ${describeError(e)}`); } }
+  private roomSeq(room_id: string): { kind: RoomKind; seq: number } {
+    const i = room_id.indexOf(":");
+    return { kind: (i < 0 ? "unknown" : room_id.slice(0, i)) as RoomKind, seq: i < 0 ? 0 : Number(room_id.slice(i + 1)) };
+  }
+  async getAttachments(room_id: string, message_id: number): Promise<Array<{ name: string; size?: number; mime?: string; file_id: string; image?: boolean }>> {
+    const { kind, seq } = this.roomSeq(room_id);
+    const pick = (msgs: Array<{ messageId?: number }>) => msgs.find((m) => m.messageId === message_id);
+    let msg: { messageId?: number; attach?: AttachModel } | undefined = pick(await this.core.client.fetchMessages(kind, seq, 40)) as any;
+    if (!msg) msg = pick(await this.core.client.fetchMessages(kind, seq, 20, message_id + 1)) as any;
+    const a = msg?.attach;
+    if (!a) return [];
+    const name = a.name || "file";
+    const ext = a.extention ? `.${String(a.extention).replace(/^\./, "")}` : "";
+    return [{ name, size: a.size, mime: mimeFor(/\.[a-z0-9]{1,8}$/i.test(name) ? name : `${name}${ext}`), file_id: a.cryptId, image: !!a.imageFile }];
+  }
+  async downloadAttachment(room_id: string, message_id: number, index: number): Promise<{ data: Buffer; contentType: string; name: string }> {
+    const atts = await this.getAttachments(room_id, message_id);
+    const att = atts[index];
+    if (!att) throw new Error("attachment not found");
+    const res = await this.core.client.fetchBinary(this.core.client.fileUrlPath(att.file_id, message_id));
+    const guessed = att.mime || mimeFor(att.name);
+    const contentType = !res.contentType || /^application\/octet-stream\b/i.test(res.contentType) ? guessed : res.contentType;
+    return { data: res.data, contentType, name: att.name };
+  }
   onMessage(cb: (m: InboundMessage) => void) {
     return this.core.on("message", (m) => (m as any).attachUpdate ? undefined : cb({
       room_id: m.roomKey, message_id: m.messageId ?? 0, sender: { id: String(m.sendUserSeq ?? ""), name: m.sendUserName }, text: m.message ?? "",
       mentions: [...(m.message ?? "").matchAll(/@\[?([^\s\]]+)/g)].map((x) => x[1]),
-      attachments: m.attach ? [{ name: (m.attach as any).name ?? "file", size: (m.attach as any).size }] : [], reply_to: null,
-      ts: m.createdAt ?? new Date().toISOString(), is_mine: m.isMine,
+      attachments: m.attach ? [{ name: m.attach.name ?? "file", size: m.attach.size, type: mimeFor(m.attach.name ?? "file"), file_id: m.attach.cryptId, image: !!m.attach.imageFile }] : [],
+      reply_to: null, ts: m.createdAt ?? new Date().toISOString(), is_mine: m.isMine, messageType: m.messageType,
     }));
   }
   onRoomJoined(cb: (r: BotRoom) => void) {

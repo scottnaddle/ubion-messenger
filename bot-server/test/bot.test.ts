@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
+import path from "path";
 import WebSocket from "ws";
 import { Allowlist, hashToken, TokenStore } from "../src/auth";
 import { RateLimiter } from "../src/ratelimit";
@@ -8,6 +10,7 @@ import { ReloginPolicy, mask } from "../src/session";
 import { BotServer } from "../src/server";
 import { NotConfiguredPort, daouConfigured } from "../src/not-configured-port";
 import type { BotRoom, DaouPort, InboundMessage } from "../src/types";
+import { extractText } from "../src/extract";
 
 class MockDaou implements DaouPort {
   sends: Array<{ room_id: string; text: string }> = []; failNext = false; delay = 0;
@@ -21,16 +24,33 @@ class MockDaou implements DaouPort {
   async deleteMessages(room_id: string, ids: number[]) { this.deletes.push({ room_id, ids }); }
   onMessage(cb: (m: InboundMessage) => void) { this.mcb.push(cb); return () => {}; }
   onRoomJoined(cb: (r: BotRoom) => void) { this.rcb.push(cb); return () => {}; }
+  attachments = new Map<number, Array<{ name: string; size?: number; mime?: string; file_id: string; image?: boolean }>>();
+  binary = new Map<string, { data: Buffer; contentType?: string }>();
+  attachmentLookups = 0;
+  emptyLookups = 0;
+  async getAttachments(_room_id: string, message_id: number) {
+    this.attachmentLookups++;
+    if (this.emptyLookups > 0) { this.emptyLookups--; return []; }
+    return this.attachments.get(message_id) ?? [];
+  }
+  async downloadAttachment(_room_id: string, message_id: number, index: number) {
+    const a = (this.attachments.get(message_id) ?? [])[index];
+    if (!a) throw new Error("not found");
+    const b = this.binary.get(a.file_id);
+    if (!b) throw new Error("not found");
+    return { data: b.data, contentType: b.contentType || a.mime || "application/octet-stream", name: a.name };
+  }
   msg(room_id: string, text: string, extra: Partial<InboundMessage> = {}) { this.mcb.forEach((f) => f({ room_id, message_id: 1, sender: { id: "5", name: "kim" }, text, mentions: [], attachments: [], reply_to: null, ts: "t", is_mine: false, ...extra })); }
   join(r: BotRoom) { this.rcb.forEach((f) => f(r)); }
 }
-const FULL = "tok-full", RO = "tok-ro";
+const FULL = "tok-full", RO = "tok-ro", ROOMS = "tok-rooms";
 let srv: BotServer, base: string, wsBase: string, daou: MockDaou;
 async function setup(o: Partial<ConstructorParameters<typeof BotServer>[0]> = {}) {
   daou = new MockDaou();
   srv = new BotServer({ port: daou, allowlist: new Allowlist(["room:1", "room:3"]), tokens: new TokenStore([
     { id: "hermes", sha256: hashToken(FULL), scopes: ["events:read", "messages:send", "rooms:read"] },
-    { id: "ro", sha256: hashToken(RO), scopes: ["events:read"] }]), ...o });
+    { id: "ro", sha256: hashToken(RO), scopes: ["events:read"] },
+    { id: "rooms", sha256: hashToken(ROOMS), scopes: ["rooms:read"] }]), ...o });
   const p = await srv.listen(0); base = `http://127.0.0.1:${p}`; wsBase = `ws://127.0.0.1:${p}`;
 }
 afterEach(async () => { await srv?.close(); });
@@ -268,5 +288,95 @@ describe("send-file", () => {
     expect((await postFile(fileForm("room:1", { name: "a.txt", body: "x" }))).status).toBe(200);
     const r = await postFile(fileForm("room:1", { name: "b.txt", body: "y" }));
     expect(r.status).toBe(429); expect((await r.json()).error.code).toBe("rate_limited"); expect(r.headers.get("retry-after")).toBeTruthy();
+  });
+});
+
+const fileReq = (p: string, t = FULL) => fetch(`${base}${p}`, { headers: { authorization: `Bearer ${t}` } });
+describe("inbound attachments and downloads", () => {
+  it("enriches inbound file messages with BotAttachment metadata", async () => {
+    await setup({ attachRetryMs: [0] });
+    daou.attachments.set(1, [{ name: "보고서.pdf", size: 10, mime: "application/pdf", file_id: "crypt-1" }]);
+    const c = await connect(FULL);
+    daou.msg("room:1", "보고서.pdf", { messageType: "SENDFILE" }); await tick();
+    const ev = c.got.find((e) => e.type === "message.created" && e.text === "보고서.pdf");
+    expect(ev.message_id).toBe(1);
+    expect(ev.attachments).toEqual([{ index: 0, name: "보고서.pdf", size: 10, mime: "application/pdf", file_id: "crypt-1", image: false, url: "/bot/files/1?index=0" }]);
+    c.ws.close();
+  });
+  it("retries the REST attachment lookup when the first result is empty", async () => {
+    await setup({ attachRetryMs: [0, 0] });
+    daou.attachments.set(1, [{ name: "a.txt", size: 1, mime: "text/plain", file_id: "crypt-a" }]);
+    daou.emptyLookups = 1;
+    const c = await connect(FULL);
+    daou.msg("room:1", "a.txt", { messageType: "SENDFILE" }); await tick();
+    const ev = c.got.find((e) => e.type === "message.created");
+    expect(ev.attachments).toHaveLength(1);
+    expect(daou.attachmentLookups).toBeGreaterThanOrEqual(2);
+    c.ws.close();
+  });
+  it("downloads exact bytes with content-type and UTF-8 filename", async () => {
+    await setup({ attachRetryMs: [0] });
+    const data = Buffer.from("download body", "utf8");
+    daou.attachments.set(1, [{ name: "다운로드확인.txt", size: data.length, mime: "text/plain", file_id: "f1" }]);
+    daou.binary.set("f1", { data, contentType: "text/plain" });
+    daou.msg("room:1", "다운로드확인.txt", { messageType: "SENDFILE" }); await tick();
+    const r = await fileReq("/bot/files/1");
+    expect(r.status).toBe(200);
+    expect(Buffer.from(await r.arrayBuffer())).toEqual(data);
+    expect(r.headers.get("content-type")).toBe("text/plain");
+    expect(r.headers.get("content-disposition")).toContain(`filename*=UTF-8''${encodeURIComponent("다운로드확인.txt")}`);
+    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "file_download", token_id: "hermes", room_id: "room:1", message_id: 1, file_name: "다운로드확인.txt", file_size: data.length, status: "ok" }));
+  });
+  it("requires a token and the files or events scope", async () => {
+    await setup();
+    expect((await fetch(`${base}/bot/files/1`)).status).toBe(401);
+    const r = await fileReq("/bot/files/1", ROOMS);
+    expect(r.status).toBe(403); expect((await r.json()).error.code).toBe("forbidden_scope");
+  });
+  it("rejects non-allowlisted rooms and missing attachments", async () => {
+    await setup();
+    const denied = await fileReq("/bot/files/1?room_id=room:2");
+    expect(denied.status).toBe(403); expect((await denied.json()).error.code).toBe("room_not_allowed");
+    const missing = await fileReq("/bot/files/999?room_id=room:1");
+    expect(missing.status).toBe(404); expect((await missing.json()).error.code).toBe("not_found");
+  });
+  it("rejects files larger than maxFileBytes", async () => {
+    await setup({ maxFileBytes: 4 });
+    daou.attachments.set(7, [{ name: "big.bin", size: 100, mime: "application/octet-stream", file_id: "big" }]);
+    daou.binary.set("big", { data: Buffer.alloc(100, 1) });
+    const r = await fileReq("/bot/files/7?room_id=room:1");
+    expect(r.status).toBe(413); expect((await r.json()).error.code).toBe("too_large");
+  });
+  it("extracts text from a txt attachment", async () => {
+    await setup();
+    const data = Buffer.from("hello\nworld", "utf8");
+    daou.attachments.set(1, [{ name: "a.txt", size: data.length, mime: "text/plain", file_id: "t1" }]);
+    daou.binary.set("t1", { data, contentType: "text/plain" });
+    const r = await fileReq("/bot/files/1/text?room_id=room:1");
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ message_id: 1, index: 0, name: "a.txt", mime: "text/plain", chars: 11, truncated: false, text: "hello\nworld" });
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "file_text", token_id: "hermes", room_id: "room:1", message_id: 1, file_name: "a.txt", status: "ok" }));
+  });
+});
+
+const hasPython = (() => { try { execFileSync("python3", ["--version"], { stdio: "ignore" }); return true; } catch { return false; } })();
+describe("extract", () => {
+  (hasPython ? it : it.skip)("extracts docx text built by python zipfile", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ubm-docx-"));
+    const file = path.join(dir, "a.docx");
+    try {
+      const script = [
+        "import sys, zipfile",
+        "xml = '<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Hello</w:t></w:r></w:p><w:p><w:r><w:t>World &amp; more</w:t></w:r></w:p></w:body></w:document>'",
+        "with zipfile.ZipFile(sys.argv[1], 'w') as z:",
+        "    z.writestr('word/document.xml', xml)",
+      ].join("\n");
+      execFileSync("python3", ["-c", script, file]);
+      const res = await extractText("a.docx", fs.readFileSync(file));
+      expect(res.text).toContain("Hello");
+      expect(res.text).toContain("World & more");
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

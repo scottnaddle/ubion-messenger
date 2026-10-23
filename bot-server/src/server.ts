@@ -8,14 +8,18 @@ import { Audit } from "./audit";
 import { EventLog } from "./events";
 import { RateLimiter } from "./ratelimit";
 import { MultipartError, multipartBoundary, parseMultipart, sanitizeFilename, type MultipartResult } from "./multipart";
-import type { BotEvent, BotRoom, DaouPort } from "./types";
+import type { BotAttachment, BotEvent, BotRoom, DaouPort, InboundMessage } from "./types";
+import { mimeFor } from "./mime";
+import { ExtractError, extractText } from "./extract";
 
 export type BotServerOpts = {
   port: DaouPort; tokens: TokenStore; allowlist: Allowlist; mentionOnly?: boolean;
   heartbeatMs?: number; sendRate?: { cap: number; perSec: number }; roomRate?: { cap: number; perSec: number };
   audit?: Audit; maxTextLen?: number; maxFileBytes?: number; now?: () => number;
-  statusThrottleMs?: number; placeholderTtlMs?: number; logger?: (m: string) => void;
+  statusThrottleMs?: number; placeholderTtlMs?: number; attachRetryMs?: number[]; logger?: (m: string) => void;
 };
+
+type AttachmentMeta = { name: string; size?: number; mime?: string; file_id: string; image?: boolean };
 type Err = { status: number; code: string; message: string };
 const E = (status: number, code: string, message: string): Err => ({ status, code, message });
 
@@ -31,6 +35,8 @@ export class BotServer {
   private roomNames = new Map<string, string>();
   private ph = new Map<string, { id: number; timer: NodeJS.Timeout }>();
   private lastStatus = new Map<string, number>();
+  private messageRooms = new Map<number, string>();
+  private inboundChain: Promise<void> = Promise.resolve();
   private hb: NodeJS.Timeout | null = null; private offs: Array<() => void> = [];
 
   constructor(private o: BotServerOpts) {
@@ -42,14 +48,18 @@ export class BotServer {
     this.http.on("upgrade", (req, sock, head) => this.upgrade(req, sock, head));
     this.offs.push(o.port.onMessage((m) => {
       if (m.is_mine || !o.allowlist.allows(m.room_id)) return;
-      if (m.message_id) void o.port.markRead?.(m.room_id, m.message_id).catch(() => {});
+      if (m.message_id) { void o.port.markRead?.(m.room_id, m.message_id).catch(() => {}); this.rememberMessage(m.message_id, m.room_id); }
       const me = o.port.botUserId();
       if (o.mentionOnly && !m.room_id.startsWith("buddy:") && !(me && m.mentions.includes(me)) && !m.text.includes(`@${o.port.botName()}`)) return;
-      this.publish({ type: "message.created", event_id: this.log.nextId(), room_id: m.room_id, room_name: this.roomNames.get(m.room_id) ?? "", sender: m.sender, text: m.text, mentions: m.mentions, attachments: m.attachments, reply_to: m.reply_to, ts: m.ts });
+      const event_id = this.log.nextId();
+      this.inboundChain = this.inboundChain.then(() => this.publishInbound(m, event_id)).catch(() => {});
     }));
     this.offs.push(o.port.onRoomJoined((r) => {
       this.roomNames.set(r.room_id, r.room_name);
-      if (o.allowlist.allows(r.room_id)) this.publish({ type: "room.joined", event_id: this.log.nextId(), room_id: r.room_id, room_name: r.room_name, ts: new Date().toISOString() });
+      if (o.allowlist.allows(r.room_id)) {
+        const event_id = this.log.nextId();
+        this.inboundChain = this.inboundChain.then(() => this.publish({ type: "room.joined", event_id, room_id: r.room_id, room_name: r.room_name, ts: new Date().toISOString() })).catch(() => {});
+      }
     }));
     this.hb = setInterval(() => this.broadcastRaw({ type: "heartbeat", ts: new Date().toISOString(), last_event_id: this.lastId() }), o.heartbeatMs ?? 25_000);
     this.hb.unref();
@@ -58,6 +68,58 @@ export class BotServer {
   listen(p: number, host = "127.0.0.1") { return new Promise<number>((r) => this.http.listen(p, host, () => r((this.http.address() as any).port))); }
   async close() { for (const p of this.ph.values()) clearTimeout(p.timer); this.ph.clear(); this.offs.forEach((f) => f()); if (this.hb) clearInterval(this.hb); for (const c of this.clients) c.ws.terminate(); this.wss.close(); await new Promise((r) => this.http.close(r)); }
   private lastId() { const l = this.log.after("0"); return l && l.length ? l[l.length - 1].event_id : "0"; }
+
+  private rememberMessage(message_id: number, room_id: string) {
+    if (!message_id) return;
+    if (this.messageRooms.has(message_id)) this.messageRooms.delete(message_id);
+    this.messageRooms.set(message_id, room_id);
+    while (this.messageRooms.size > 2000) {
+      const first = this.messageRooms.keys().next();
+      if (first.done) break;
+      this.messageRooms.delete(first.value);
+    }
+  }
+
+  private async publishInbound(m: InboundMessage, event_id: string) {
+    let source = Array.isArray(m.attachments) ? m.attachments : [];
+    const missingIds = source.length === 0 || source.some((a) => !a.file_id);
+    if (missingIds && looksLikeFile(m) && this.o.port.getAttachments) {
+      const fetched = await this.fetchAttachmentsWithRetry(m.room_id, m.message_id);
+      if (fetched.length) source = fetched.map((a) => ({ name: a.name, size: a.size, type: a.mime, file_id: a.file_id, image: a.image }));
+    }
+    const attachments: BotAttachment[] = source.map((a, index) => ({
+      index,
+      name: a.name || "file",
+      size: typeof a.size === "number" ? a.size : null,
+      mime: a.type && a.type.includes("/") ? a.type : mimeFor(a.name || "file"),
+      file_id: a.file_id ?? "",
+      image: !!a.image,
+      url: `/bot/files/${m.message_id}?index=${index}`,
+    }));
+    this.publish({ type: "message.created", event_id, room_id: m.room_id, room_name: this.roomNames.get(m.room_id) ?? "", message_id: m.message_id, sender: m.sender, text: m.text, mentions: m.mentions, attachments, reply_to: m.reply_to, ts: m.ts });
+  }
+
+  private async fetchAttachmentsWithRetry(room_id: string, message_id: number): Promise<AttachmentMeta[]> {
+    const port = this.o.port;
+    const get = port.getAttachments;
+    if (!get) return [];
+    const delays = this.o.attachRetryMs ?? [0, 500, 1000, 2000];
+    for (const raw of delays) {
+      const delay = Math.max(0, Number(raw) || 0);
+      if (delay) await new Promise((r) => setTimeout(r, delay));
+      try {
+        const found = await get.call(port, room_id, message_id);
+        if (found && found.length) return found;
+      } catch { /* retry */ }
+    }
+    return [];
+  }
+
+  private async lookupAttachments(room_id: string, message_id: number): Promise<AttachmentMeta[]> {
+    const get = this.o.port.getAttachments;
+    if (!get) return [];
+    try { return await get.call(this.o.port, room_id, message_id); } catch { return []; }
+  }
 
   private publish(ev: BotEvent) {
     this.log.push(ev);
@@ -94,6 +156,8 @@ export class BotServer {
     if (q.method === "GET" && path === "/bot/health") return this.json(s, 200, { ok: true, daou: this.o.port.healthy().state, ws_clients: this.clients.size, last_event_id: this.lastId() });
     const tok = this.o.tokens.verify(q.headers.authorization);
     if (!tok) return this.fail(s, E(401, "unauthorized", "missing or invalid bearer token"));
+    const fileMatch = q.method === "GET" ? /^\/bot\/files\/(\d+)(\/text)?$/.exec(path) : null;
+    if (fileMatch) return this.files(q, s, tok, Number(fileMatch[1]), !!fileMatch[2]);
     if (q.method === "GET" && path === "/bot/rooms") {
       if (!hasScope(tok, "rooms:read")) return this.fail(s, E(403, "forbidden_scope", "rooms:read required"));
       const rooms: BotRoom[] = (await this.o.port.listRooms()).filter((r) => { this.roomNames.set(r.room_id, r.room_name); return this.o.allowlist.allows(r.room_id, tok); });
@@ -117,6 +181,122 @@ export class BotServer {
       return this.json(s, r.status, r.body);
     }
     return this.fail(s, E(404, "not_found", "no such endpoint"));
+  }
+
+  private fileAudit(action: string, tok: TokenRecord, room_id: string | undefined, message_id: number, att: AttachmentMeta | undefined, status: string, code?: string) {
+    this.audit.log({
+      action, token_id: tok.id, ...(room_id ? { room_id } : {}), message_id,
+      ...(att?.name ? { file_name: att.name } : {}),
+      ...(att && typeof att.size === "number" ? { file_size: att.size } : {}),
+      status, ...(code ? { code } : {}),
+    });
+  }
+
+  private async files(q: http.IncomingMessage, s: http.ServerResponse, tok: TokenRecord, message_id: number, textMode: boolean) {
+    const action = textMode ? "file_text" : "file_download";
+    const url = new URL(q.url || "/", "http://x");
+    const queryRoom = url.searchParams.get("room_id") || undefined;
+    const rawIndex = url.searchParams.get("index");
+    let index = 0;
+    let badIndex = false;
+    if (rawIndex != null) {
+      if (!/^\d+$/.test(rawIndex)) badIndex = true;
+      else {
+        const n = Number(rawIndex);
+        if (!Number.isSafeInteger(n)) badIndex = true; else index = n;
+      }
+    }
+    if (!hasScope(tok, "files:read") && !hasScope(tok, "events:read")) {
+      this.fileAudit(action, tok, queryRoom ?? this.messageRooms.get(message_id), message_id, undefined, "denied", "forbidden_scope");
+      return this.fail(s, E(403, "forbidden_scope", "files:read or events:read required"));
+    }
+    if (badIndex) {
+      this.fileAudit(action, tok, queryRoom ?? this.messageRooms.get(message_id), message_id, undefined, "error", "not_found");
+      return this.fail(s, E(404, "not_found", "attachment not found"));
+    }
+
+    let room_id: string | undefined;
+    let atts: AttachmentMeta[] = [];
+    const cached = this.messageRooms.get(message_id);
+    if (queryRoom) {
+      room_id = queryRoom;
+      if (!this.o.allowlist.allows(room_id, tok)) {
+        this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
+        return this.fail(s, E(403, "room_not_allowed", "room is not allowlisted"));
+      }
+      atts = await this.lookupAttachments(room_id, message_id);
+    } else if (cached) {
+      room_id = cached;
+      if (!this.o.allowlist.allows(room_id, tok)) {
+        this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
+        return this.fail(s, E(403, "room_not_allowed", "room is not allowlisted"));
+      }
+      atts = await this.lookupAttachments(room_id, message_id);
+    } else {
+      for (const candidate of this.o.allowlist.rooms()) {
+        if (!this.o.allowlist.allows(candidate, tok)) continue;
+        const found = await this.lookupAttachments(candidate, message_id);
+        if (found.length) { room_id = candidate; atts = found; this.rememberMessage(message_id, candidate); break; }
+      }
+    }
+    if (!room_id || !atts.length) {
+      this.fileAudit(action, tok, room_id, message_id, undefined, "error", "not_found");
+      return this.fail(s, E(404, "not_found", "attachment not found"));
+    }
+    const att = atts[index];
+    if (!att) {
+      this.fileAudit(action, tok, room_id, message_id, undefined, "error", "not_found");
+      return this.fail(s, E(404, "not_found", "attachment not found"));
+    }
+    const max = this.o.maxFileBytes ?? 20 * 1024 * 1024;
+    if (typeof att.size === "number" && att.size > max) {
+      this.fileAudit(action, tok, room_id, message_id, att, "error", "too_large");
+      return this.fail(s, E(413, "too_large", "file exceeds maxFileBytes"));
+    }
+    const download = this.o.port.downloadAttachment;
+    if (!download) {
+      this.fileAudit(action, tok, room_id, message_id, att, "error", "not_found");
+      return this.fail(s, E(404, "not_found", "attachment not found"));
+    }
+    let file: { data: Buffer; contentType: string; name: string };
+    try { file = await download.call(this.o.port, room_id, message_id, index); }
+    catch {
+      this.fileAudit(action, tok, room_id, message_id, att, "error", "not_found");
+      return this.fail(s, E(404, "not_found", "attachment not found"));
+    }
+    if (file.data.length > max) {
+      this.fileAudit(action, tok, room_id, message_id, { ...att, size: file.data.length }, "error", "too_large");
+      return this.fail(s, E(413, "too_large", "file exceeds maxFileBytes"));
+    }
+    const name = file.name || att.name || "file";
+    const mime = file.contentType && !/^application\/octet-stream\b/i.test(file.contentType) ? file.contentType : att.mime || mimeFor(name);
+    if (!textMode) {
+      this.fileAudit(action, tok, room_id, message_id, { ...att, name }, "ok");
+      s.writeHead(200, {
+        "content-type": mime,
+        "content-length": String(file.data.length),
+        "content-disposition": contentDisposition(name),
+        "x-content-type-options": "nosniff",
+        "cache-control": "no-store",
+      });
+      s.end(file.data);
+      return;
+    }
+    let extracted: { text: string; mime: string };
+    try { extracted = await extractText(name, file.data); }
+    catch (e) {
+      if (e instanceof ExtractError) {
+        this.fileAudit(action, tok, room_id, message_id, { ...att, name }, "error", e.code);
+        return this.fail(s, E(e.status, e.code, e.message));
+      }
+      this.fileAudit(action, tok, room_id, message_id, { ...att, name }, "error", "extract_failed");
+      return this.fail(s, E(500, "internal", "internal error"));
+    }
+    const chars = extracted.text.length;
+    const truncated = chars > 200_000;
+    const text = truncated ? extracted.text.slice(0, 200_000) : extracted.text;
+    this.fileAudit(action, tok, room_id, message_id, { ...att, name }, "ok");
+    return this.json(s, 200, { message_id, index, name, mime: extracted.mime, chars, truncated, text });
   }
 
   async send(tok: TokenRecord, b: any): Promise<{ status: number; body: unknown }> {
@@ -275,4 +455,15 @@ export class BotServer {
 
 function readBody(q: http.IncomingMessage, max: number) {
   return new Promise<string>((res, rej) => { let n = 0; const ch: Buffer[] = []; q.on("data", (c: Buffer) => { n += c.length; if (n > max) { rej(new Error("too large")); q.destroy(); } else ch.push(c); }); q.on("end", () => res(Buffer.concat(ch).toString("utf8"))); q.on("error", rej); });
+}
+
+function looksLikeFile(m: InboundMessage): boolean {
+  if (/FILE|IMAGE/i.test(m.messageType ?? "")) return true;
+  return /^[^\n\/\\]{1,255}\.[A-Za-z0-9]{1,8}$/.test(m.text ?? "");
+}
+
+function contentDisposition(name: string): string {
+  const fallback = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_") || "file";
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }

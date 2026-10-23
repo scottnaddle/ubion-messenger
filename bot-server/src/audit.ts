@@ -1,5 +1,5 @@
 /** Metadata-only audit (never message text, tokens, or credentials). */
-export type AuditEntry = { ts: string; action: string; token_id?: string; room_id?: string; client_msg_id?: string; file_name?: string; file_size?: number; status: string; code?: string };
+export type AuditEntry = { ts: string; action: string; token_id?: string; room_id?: string; message_id?: number; client_msg_id?: string; file_name?: string; file_size?: number; status: string; code?: string };
 export class Audit {
   entries: AuditEntry[] = [];
   constructor(private sink: (line: string) => void = () => {}) {}
