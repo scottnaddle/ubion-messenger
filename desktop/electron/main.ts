@@ -29,6 +29,7 @@ import {
   FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY, parseFlexTodoTotal, flexProgressCountFromText,
 } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
+import { isMentioningMe } from "../src/lib/mention";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import {
   accountKey, isWebLoginNavAllowed, isWebLoginSuccessUrl, markWebAccount, planLogin, unmarkWebAccount,
@@ -493,11 +494,15 @@ function notifyNewPostSummary(p: MessengerEventMap["portalNewPostSummary"]) {
 
 // ---------- notifications ----------
 function maybeNotify(m: MessengerEventMap["message"]) {
-  if (m.isMine || !settings.notifications || !m.usePush) return;
+  if (m.isMine || !settings.notifications) return;
+  const room = core.getRooms().find((r) => r.key === m.roomKey);
+  const mentioned = !!room && room.kind === "room" && !room.isSelf &&
+    isMentioningMe(m.message || "", core.user?.name || "");
+  if (!m.usePush && !mentioned) return;
   const viewing = win?.isFocused() && core.activeRoomKey === m.roomKey;
   if (viewing || !Notification.isSupported()) return;
-  const room = core.getRooms().find((r) => r.key === m.roomKey);
-  const title = room && room.kind !== "buddy" ? `${room.name} · ${m.sendUserName}` : m.sendUserName || APP_NAME;
+  const base = room && room.kind !== "buddy" ? `${room.name} · ${m.sendUserName}` : m.sendUserName || APP_NAME;
+  const title = mentioned ? `[멘션] ${base}` : base;
   const body = settings.notificationPreview
     ? m.attach
       ? `📎 ${m.attach.name}`

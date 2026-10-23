@@ -12,5 +12,5 @@
     "declaration": true,
     "esModuleInterop": true
   },
-  "include": ["electron/**/*", "scripts/**/*", "electron.vite.config.ts"]
+  "include": ["electron/**/*", "scripts/**/*", "src/lib/mention.ts", "electron.vite.config.ts"]
 }

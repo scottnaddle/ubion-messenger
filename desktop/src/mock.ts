@@ -54,6 +54,15 @@ export function installMockIfNeeded() {
     "files:showInFolder": () => undefined,
     "auth:state": () => ({ user: new URLSearchParams(location.search).get("login") ? null : me, conn: "online" }),
     "rooms:list": () => rooms,
+    "rooms:members": (key: string) => key.startsWith("room:")
+      ? [
+        { userId: 1, name: "홍길동", image: "", position: "매니저", department: "개발팀" },
+        { userId: 2, name: "김하늘", image: "", position: "책임", department: "개발팀" },
+        { userId: 3, name: "이서준", image: "", position: "선임", department: "개발팀" },
+        { userId: 8, name: "유비온봇", image: "", position: "챗봇", department: "UBION" },
+        { userId: 9, name: "김 하늘", image: "", position: "디자이너", department: "디자인팀" },
+      ]
+      : [],
     "msg:history": (_k: string, before?: number) => (before ? [] : msgs),
     "org:presence": () => ({ 2: "online", 3: "away", 4: "online", 5: "offline", 6: "busy" }),
     "org:users": () => users,

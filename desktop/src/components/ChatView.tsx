@@ -1,5 +1,9 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, media, type ChatMessage, type Presence, type Room, type SessionUser } from "../api";
+import {
+  filterMembers, findMentionTrigger, insertMention, parseMentionTokens,
+  type MentionMember, type MentionTrigger,
+} from "../lib/mention";
 import { applyReadReceipt, dedupeByMessageId, mergeReceipts, upsertMessage } from "../../electron/core/messages";
 import {
   applyChatDelete, canDeleteMessage, CHAT_DELETE_CONFIRM, CHAT_DELETED_PLACEHOLDER, isDeletedMessage,
@@ -13,6 +17,36 @@ import type { Toast, ToastFn } from "../App";
 
 const PRES_LABEL: Record<Presence, string> = { online: "온라인", away: "자리 비움", busy: "다른 용무 중", offline: "오프라인" };
 
+type MentionCandidate = MentionMember & { image?: string };
+
+const memberCache = new Map<string, MentionCandidate[]>();
+const memberPending = new Map<string, Promise<MentionCandidate[]>>();
+
+/** Fetch room members once per room; both the composer and message rendering share this cache. */
+function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
+  const cached = memberCache.get(roomKey);
+  if (cached) return Promise.resolve(cached);
+  const pending = memberPending.get(roomKey);
+  if (pending) return pending;
+  const req = api()
+    .call<MentionCandidate[]>("rooms:members", roomKey)
+    .then((list) => {
+      const members = (Array.isArray(list) ? list : [])
+        .filter((m) => m && typeof m.name === "string" && m.name)
+        .map((m) => ({
+          userId: Number(m.userId), name: m.name,
+          position: m.position || "", department: m.department || "", image: m.image || "",
+        }));
+      memberCache.set(roomKey, members);
+      return members;
+    })
+    // don't cache failures, so a transient error doesn't disable mentions for the room until restart
+    .catch(() => [] as MentionCandidate[])
+    .finally(() => { memberPending.delete(roomKey); });
+  memberPending.set(roomKey, req);
+  return req;
+}
+
 export function ChatView({
   room, me, focused, presence, toast,
 }: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; toast: ToastFn }) {
@@ -25,6 +59,9 @@ export function ChatView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
+  const [roomMembers, setRoomMembers] = useState<MentionCandidate[]>([]);
+  const isGroupRoom = room.kind === "room" && !room.isSelf;
+  const memberNames = useMemo(() => roomMembers.map((m) => m.name), [roomMembers]);
   const listRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
   const prevHeight = useRef<number | null>(null);
@@ -48,6 +85,15 @@ export function ChatView({
       alive = false;
     };
   }, [room.key, toast]);
+
+  // group room members (mentions + popup), cached per room
+  useEffect(() => {
+    let alive = true;
+    setRoomMembers([]);
+    if (!isGroupRoom) return () => { alive = false; };
+    loadRoomMembers(room.key).then((list) => { if (alive) setRoomMembers(list); });
+    return () => { alive = false; };
+  }, [room.key, isGroupRoom]);
 
   // realtime
   useEffect(() => {
@@ -237,7 +283,7 @@ export function ChatView({
                   {newDay && <div className="day-sep"><span>{dayLabel(m.createdAt)}</span></div>}
                   <MessageRow
                     m={m} mine={mine} grouped={!!grouped} showTime={showTime} room={room} meId={me.id}
-                    isLastMine={m === lastMine}
+                    isLastMine={m === lastMine} memberNames={memberNames} myName={me.name}
                     onImage={() => setViewer(m)} onRetry={() => retry(m)} toast={toast}
                     onDelete={deletable && canDeleteMessage(m, me.id) ? () => requestDelete(m) : undefined}
                   />
@@ -251,7 +297,7 @@ export function ChatView({
       {uploading > 0 && <div className="upload-bar">파일 {uploading}개 업로드 중…</div>}
       {canSend ? (
         <Composer
-          roomKey={room.key}
+          roomKey={room.key} meId={me.id} isGroup={isGroupRoom}
           onSend={sendText}
           onPick={async () => uploadPaths(await api().call<string[]>("files:pick"))}
           onPasteFile={uploadBlob}
@@ -278,7 +324,7 @@ export function ChatView({
   );
 }
 
-function Linkified({ text }: { text: string }) {
+function Linkified({ text, memberNames = [], myName = "" }: { text: string; memberNames?: string[]; myName?: string }) {
   const parts = text.split(URL_RE);
   return (
     <>
@@ -286,7 +332,22 @@ function Linkified({ text }: { text: string }) {
         i % 2 ? (
           <a key={i} href={p} onClick={(e) => { e.preventDefault(); api().call("app:openExternal", p); }}>{p}</a>
         ) : (
-          <Fragment key={i}>{p}</Fragment>
+          <MentionedText key={i} text={p} memberNames={memberNames} myName={myName} />
+        )
+      )}
+    </>
+  );
+}
+
+function MentionedText({ text, memberNames, myName }: { text: string; memberNames: string[]; myName: string }) {
+  if (!memberNames.length) return <>{text}</>;
+  return (
+    <>
+      {parseMentionTokens(text, memberNames).map((seg, i) =>
+        seg.type === "mention" ? (
+          <span key={i} className={`mention${seg.name === myName ? " mention-me" : ""}`}>{seg.value}</span>
+        ) : (
+          <Fragment key={i}>{seg.value}</Fragment>
         )
       )}
     </>
@@ -307,9 +368,10 @@ function DeleteMenu({ x, y, onDelete, onClose }: { x: number; y: number; onDelet
 }
 
 function MessageRow({
-  m, mine, grouped, showTime, room, meId, isLastMine, onImage, onRetry, toast, onDelete,
+  m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
+  memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void;
 }) {
   const deleted = isDeletedMessage(m);
@@ -336,7 +398,9 @@ function MessageRow({
               canDelete={!!onDelete} onDelete={onDelete} />
           ) : (
             <div className="bubble-col">
-              <div className="bubble" onContextMenu={openMenu}><Linkified text={m.message} /></div>
+              <div className="bubble" onContextMenu={openMenu}>
+                <Linkified text={m.message} memberNames={memberNames} myName={myName} />
+              </div>
               {!m.pending && <LinkPreview text={m.message} />}
             </div>
           )}
@@ -359,17 +423,35 @@ function MessageRow({
 }
 
 function Composer({
-  roomKey, onSend, onPick, onPasteFile,
-}: { roomKey: string; onSend: (t: string) => void; onPick: () => void; onPasteFile: (f: File) => void }) {
+  roomKey, meId, isGroup, onSend, onPick, onPasteFile,
+}: {
+  roomKey: string; meId: number; isGroup: boolean;
+  onSend: (t: string) => void; onPick: () => void; onPasteFile: (f: File) => void;
+}) {
   const [text, setText] = useState("");
+  const [members, setMembers] = useState<MentionCandidate[]>([]);
+  const [trigger, setTrigger] = useState<MentionTrigger | null>(null);
+  const [cursorEnd, setCursorEnd] = useState(0);
+  const [active, setActive] = useState(0);
   const composing = useRef(false);
   const ta = useRef<HTMLTextAreaElement>(null);
   const drafts = useRef<Record<string, string>>({});
 
   useEffect(() => {
     setText(drafts.current[roomKey] || "");
+    setTrigger(null);
     ta.current?.focus();
   }, [roomKey]);
+
+  useEffect(() => {
+    let alive = true;
+    setMembers([]);
+    setTrigger(null);
+    if (!isGroup) return () => { alive = false; };
+    loadRoomMembers(roomKey).then((list) => { if (alive) setMembers(list); });
+    return () => { alive = false; };
+  }, [roomKey, isGroup]);
+
   useEffect(() => {
     drafts.current[roomKey] = text;
     const el = ta.current;
@@ -379,27 +461,107 @@ function Composer({
     }
   }, [text, roomKey]);
 
+  const suggestions = trigger && isGroup ? filterMembers(members, trigger.query, meId) : [];
+  const open = !!trigger && suggestions.length > 0;
+  const safeActive = suggestions.length ? Math.min(active, suggestions.length - 1) : 0;
+
+  const syncTrigger = (value: string, pos: number) => {
+    if (!isGroup) {
+      setTrigger(null);
+      return;
+    }
+    setTrigger(findMentionTrigger(value, pos));
+    setCursorEnd(pos);
+    setActive(0);
+  };
+
+  const pick = (member: MentionCandidate) => {
+    if (!trigger) return;
+    const current = ta.current?.value ?? text;
+    const next = insertMention(current, trigger, cursorEnd, member.name);
+    setText(next.text);
+    setTrigger(null);
+    requestAnimationFrame(() => {
+      const el = ta.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(next.cursor, next.cursor);
+    });
+  };
+
   const submit = () => {
     const t = text.replace(/\s+$/, "");
     if (!t.trim()) return;
     setText("");
+    setTrigger(null);
     onSend(t);
   };
 
   return (
     <div className="composer">
+      {open && (
+        <div className="mention-pop" role="listbox" aria-label="멘션할 멤버">
+          {suggestions.map((member, i) => (
+            <button
+              key={member.userId}
+              type="button"
+              role="option"
+              aria-selected={i === safeActive}
+              className={`mention-item${i === safeActive ? " on" : ""}`}
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(ev) => { ev.preventDefault(); pick(member); }}
+            >
+              <Avatar name={member.name} src={member.image} size={28} />
+              <span className="mention-name">{member.name}</span>
+              {member.position && <span className="mention-pos muted">{member.position}</span>}
+            </button>
+          ))}
+        </div>
+      )}
       <button className="icon-btn" title="파일 첨부" onClick={onPick}><Icon name="clip" /></button>
       <textarea
         ref={ta}
         rows={1}
         value={text}
         placeholder="메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)"
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          const value = e.target.value;
+          setText(value);
+          syncTrigger(value, e.target.selectionStart ?? value.length);
+        }}
+        onSelect={(e) => {
+          const el = e.currentTarget;
+          syncTrigger(el.value, el.selectionStart ?? el.value.length);
+        }}
+        onBlur={() => setTrigger(null)}
         onCompositionStart={() => (composing.current = true)}
         onCompositionEnd={() => (composing.current = false)}
         onKeyDown={(e) => {
-          if (e.key !== "Enter") return;
           const native = e.nativeEvent as KeyboardEvent;
+          const ime = !!native.isComposing || native.keyCode === 229 || composing.current;
+          if (!ime && open) {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActive((i) => (i + 1) % suggestions.length);
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((i) => (i - 1 + suggestions.length) % suggestions.length);
+              return;
+            }
+            if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+              e.preventDefault();
+              pick(suggestions[safeActive]);
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              setTrigger(null);
+              return;
+            }
+          }
+          if (e.key !== "Enter") return;
           if (isSendEnter({ key: e.key, shiftKey: e.shiftKey, isComposing: native.isComposing, keyCode: native.keyCode, composingRef: composing.current })) {
             e.preventDefault();
             submit();
@@ -419,7 +581,6 @@ function Composer({
     </div>
   );
 }
-
 
 function SearchPanel({ room, onClose }: { room: Room; onClose: () => void }) {
   const [q, setQ] = useState("");
