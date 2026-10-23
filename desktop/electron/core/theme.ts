@@ -96,19 +96,34 @@ export type SanitizeResult = { css: string; removed: string[] };
 /** Decode CSS escapes that spell identifiers/schemes (`\75 rl(`, `\@import`) so the filters below can't be dodged. */
 function decodeEscapes(css: string): string {
   const keep = /[A-Za-z0-9@:(/]/;
-  return css
-    .replace(/\\([0-9a-fA-F]{1,6})[ \t\n\r\f]?/g, (m, hex: string) => {
-      const ch = String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff) || 0xfffd);
-      return keep.test(ch) ? ch : m;
-    })
-    .replace(/\\([^0-9a-fA-F\r\n\f])/g, (m, ch: string) => (keep.test(ch) ? ch : m));
+  // One left-to-right pass so `\\75` stays an escaped backslash + "75". Backslash-newline is a line continuation
+  // inside CSS strings (`"http\<LF>s://…"` → "https://…"), so it is dropped.
+  return css.replace(/\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|(\r\n|[\r\n\f])|([\s\S]))/g, (m, hex?: string, nl?: string, ch?: string) => {
+    if (nl) return "";
+    const c = hex ? String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff) || 0xfffd) : ch!;
+    return keep.test(c) ? c : m;
+  });
 }
 
-const REMOTE_URL = /^(?:[a-z][a-z0-9+.-]*:|\/\/|\\\\)/i;
+const REMOTE_URL = /^(?:[a-z][a-z0-9+.-]*:|[\\/]{2})/i;
+/** Bare strings (image-set("…"), src("…")) only count as remote for URL-ish schemes; `content:"a: b"` stays. */
+const REMOTE_STRING = /^(?:(?:https?|ftp|file|javascript|vbscript):|[\\/]{2})/i;
 const SAFE_URL = /^data:(?:image|font)\//i;
 
+/**
+ * The value the URL parser will actually see: every CSS escape resolved (`ht\9 tps:` → "ht<TAB>tps:") and then
+ * tab/newline/space/control chars dropped, as the URL parser strips them. `\` counts as `/` for special schemes.
+ */
+function urlValue(raw: string): string {
+  return raw
+    // One left-to-right pass, so `\\e` is an escaped backslash + "e", not a hex escape.
+    .replace(/\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|([\s\S]))/g, (_m, hex?: string, ch?: string) =>
+      hex ? String.fromCodePoint(Math.min(parseInt(hex, 16), 0x10ffff) || 0xfffd) : ch!)
+    .replace(/[\s\u0000-\u001f\u007f]/g, "");
+}
+
 function isBlockedUrl(raw: string): boolean {
-  const v = raw.trim().replace(/[\s\u0000-\u001f]/g, "");
+  const v = urlValue(raw);
   if (SAFE_URL.test(v)) return false;
   // Any scheme (http(s):, ftp:, file:, javascript:, …) or protocol-relative `//host` is refused;
   // relative paths resolve against the app's own origin and are fine.
@@ -132,13 +147,21 @@ export function sanitizeThemeCss(input: string): SanitizeResult {
 
   css = css.replace(/@import\b[^;{}]*(?:;|$)/gi, () => (note("@import"), ""));
 
-  css = css.replace(/\burl\(\s*(?:"([^"]*)"|'([^']*)'|((?:[^()]|\([^()]*\))*?))\s*\)/gi, (m, dq?: string, sq?: string, bare?: string) => {
-    if (!isBlockedUrl(dq ?? sq ?? bare ?? "")) return m;
-    note("url()");
-    return "none";
-  });
+  // Strings are escape-aware (`"a\"b"`), so an escaped quote can't end the match early.
+  css = css.replace(
+    /\burl\(\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'((?:[^'\\]|\\[\s\S])*)'|((?:[^()]|\([^()]*\))*?))\s*\)/gi,
+    (m, dq?: string, sq?: string, bare?: string) => {
+      if (!isBlockedUrl(dq ?? sq ?? bare ?? "")) return m;
+      note("url()");
+      return "none";
+    },
+  );
   // image-set("https://…" 1x) and friends take bare strings as URLs.
-  css = css.replace(/(["'])\s*((?:https?|ftp|file|javascript|vbscript):[^"']*|\/\/[^"']*)\1/gi, () => (note("url()"), '""'));
+  css = css.replace(/"((?:[^"\\\n]|\\[\s\S])*)"|'((?:[^'\\\n]|\\[\s\S])*)'/g, (m, dq?: string, sq?: string) => {
+    if (!REMOTE_STRING.test(urlValue(dq ?? sq ?? ""))) return m;
+    note("url()");
+    return '""';
+  });
 
   css = css.replace(/\bexpression\s*\(/gi, () => (note("expression()"), "("));
   css = css.replace(/(?<=^|[;{\s])(?:behavior|-moz-binding)\s*:[^;}]*;?/gi, () => (note("behavior"), ""));

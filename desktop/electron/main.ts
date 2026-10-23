@@ -42,7 +42,7 @@ import {
   activateTheme, addTheme, checkThemeSize, isCssFileName, newThemeId, normalizePreset, removeTheme, sanitizeThemeCss,
   themeFileName, themeNameFromPath, type ThemeState,
 } from "./core/theme";
-import { buildPreviewUrl, docViewerServerEnabled, docViewerTemplate, planPreview, previewTempName, type PreviewMode } from "./core/doc-preview";
+import { buildPreviewUrl, docViewerServerEnabled, docViewerTemplate, isPreviewExtension, planPreview, previewTempName, type PreviewMode } from "./core/doc-preview";
 import {
   CAPTURE_OVERLAY_DONE, CAPTURE_OVERLAY_IMAGE, CAPTURE_START, captureFileName, captureOverlayUrl, capturePermissionError,
   captureScale, captureThumbnailSize, normalizeCropRect, pickScreenSource, type CaptureResult,
@@ -198,7 +198,8 @@ function wireCore() {
     fwd("portalBadge"),
     core.on("portalNewPost", (p) => notifyNewPost(p)),
     core.on("portalNewPostSummary", (p) => notifyNewPostSummary(p)),
-    core.on("zoomToken", (t) => setZoomToken(t.accessToken)),
+    // Only while our own connect window is waiting: an unsolicited "zoom" stanza must not swap in someone else's token.
+    core.on("zoomToken", (t) => { if (zoomEnabled(process.env) && zoomTokenWaiters.size) setZoomToken(t.accessToken); }),
     core.on("loggedOut", () => resetZoom()),
     core.on("rooms", () => updateBadge()),
     core.on("message", (m) => {
@@ -1306,6 +1307,8 @@ function registerIpc() {
   });
   handle("file:preview", async (cryptId: string, messageId: number, name: string, ext?: string): Promise<{ mode: PreviewMode }> => {
     if (typeof cryptId !== "string" || !cryptId) throw new Error("미리보기할 파일 정보가 없습니다.");
+    // "external" hands the temp file to the OS: never for executables/scripts, only the listed document types.
+    if (!isPreviewExtension(name, ext)) throw new Error("미리보기를 지원하지 않는 파일 형식입니다.");
     const mid = Number.isFinite(Number(messageId)) ? Number(messageId) : undefined;
     const template = DOC_VIEWER_SERVER ? docViewerTemplate(process.env) : "";
     const mode = planPreview(name, ext, DOC_VIEWER_SERVER);

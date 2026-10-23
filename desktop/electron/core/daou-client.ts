@@ -618,7 +618,6 @@ export class DaouClient {
     return `/api/chat/files/${encodeURIComponent(cryptId)}?userSeq=${uid}${messageId ? `&messageId=${messageId}` : ""}`;
   }
 
-  /** Authenticated GET of any same-server path (thumbnails, avatars, files). */
   // ---------- Zoom ----------
   /** Read-only: GET /api/mobile/baseconfig → useZoomChat / zoomClientId. undefined when the server has no Zoom fields. */
   async fetchZoomConfig(): Promise<ZoomConfig | undefined> {
@@ -641,6 +640,7 @@ export class DaouClient {
     return meeting;
   }
 
+  /** Authenticated GET of any same-server path (thumbnails, avatars, files). */
   async fetchBinary(path: string): Promise<{ data: Buffer; contentType: string }> {
     if (!path.startsWith("/")) path = "/" + path;
     const res = await this.request(path);

@@ -61,6 +61,26 @@ describe("sanitizeThemeCss", () => {
   });
 });
 
+describe("sanitizeThemeCss bypasses", () => {
+  const remote = /evil/;
+  it.each([
+    ['a{background:url("http\\\ns://evil/x.png")}', "line continuation in url string"],
+    ['a{background:image-set("http\\\ns://evil/x.png" 1x)}', "line continuation in bare string"],
+    [`a{background:image-set("https://evil/x'y.png" 1x)}`, "string holding the other quote"],
+    ['a{background:url("ht\\9 tps://evil/x.png")}', "escaped tab in scheme"],
+    ["a{background:url(ht\\9 tps://evil/x.png)}", "escaped tab in bare url"],
+    ['a{background:url("\\\\/evil/x.png")}', "backslash-slash protocol-relative"],
+    ['a{background:image-set("\\\\\\\\evil/x.png" 1x)}', "UNC-ish bare string"],
+  ])("blocks %s (%s)", (input) => {
+    expect(sanitizeThemeCss(input).css).not.toMatch(remote);
+  });
+
+  it("keeps ordinary strings and relative urls", () => {
+    const css = 'a::before{content:"note: hi"} b{background:url("img/a.png")}';
+    expect(sanitizeThemeCss(css).css).toBe(css);
+  });
+});
+
 describe("theme helpers", () => {
   it("validates ids and builds safe file names", () => {
     const id = newThemeId(1_700_000_000_000, () => 0.5);

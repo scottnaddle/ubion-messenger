@@ -74,4 +74,10 @@ describe("previewTempName", () => {
     expect(previewTempName("", undefined, "txt")).toBe("x-file.txt");
     expect(previewTempName("...hidden.txt", 2)).toBe("2-hidden.txt");
   });
+
+  it("ends in the planned (explicit) extension and ignores unsafe ext values", () => {
+    expect(previewTempName("evil.html", 3, "pdf")).toBe("3-evil.html.pdf");
+    expect(previewTempName("evil.exe", 3, "docx")).toBe("3-evil.exe.docx");
+    expect(previewTempName("noext", 4, "/../../x")).toBe("4-noext");
+  });
 });

@@ -69,11 +69,14 @@ export function planPreview(name: string | undefined, ext: string | undefined, s
   return isLocalInAppExtension(name, ext) ? "inapp" : "external";
 }
 
-/** Safe temp file name: no path separators / control or reserved chars; keeps the extension. */
+/** Safe temp file name: no path separators / control or reserved chars; ends in the planned extension. */
 export function previewTempName(name: string | undefined, messageId: number | undefined, ext?: string): string {
   const base = String(name || "").split(/[\\/]/).pop() || "";
   let clean = base.replace(/[\u0000-\u001f<>:"|?*]/g, "_").replace(/^\.+/, "").trim().slice(0, 120);
-  const e = extOf(clean, undefined) || extOf(undefined, ext);
+  // Same precedence as planPreview (explicit ext first), so the file on disk is the type that was planned
+  // (name "a.html" + ext "pdf" → "a.html.pdf", never an .html page). Only plain extensions are used.
+  const planned = extOf(clean, ext);
+  const e = /^[a-z0-9]{1,8}$/.test(planned) ? planned : extOf(clean, undefined);
   if (!clean) clean = e ? `file.${e}` : "file";
   else if (e && !clean.toLowerCase().endsWith(`.${e}`)) clean = `${clean}.${e}`;
   return `${messageId != null && Number.isFinite(Number(messageId)) ? Number(messageId) : "x"}-${clean}`;
