@@ -108,7 +108,7 @@ export class BotServer {
       const delay = Math.max(0, Number(raw) || 0);
       if (delay) await new Promise((r) => setTimeout(r, delay));
       try {
-        const found = await get.call(port, room_id, message_id);
+        const found = await Promise.race([get.call(port, room_id, message_id), new Promise<never>((_, rej) => { const t = setTimeout(() => rej(new Error("timeout")), 10_000); t.unref(); })]);
         if (found && found.length) return found;
       } catch { /* retry */ }
     }
