@@ -9,7 +9,7 @@ export type { ChatMessage, Department, Person, Presence, Room, SessionUser, Conn
 export type Settings = {
   serverUrl: string; username: string; rememberMe: boolean; autoLogin: boolean;
   theme: "system" | "light" | "dark"; notifications: boolean; notificationPreview: boolean;
-  notificationSound: boolean; launchAtLogin: boolean; closeToTray: boolean; downloadDir: string;
+  notificationSound: boolean; launchAtLogin: boolean; closeToTray: boolean; downloadDir: string; askSaveLocation: boolean; lastSaveDir?: string;
   fontSize: number; autoUpdate: boolean; portalPostNotify: boolean; portalOpenMode: "external" | "inapp"; portalOpenModeChosen?: boolean;
   flexAutoLogin?: boolean;
   hasSavedPassword?: boolean;

@@ -6,13 +6,13 @@ import { FileCard, MediaViewer } from "./FileCard";
 import { LinkPreview } from "./LinkPreview";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
-import type { Toast } from "../App";
+import type { Toast, ToastFn } from "../App";
 
 const PRES_LABEL: Record<Presence, string> = { online: "온라인", away: "자리 비움", busy: "다른 용무 중", offline: "오프라인" };
 
 export function ChatView({
   room, me, focused, presence, toast,
-}: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; toast: (t: string, k?: Toast["kind"]) => void }) {
+}: { room: Room; me: SessionUser; focused: boolean; presence?: Presence; toast: ToastFn }) {
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(true);
@@ -258,7 +258,7 @@ function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, onImage, onRetry, toast,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
-  onImage: () => void; onRetry: () => void; toast: (t: string) => void;
+  onImage: () => void; onRetry: () => void; toast: ToastFn;
 }) {
   const deleted = m.messageType === "DELETEDMESSAGE";
   // SENDFILE without an attach model (seen as "filename only" text): still render a (disabled) file card.

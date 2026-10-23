@@ -37,8 +37,20 @@ export function installMockIfNeeded() {
     userId: id, name: ["김하늘", "이서준", "박지우", "최유나", "정도윤", "한소희"][i], position: ["책임", "선임", "수석", "주임", "책임", "선임"][i],
     email: `user${id}@example.com`, thumbnail: "", departmentIds: [i % 2 ? 20 : 21],
   }));
+  const mockSettings: any = { serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", askSaveLocation: false, fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", hasSavedPassword: true };
+  const mockSaved: Record<string, number> = {};
   const handlers: Record<string, (...a: any[]) => any> = {
-    "settings:get": () => ({ serverUrl: "https://coco.ubion.co.kr", username: "hong", rememberMe: true, autoLogin: true, theme: new URLSearchParams(location.search).get("theme") || "light", notifications: true, notificationPreview: true, notificationSound: true, launchAtLogin: false, closeToTray: true, downloadDir: "", fontSize: 14, autoUpdate: true, portalPostNotify: true, portalOpenMode: "inapp", hasSavedPassword: true }),
+    "settings:get": () => ({ ...mockSettings }),
+    "settings:set": (patch: any) => Object.assign(mockSettings, patch),
+    "settings:pickDownloadDir": () => "/Users/hong/Documents/UBION 받은파일",
+    "files:save": (_c: string, _m: number, name: string, mode: string) => {
+      const n = String(name).split(/[\\/]/).pop();
+      if (mode === "saveAs" || mockSettings.askSaveLocation) return `/Users/hong/Desktop/${n}`;
+      const dir = mockSettings.downloadDir || "/Users/hong/Downloads";
+      const k = (mockSaved[n!] = (mockSaved[n!] ?? -1) + 1);
+      return k ? `${dir}/${n!.replace(/(\.[^.]*)?$/, ` (${k})$1`)}` : `${dir}/${n}`;
+    },
+    "files:showInFolder": () => undefined,
     "auth:state": () => ({ user: new URLSearchParams(location.search).get("login") ? null : me, conn: "online" }),
     "rooms:list": () => rooms,
     "msg:history": (_k: string, before?: number) => (before ? [] : msgs),

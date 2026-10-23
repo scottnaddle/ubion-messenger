@@ -14,6 +14,10 @@ export type Settings = {
   launchAtLogin: boolean;
   closeToTray: boolean;
   downloadDir: string;
+  /** 채팅 파일 "저장" 시 매번 위치 묻기 */
+  askSaveLocation: boolean;
+  /** last folder used by 다른 이름으로 저장 */
+  lastSaveDir?: string;
   fontSize: number;
   autoUpdate: boolean;
   /** OS notification for new 전사게시판 posts */
@@ -44,6 +48,7 @@ export const DEFAULTS: Settings = {
   launchAtLogin: false,
   closeToTray: true,
   downloadDir: "",
+  askSaveLocation: false,
   fontSize: 14,
   autoUpdate: true,
   portalPostNotify: true,

@@ -7,25 +7,59 @@ export const fileUrl = (cryptId: string, messageId?: number) =>
   messageId != null ? media(`/api/chat/files/${encodeURIComponent(cryptId)}?messageId=${messageId}`) : "";
 
 type SaveMode = "downloads" | "saveAs" | "open";
+type ToastFn = (text: string, kind?: "error" | "info", action?: { label: string; run: () => void }) => void;
+
+const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
+const dirName = (p: string) => p.slice(0, Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"))) || p;
+
+/** One path for every chat file save (cards, context menu, viewer). Uses main's files:save. */
+export async function saveChatFile(m: ChatMessage, mode: SaveMode, toast: ToastFn): Promise<string | null> {
+  const a = m.attach;
+  if (!a?.cryptId || m.messageId == null) return null;
+  try {
+    const p = await api().call<string | null>("files:save", a.cryptId, m.messageId, a.name, mode);
+    if (p && mode !== "open")
+      toast(`${baseName(p)} 저장됨 · ${dirName(p)}`, "info", { label: "폴더 열기", run: () => void api().call("files:showInFolder", p) });
+    return p;
+  } catch (e) {
+    toast(`다운로드 실패: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/** Right-click menu for a file card: 저장 / 다른 이름으로 저장. */
+function SaveMenu({ x, y, onPick, onClose }: { x: number; y: number; onPick: (m: SaveMode) => void; onClose: () => void }) {
+  useEffect(() => {
+    const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
+    window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
+    return () => { window.removeEventListener("mousedown", h); window.removeEventListener("keydown", h); window.removeEventListener("blur", h); };
+  }, [onClose]);
+  return (
+    <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      <button role="menuitem" onClick={() => { onClose(); onPick("downloads"); }}><Icon name="download" size={14} /> 저장</button>
+      <button role="menuitem" onClick={() => { onClose(); onPick("saveAs"); }}>다른 이름으로 저장…</button>
+      <button role="menuitem" onClick={() => { onClose(); onPick("open"); }}><Icon name="external" size={14} /> 기본 앱으로 열기</button>
+    </div>
+  );
+}
 
 /** DaouOffice-style attachment bubble: image/video thumbnails or a file card with 저장 / 다른 이름으로 저장. */
 export function FileCard({
   m, mine, onOpenMedia, toast,
-}: { m: ChatMessage; mine: boolean; onOpenMedia: () => void; toast: (t: string) => void }) {
+}: { m: ChatMessage; mine: boolean; onOpenMedia: () => void; toast: ToastFn }) {
   const a = m.attach!;
   const missing = !a.cryptId && !a.expired;
   const expired = missing || isExpired(a);
   const kind = attachKind(a);
   const exp = expiryLabel(a);
-  const save = async (mode: SaveMode) => {
-    if (expired || m.messageId == null) return;
-    try {
-      const p = await api().call<string | null>("files:save", a.cryptId, m.messageId, a.name, mode);
-      if (p && mode === "downloads") toast(`다운로드 폴더에 저장했습니다`);
-    } catch (e) {
-      toast(`다운로드 실패: ${(e as Error).message}`);
-    }
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const save = async (mode: SaveMode) => { if (!expired) await saveChatFile(m, mode, toast); };
+  const onCtx = (e: React.MouseEvent) => {
+    if (expired) return;
+    e.preventDefault();
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 120) });
   };
+  const ctx = menu && <SaveMenu x={menu.x} y={menu.y} onPick={(md) => void save(md)} onClose={() => setMenu(null)} />;
   const actions = (
     <div className="fc-actions">
       <button className="link tiny" disabled={expired} onClick={() => save("downloads")}>저장</button>
@@ -42,7 +76,8 @@ export function FileCard({
 
   if (!expired && kind === "image") {
     return (
-      <div className="media-card">
+      <div className="media-card" onContextMenu={onCtx}>
+        {ctx}
         <button className="img-bubble" onClick={onOpenMedia} title={a.name}>
           <LazyImg src={media(a.thumbMid || a.thumbLarge || a.thumbSmall) || fileUrl(a.cryptId, m.messageId)} alt={a.name} w={a.width} h={a.height} />
         </button>
@@ -54,7 +89,8 @@ export function FileCard({
   if (!expired && kind === "video") {
     const poster = media(a.videoThumb || a.thumbMid || a.thumbLarge || a.thumbSmall);
     return (
-      <div className="media-card">
+      <div className="media-card" onContextMenu={onCtx}>
+        {ctx}
         <button className="img-bubble video-bubble" onClick={onOpenMedia} title={a.name}>
           {poster ? <LazyImg src={poster} alt={a.name} w={a.width} h={a.height} /> : <VideoFrame src={fileUrl(a.cryptId, m.messageId)} size={a.size} />}
           <span className="play-ic" aria-hidden>▶</span>
@@ -68,7 +104,8 @@ export function FileCard({
   }
   const ic = fileIcon(a.name, a.extention);
   return (
-    <div className={`file-card ${mine ? "mine" : ""} ${expired ? "expired" : ""}`} aria-disabled={expired}>
+    <div className={`file-card ${mine ? "mine" : ""} ${expired ? "expired" : ""}`} aria-disabled={expired} onContextMenu={onCtx}>
+      {ctx}
       <div className="fc-top">
         <button className="fc-dl" disabled={expired} title={expired ? "만료된 파일" : "저장"} onClick={() => save("downloads")}>
           <Icon name="download" size={20} />
@@ -135,7 +172,7 @@ function VideoFrame({ src, size }: { src: string; size?: number }) {
 }
 
 /** Full-screen viewer for images and in-app video player. */
-export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: () => void; toast: (t: string) => void }) {
+export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: () => void; toast: ToastFn }) {
   const a = m.attach!;
   const kind = attachKind(a);
   useEffect(() => {
@@ -144,7 +181,7 @@ export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: ()
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
   const src = fileUrl(a.cryptId, m.messageId);
-  const save = (mode: SaveMode) => api().call("files:save", a.cryptId, m.messageId, a.name, mode).catch((e) => toast((e as Error).message));
+  const save = (mode: SaveMode) => void saveChatFile(m, mode, toast);
   return (
     <div className="viewer" onClick={onClose}>
       <div className="viewer-bar" onClick={(e) => e.stopPropagation()}>

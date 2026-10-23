@@ -13,7 +13,9 @@ import { Menu } from "./components/Menu";
 import { Mail } from "./components/Mail";
 import { Approval } from "./components/Approval";
 
-export type Toast = { id: number; text: string; kind?: "error" | "info" };
+export type ToastAction = { label: string; run: () => void };
+export type Toast = { id: number; text: string; kind?: "error" | "info"; action?: ToastAction };
+export type ToastFn = (text: string, kind?: Toast["kind"], action?: ToastAction) => void;
 
 export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -34,10 +36,10 @@ export function App() {
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeKey;
 
-  const toast = useCallback((text: string, kind: Toast["kind"] = "error") => {
+  const toast = useCallback((text: string, kind: Toast["kind"] = "error", action?: ToastAction) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, text, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
+    setToasts((t) => [...t, { id, text, kind, action }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), action ? 7000 : 4500);
   }, []);
 
   // theme
@@ -309,7 +311,10 @@ function Toasts({ toasts }: { toasts: Toast[] }) {
   return (
     <div className="toasts">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind || ""}`}>{t.text}</div>
+        <div key={t.id} className={`toast ${t.kind || ""}`}>
+          {t.text}
+          {t.action && <button className="toast-action" onClick={t.action.run}>{t.action.label}</button>}
+        </div>
       ))}
     </div>
   );

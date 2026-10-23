@@ -1,3 +1,4 @@
+import { resolveSaveTarget, type SaveMode } from "./core/save-path";
 import {
   app,
   BrowserWindow,
@@ -59,6 +60,7 @@ let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let settings: Settings = loadSettings();
+const savedPaths = new Set<string>();
 let core = new MessengerCore(settings.serverUrl);
 let unsubscribe: Array<() => void> = [];
 let startHidden = false;
@@ -713,19 +715,33 @@ function registerIpc() {
     else shell.showItemInFolder(target);
     return target;
   });
-  handle("files:save", async (cryptId: string, messageId: number, name: string, mode: "downloads" | "saveAs" | "open") => {
+  handle("files:save", async (cryptId: string, messageId: number, name: string, mode: SaveMode) => {
+    if (!["downloads", "saveAs", "open"].includes(mode)) throw new Error("invalid save mode");
+    const r = await resolveSaveTarget(
+      { mode, name, downloadDir: settings.downloadDir, askEveryTime: !!settings.askSaveLocation, lastSaveDir: settings.lastSaveDir, defaultDownloads: app.getPath("downloads") },
+      {
+        exists: (p) => fs.existsSync(p),
+        showSaveDialog: async (defaultPath) => {
+          const d = await dialog.showSaveDialog(win!, { defaultPath });
+          return d.canceled || !d.filePath ? null : d.filePath;
+        },
+      },
+    );
+    if (!r) return null;
     const { data } = await core.client.fetchBinary(core.client.fileUrlPath(cryptId, messageId));
-    const dir = settings.downloadDir || app.getPath("downloads");
-    let target = uniquePath(path.join(dir, path.basename(name) || "file"));
-    if (mode === "saveAs") {
-      const r = await dialog.showSaveDialog(win!, { defaultPath: path.join(dir, path.basename(name)) });
-      if (r.canceled || !r.filePath) return null;
-      target = r.filePath;
-    }
-    fs.writeFileSync(target, data);
-    if (mode === "open") await shell.openPath(target);
-    else shell.showItemInFolder(target);
-    return target;
+    fs.mkdirSync(path.dirname(r.target), { recursive: true });
+    fs.writeFileSync(r.target, data);
+    savedPaths.add(r.target);
+    if (r.dir !== settings.lastSaveDir) { settings = { ...settings, lastSaveDir: r.dir }; saveSettings(settings); }
+    if (mode === "open") await shell.openPath(r.target);
+    return r.target;
+  });
+  handle("files:showInFolder", (p: string) => {
+    if (typeof p === "string" && savedPaths.has(p)) shell.showItemInFolder(p);
+  });
+  handle("settings:pickDownloadDir", async () => {
+    const r = await dialog.showOpenDialog(win!, { properties: ["openDirectory", "createDirectory"], defaultPath: settings.downloadDir || app.getPath("downloads") });
+    return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
   });
   handle("link:preview", (url: string) =>
     linkCache.get(url, () => fetchLinkPreview(url, { companyBase: core.client.baseUrl }))

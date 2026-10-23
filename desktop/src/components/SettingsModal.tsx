@@ -84,10 +84,14 @@ export function SettingsModal({
           <div className="row">
             <div>
               <div>다운로드 폴더</div>
-              <div className="muted tiny">{settings.downloadDir || "기본 다운로드 폴더"}</div>
+              <div className="muted tiny download-dir">{settings.downloadDir || "기본 다운로드 폴더 (~/Downloads)"}</div>
             </div>
-            {settings.downloadDir && <button className="link small" onClick={() => set({ downloadDir: "" })}>기본값</button>}
+            <div className="row-actions">
+              <button className="link small" onClick={async () => { const d = await api().call<string | null>("settings:pickDownloadDir"); if (d) void set({ downloadDir: d }); }}>폴더 선택…</button>
+              {settings.downloadDir && <button className="link small" onClick={() => set({ downloadDir: "" })}>기본값</button>}
+            </div>
           </div>
+          <Toggle k="askSaveLocation" label="매번 저장 위치 묻기" desc="채팅 파일 '저장' 시 저장 위치와 이름을 선택합니다" />
           <h4>업데이트</h4>
           <UpdateRow />
           <Toggle k="autoUpdate" label="자동으로 업데이트 확인" desc="시작할 때와 4시간마다 확인합니다" />
