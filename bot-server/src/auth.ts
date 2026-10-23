@@ -20,6 +20,8 @@ export const hasScope = (r: TokenRecord, s: Scope) => r.scopes.includes(s);
 export class Allowlist {
   private set: Set<string>;
   constructor(rooms: string[]) { this.set = new Set(rooms); }
-  allows(room: string, tok?: TokenRecord) { return this.set.has(room) && (!tok?.rooms || tok.rooms.includes(room)); }
-  rooms(): string[] { return [...this.set]; }
+  /** Entries ending in "*" are prefix wildcards, e.g. "room:*" allows every group room the bot is in. */
+  private match(room: string) { return this.set.has(room) || [...this.set].some((r) => r.endsWith("*") && room.startsWith(r.slice(0, -1))); }
+  allows(room: string, tok?: TokenRecord) { return this.match(room) && (!tok?.rooms || tok.rooms.includes(room)); }
+  rooms(): string[] { return [...this.set].filter((r) => !r.endsWith("*")); }
 }
