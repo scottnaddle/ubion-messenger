@@ -209,3 +209,12 @@ export function createReactionsClient({
         (data) => parseReactionToggle(data, messageId)),
   };
 }
+
+/** Strip anything token- or code-like from a diagnostic line before it is written to disk. */
+export function redactDiag(line: string): string {
+  return String(line)
+    .replace(/ubt1\.[A-Za-z0-9._-]+/g, "ubt1.***")
+    .replace(/\[\[ubm:auth:[^\]]*\]\]/g, "[[ubm:auth:***]]")
+    .replace(/\b[A-Za-z0-9_-]{32,}\b/g, "***")
+    .slice(0, 500);
+}

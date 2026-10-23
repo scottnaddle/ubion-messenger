@@ -51,7 +51,7 @@ import {
 import { computeManualUntil, isInDnd, normalizeDndDays, normalizeDndMin } from "./core/dnd";
 import { normalizeStatusText, statusCaps, statusServerEnabled, statusXmppEnabled } from "./core/status-message";
 import { createStatusClient } from "./core/status-server";
-import {
+import { redactDiag,
   createReactionsClient, guardReactionRoom, normalizeEmoji, normalizeMessageId, normalizeMessageIds, normalizeRoomSeq,
   reactionsCaps, REACTIONS_DISABLED_TEXT, reactionsEnabled,
 } from "./core/reactions";
@@ -1866,24 +1866,37 @@ function registerIpc() {
   // 이모지 리액션: our server (bot.ubion.global) keyed by roomSeq:messageId. On by default; UBM_REACTIONS=0 disables.
   const REACTIONS_ON = reactionsEnabled(process.env);
   handle("reactions:caps", () => reactionsCaps(process.env));
-  handle("reactions:list", async (roomSeq: unknown, ids: unknown) => {
+  // Diagnostics (no tokens/codes: only channel, room, status text): userData/ubm-reactions.log, capped ~256 KB.
+  const reactionsLog = (line: string) => {
+    try {
+      const file = path.join(app.getPath("userData"), "ubm-reactions.log");
+      try { if (fs.statSync(file).size > 256 * 1024) fs.renameSync(file, file + ".1"); } catch { /* new file */ }
+      fs.appendFileSync(file, `${new Date().toISOString()} ${redactDiag(line)}\n`, { mode: 0o600 });
+    } catch { /* best effort */ }
+  };
+  const handleR = (ch: string, fn: (...a: any[]) => Promise<unknown>) => handle(ch, async (...a: any[]) => {
+    try { return await fn(...a); } catch (e) { reactionsLog(`${ch} error: ${errMsg(e)}`); throw e; }
+  });
+  handleR("reactions:list", async (roomSeq: unknown, ids: unknown) => {
     if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
-    if (core.user == null) throw new Error("로그인이 필요합니다");
+    if (core.user == null) { reactionsLog("list fail: no core.user"); throw new Error("로그인이 필요합니다"); }
     const seq = normalizeRoomSeq(roomSeq);
     const r = await reactionsClient().list(seq, normalizeMessageIds(ids));
-    if (!r.ok) throw new Error(r.message);
+    if (!r.ok) { reactionsLog(`list room=${seq} user=${core.user?.id ?? 0} fail: ${r.message}`); throw new Error(r.message); }
     return r.data;
   });
-  handle("reactions:toggle", async (roomSeq: unknown, messageId: unknown, emoji: unknown) => {
+  handleR("reactions:toggle", async (roomSeq: unknown, messageId: unknown, emoji: unknown) => {
     if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
     const me = core.user?.id;
-    if (me == null) throw new Error("로그인이 필요합니다");
+    if (me == null) { reactionsLog("toggle fail: no core.user"); throw new Error("로그인이 필요합니다"); }
     const seq = normalizeRoomSeq(roomSeq);
     const mid = normalizeMessageId(messageId);
     const e = normalizeEmoji(emoji);
     guardReactionRoom({ selfOnly: process.env.UBM_SELF_ONLY === "1", roomSeq: seq, me, selfRoomSeq: selfRoomApiSeq() });
+    reactionsLog(`toggle room=${seq} msg=${mid} send`);
     const r = await reactionsClient().toggle(seq, mid, e);
-    if (!r.ok) throw new Error(r.message);
+    if (!r.ok) { reactionsLog(`toggle room=${seq} msg=${mid} fail: ${r.message}`); throw new Error(r.message); }
+    reactionsLog(`toggle room=${seq} msg=${mid} ok keys=${Object.keys(r.data).join(",")}`);
     return r.data;
   });
   // 투표: our server (bot.ubion.global / UBM_BOT_API_URL); bot posts the poll + results. Behind UBM_POLLS=1.

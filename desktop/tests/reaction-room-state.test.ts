@@ -48,3 +48,11 @@ describe("reaction toggle failures", () => {
     expect(reactionRoomReason(true, true, reactionRoomOk())).toBeNull();
   });
 });
+
+describe("redactDiag", () => {
+  it("never writes tokens or auth codes to the diagnostics log", async () => {
+    const { redactDiag } = await import("../electron/core/reactions");
+    const out = redactDiag("x ubt1.abc.def [[ubm:auth:id:123456]] " + "a".repeat(40));
+    expect(out).not.toMatch(/abc\.def|123456|a{40}/);
+  });
+});
