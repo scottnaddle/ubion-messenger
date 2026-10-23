@@ -11,7 +11,7 @@ import { ReloginPolicy, mask } from "../src/session";
 import { BotServer } from "../src/server";
 import { NotConfiguredPort, daouConfigured } from "../src/not-configured-port";
 import type { BotRoom, DaouPort, InboundMessage } from "../src/types";
-import { extractText } from "../src/extract";
+import { extractText, stripTags } from "../src/extract";
 
 class MockDaou implements DaouPort {
   sends: Array<{ room_id: string; text: string }> = []; failNext = false; delay = 0;
@@ -34,26 +34,41 @@ class MockDaou implements DaouPort {
     if (this.emptyLookups > 0) { this.emptyLookups--; return []; }
     return this.attachments.get(message_id) ?? [];
   }
-  async downloadAttachment(_room_id: string, message_id: number, index: number) {
-    const a = (this.attachments.get(message_id) ?? [])[index];
+  async downloadAttachment(_room_id: string, message_id: number, index: number, file_id?: string) {
+    const all = this.attachments.get(message_id) ?? [];
+    const a = file_id ? all.find((x) => x.file_id === file_id) : all[index];
     if (!a) throw new Error("not found");
     const b = this.binary.get(a.file_id);
     if (!b) throw new Error("not found");
     return { data: b.data, contentType: b.contentType || a.mime || "application/octet-stream", name: a.name };
   }
+  sessions = new Map<string, { user_id: string; name: string } | null>();
+  roomMembers = new Map<string, string[]>();
+  verifyCalls = 0;
+  isRoomMemberCalls = 0;
+  async verifyUserSession(cookie: string) {
+    this.verifyCalls++;
+    return this.sessions.get(cookie) ?? null;
+  }
+  async isRoomMember(room_id: string, user_id: string) {
+    this.isRoomMemberCalls++;
+    return (this.roomMembers.get(room_id) ?? []).includes(user_id);
+  }
   msg(room_id: string, text: string, extra: Partial<InboundMessage> = {}) { this.mcb.forEach((f) => f({ room_id, message_id: 1, sender: { id: "5", name: "kim" }, text, mentions: [], attachments: [], reply_to: null, ts: "t", is_mine: false, ...extra })); }
   join(r: BotRoom) { this.rcb.forEach((f) => f(r)); }
 }
-const FULL = "tok-full", RO = "tok-ro", ROOMS = "tok-rooms", CTX = "tok-ctx", CTX_ROOM = "tok-ctx-room";
+const FULL = "tok-full", RO = "tok-ro", ROOMS = "tok-rooms", CTX = "tok-ctx", CTX_ROOM = "tok-ctx-room", SET = "tok-set", SET_ROOM = "tok-set-room";
 let srv: BotServer, base: string, wsBase: string, daou: MockDaou;
 async function setup(o: Partial<ConstructorParameters<typeof BotServer>[0]> = {}) {
   daou = new MockDaou();
   srv = new BotServer({ port: daou, allowlist: new Allowlist(["room:1", "room:3"]), tokens: new TokenStore([
-    { id: "hermes", sha256: hashToken(FULL), scopes: ["events:read", "messages:send", "rooms:read"] },
+    { id: "hermes", sha256: hashToken(FULL), scopes: ["events:read", "messages:send", "rooms:read", "files:read"] },
     { id: "ro", sha256: hashToken(RO), scopes: ["events:read"] },
     { id: "rooms", sha256: hashToken(ROOMS), scopes: ["rooms:read"] },
     { id: "ctx", sha256: hashToken(CTX), scopes: ["events:read", "context:read"] },
-    { id: "ctx-room", sha256: hashToken(CTX_ROOM), scopes: ["events:read", "context:read"], rooms: ["room:1"] }]), ...o });
+    { id: "ctx-room", sha256: hashToken(CTX_ROOM), scopes: ["events:read", "context:read"], rooms: ["room:1"] },
+    { id: "set", sha256: hashToken(SET), scopes: ["settings:write"] },
+    { id: "set-room", sha256: hashToken(SET_ROOM), scopes: ["settings:write"], rooms: ["room:1"] }]), ...o });
   const p = await srv.listen(0); base = `http://127.0.0.1:${p}`; wsBase = `ws://127.0.0.1:${p}`;
 }
 afterEach(async () => { await srv?.close(); });
@@ -127,6 +142,18 @@ describe("context stores", () => {
     expect(store.rooms()).toEqual([]);
   });
 
+  it("MemoryContextStore keeps room autonomy settings", () => {
+    let now = Date.parse("2024-01-10T00:00:00.000Z");
+    const store = new MemoryContextStore(() => now);
+    expect(store.getSettings("room:1")).toEqual({ room_id: "room:1", autonomy: false, enabled_by: null, enabled_at: null, updated_by: null, updated_at: null });
+    const on = store.setSettings("room:1", true, "u1");
+    expect(on).toMatchObject({ room_id: "room:1", autonomy: true, enabled_by: "u1", enabled_at: "2024-01-10T00:00:00.000Z", updated_by: "u1", updated_at: "2024-01-10T00:00:00.000Z" });
+    now += 5000;
+    const off = store.setSettings("room:1", false, "u2");
+    expect(off).toMatchObject({ autonomy: false, enabled_by: "u1", enabled_at: "2024-01-10T00:00:00.000Z", updated_by: "u2", updated_at: "2024-01-10T00:00:05.000Z" });
+    expect(store.getSettings("room:1")).toEqual(off);
+  });
+
   (hasSqlite ? it : it.skip)("SqliteContextStore persists, dedupes, lists and purges", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ubm-ctx-"));
     const db = path.join(dir, "nested", "context.db");
@@ -145,6 +172,12 @@ describe("context stores", () => {
         { room_id: "room:1", count: 1, last_ts: "2024-01-01T00:00:03.000Z" },
         { room_id: "room:2", count: 2, last_ts: "2024-01-01T00:00:02.000Z" },
       ]);
+      expect(store.getSettings("room:3")).toMatchObject({ room_id: "room:3", autonomy: false, enabled_by: null });
+      const on = store.setSettings("room:3", true, "u1");
+      expect(on).toMatchObject({ autonomy: true, enabled_by: "u1", updated_by: "u1" });
+      const off = store.setSettings("room:3", false, "u2");
+      expect(off).toMatchObject({ autonomy: false, enabled_by: "u1", updated_by: "u2" });
+      expect(store.getSettings("room:3")).toEqual(off);
       expect(store.purgeRoom("room:2")).toBe(2);
       expect(store.prune(0)).toBe(1);
       expect(store.rooms()).toEqual([]);
@@ -158,7 +191,8 @@ describe("context stores", () => {
 describe("context server", () => {
   it("stores context-room messages before filtering without events or sends", async () => {
     const store = new MemoryContextStore();
-    await setup({ context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    store.setSettings("room:2", true, "test");
+    await setup({ context: { store } });
     const c = await connect(FULL);
     daou.msg("room:2", "secret", { message_id: 10, ts: "2024-01-01T00:00:01.000Z" });
     daou.msg("room:2", "bot", { message_id: 11, ts: "2024-01-01T00:00:02.000Z", is_mine: true });
@@ -172,7 +206,8 @@ describe("context server", () => {
 
   it("keeps mention-only behaviour for context rooms", async () => {
     const store = new MemoryContextStore();
-    await setup({ mentionOnly: true, context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    store.setSettings("room:2", true, "test");
+    await setup({ mentionOnly: true, context: { store } });
     const c = await connect(FULL);
     daou.msg("room:2", "hello", { message_id: 1, ts: "2024-01-01T00:00:01.000Z" });
     await tick();
@@ -183,30 +218,33 @@ describe("context server", () => {
 
   it("stores enriched attachment metadata for an allowlisted context room", async () => {
     const store = new MemoryContextStore();
-    await setup({ attachRetryMs: [0], context: { store, rooms: ["room:1"], allMemberRooms: false } });
+    store.setSettings("room:1", true, "test");
+    await setup({ attachRetryMs: [0], context: { store } });
     daou.attachments.set(20, [{ name: "a.pdf", size: 9, mime: "application/pdf", file_id: "f20" }]);
     daou.msg("room:1", "a.pdf", { message_id: 20, messageType: "SENDFILE", ts: "2024-01-01T00:00:01.000Z" });
     await tick(100);
     expect(store.list("room:1")[0].attachments).toEqual([{ index: 0, name: "a.pdf", size: 9, mime: "application/pdf", file_id: "f20" }]);
   });
 
-  it("rooms include kind/member_count/context; all=1 needs context:read", async () => {
+  it("rooms include kind/member_count/autonomy; all=1 needs context:read", async () => {
     const store = new MemoryContextStore();
-    await setup({ context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    store.setSettings("room:2", true, "test");
+    await setup({ context: { store } });
     const normal = await (await fetch(`${base}/bot/rooms`, { headers: { authorization: `Bearer ${FULL}` } })).json();
-    expect(normal.rooms).toEqual([{ room_id: "room:1", room_name: "A", kind: "room", member_count: 5, context: false }]);
+    expect(normal.rooms).toEqual([{ room_id: "room:1", room_name: "A", kind: "room", member_count: 5, autonomy: false }]);
 
     const denied = await fetch(`${base}/bot/rooms?all=1`, { headers: { authorization: `Bearer ${FULL}` } });
     expect(denied.status).toBe(403); expect((await denied.json()).error.code).toBe("forbidden_scope");
 
     const all = await (await fetch(`${base}/bot/rooms?all=1`, { headers: { authorization: `Bearer ${CTX}` } })).json();
     expect(all.rooms.map((r: any) => r.room_id)).toEqual(["room:1", "room:2"]);
-    expect(all.rooms[1]).toMatchObject({ room_id: "room:2", kind: "buddy", member_count: 2, context: true });
+    expect(all.rooms[1]).toMatchObject({ room_id: "room:2", kind: "buddy", member_count: 2, autonomy: true });
   });
 
   it("messages endpoint handles 401, 403 scope, 403 room, since/limit and audit", async () => {
     const store = new MemoryContextStore();
-    await setup({ context: { store, rooms: ["room:2"], allMemberRooms: false } });
+    store.setSettings("room:2", true, "test");
+    await setup({ context: { store } });
     for (let i = 1; i <= 5; i++) store.add(sm("room:2", i, `2024-01-01T00:00:0${i}.000Z`, `secret-body-${i}`));
 
     expect((await fetch(`${base}/bot/rooms/room%3A2/messages`)).status).toBe(401);
@@ -234,12 +272,152 @@ describe("context server", () => {
     await setup();
     const r = await fetch(`${base}/bot/rooms/room%3A2/messages`, { headers: { authorization: `Bearer ${CTX}` } });
     expect(r.status).toBe(404); expect((await r.json()).error.code).toBe("context_disabled");
+    const s = await fetch(`${base}/bot/rooms/room%3A2/settings`, { headers: { authorization: `Bearer ${SET}` } });
+    expect(s.status).toBe(404); expect((await s.json()).error.code).toBe("context_disabled");
+  });
+
+  it("settings GET/PUT with a Bearer settings:write token, notices only on change", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store } });
+    const url = `${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`;
+    const auth = { authorization: `Bearer ${SET}`, "content-type": "application/json" };
+    let r = await fetch(url, { headers: auth });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ room_id: "room:9", autonomy: false, enabled_by: null, enabled_at: null, updated_by: null, updated_at: null, can_edit: true });
+
+    r = await fetch(url, { method: "PUT", headers: auth, body: JSON.stringify({ autonomy: true }) });
+    const on = await r.json();
+    expect(r.status).toBe(200);
+    expect(on.notice_sent).toBe(true);
+    expect(on.settings).toMatchObject({ room_id: "room:9", autonomy: true, enabled_by: "set", updated_by: "set", can_edit: true });
+    expect(on.settings.enabled_at).toBeTruthy();
+    expect(daou.sends).toEqual([{ room_id: "room:9", text: "유비온봇 자율활동이 켜졌습니다. 이 방의 대화를 기록하고, 대화가 끝나면 정리해 드립니다. (끄기: 방 설정 > 유비온봇 자율활동)" }]);
+
+    r = await fetch(url, { method: "PUT", headers: auth, body: JSON.stringify({ autonomy: true }) });
+    expect((await r.json()).notice_sent).toBe(false);
+    expect(daou.sends).toHaveLength(1);
+
+    r = await fetch(url, { method: "PUT", headers: auth, body: JSON.stringify({ autonomy: false }) });
+    const off = await r.json();
+    expect(off.notice_sent).toBe(true);
+    expect(off.settings).toMatchObject({ room_id: "room:9", autonomy: false, enabled_by: "set", updated_by: "set" });
+    expect(daou.sends).toHaveLength(2);
+    expect(daou.sends[1].text).toBe("유비온봇 자율활동이 꺼졌습니다. 이제 이 방의 대화를 기록하지 않습니다. (멘션하면 계속 답합니다)");
+    expect(srv.audit.entries).toContainEqual(expect.objectContaining({ action: "settings_update", room_id: "room:9", actor: "set", autonomy: true, status: "ok" }));
+
+    const ctxGet = await fetch(url, { headers: { authorization: `Bearer ${CTX}` } });
+    expect(ctxGet.status).toBe(200);
+    const ctxPut = await fetch(url, { method: "PUT", headers: { authorization: `Bearer ${CTX}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }) });
+    expect(ctxPut.status).toBe(403); expect((await ctxPut.json()).error.code).toBe("forbidden_scope");
+    const restricted = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/settings`, { headers: { authorization: `Bearer ${SET_ROOM}` } });
+    expect(restricted.status).toBe(403);
+    const allowed = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:1")}/settings`, { headers: { authorization: `Bearer ${SET_ROOM}` } });
+    expect(allowed.status).toBe(200);
+  });
+
+  it("settings with X-Daou-Session verifies the user and room membership", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store } });
+    daou.sessions.set("cookie-5", { user_id: "5", name: "kim" });
+    daou.roomMembers.set("room:2", ["5"]);
+    daou.roomMembers.set("buddy:5", ["5"]);
+    const headers = { "x-daou-session": "cookie-5", "content-type": "application/json" };
+    const url = (r: string) => `${base}/bot/rooms/${encodeURIComponent(r)}/settings`;
+
+    let r = await fetch(url("room:2"), { headers });
+    expect(r.status).toBe(200);
+    r = await fetch(url("room:2"), { method: "PUT", headers, body: JSON.stringify({ autonomy: true }) });
+    const put = await r.json();
+    expect(r.status).toBe(200);
+    expect(put.settings).toMatchObject({ room_id: "room:2", autonomy: true, enabled_by: "5", updated_by: "5" });
+    expect(put.notice_sent).toBe(true);
+    expect(daou.sends.map((s) => s.room_id)).toEqual(["room:2"]);
+
+    const bad = await fetch(url("room:2"), { headers: { "x-daou-session": "nope" } });
+    expect(bad.status).toBe(401); expect((await bad.json()).error.code).toBe("invalid_session");
+    const nonMember = await fetch(url("room:1"), { headers });
+    expect(nonMember.status).toBe(403); expect((await nonMember.json()).error.code).toBe("not_room_member");
+    const buddy = await fetch(url("buddy:5"), { headers });
+    expect(buddy.status).toBe(200);
+    const otherBuddy = await fetch(url("buddy:6"), { headers });
+    expect(otherBuddy.status).toBe(403);
+
+    const calls = daou.verifyCalls;
+    const huge = await fetch(url("room:2"), { headers: { "x-daou-session": "x".repeat(4097) } });
+    expect(huge.status).toBe(401); expect((await huge.json()).error.code).toBe("invalid_session");
+    expect(daou.verifyCalls).toBe(calls);
+  });
+
+  it("rate limits human settings requests per user", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store } });
+    daou.sessions.set("cookie-5", { user_id: "5", name: "kim" });
+    daou.roomMembers.set("room:1", ["5"]);
+    const headers = { "x-daou-session": "cookie-5" };
+    const url = `${base}/bot/rooms/${encodeURIComponent("room:1")}/settings`;
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) statuses.push((await fetch(url, { headers })).status);
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(200));
+    expect(statuses[10]).toBe(429);
+    const r = await fetch(url, { headers });
+    expect(r.status).toBe(429);
+    expect(r.headers.get("retry-after")).toBeTruthy();
+    expect((await r.json()).error.code).toBe("rate_limited");
+  });
+
+  it("stores context only while autonomy is on", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store } });
+    daou.msg("room:2", "before", { message_id: 1, ts: "2024-01-01T00:00:01.000Z" });
+    await tick();
+    expect(store.list("room:2")).toEqual([]);
+
+    const r = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/settings`, {
+      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
+    });
+    expect(r.status).toBe(200);
+    daou.msg("room:2", "after", { message_id: 2, ts: "2024-01-01T00:00:02.000Z" });
+    await tick();
+    expect(store.list("room:2").map((m) => m.text)).toEqual(["after"]);
+
+    const off = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:2")}/settings`, {
+      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: false }),
+    });
+    expect(off.status).toBe(200);
+    daou.msg("room:2", "after-off", { message_id: 3, ts: "2024-01-01T00:00:03.000Z" });
+    await tick();
+    expect(store.list("room:2").map((m) => m.text)).toEqual(["after"]);
+  });
+
+  it("does not post autonomy notices when disabled by option", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store, autonomyNotices: false } });
+    const r = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`, {
+      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
+    });
+    expect((await r.json()).notice_sent).toBe(false);
+    expect(daou.sends).toEqual([]);
+  });
+
+  it("still returns 200 when the autonomy notice fails", async () => {
+    const store = new MemoryContextStore();
+    await setup({ context: { store }, logger: () => {} });
+    daou.failNext = true;
+    const r = await fetch(`${base}/bot/rooms/${encodeURIComponent("room:9")}/settings`, {
+      method: "PUT", headers: { authorization: `Bearer ${SET}`, "content-type": "application/json" }, body: JSON.stringify({ autonomy: true }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.notice_sent).toBe(false);
+    expect(body.settings.autonomy).toBe(true);
+    expect(store.getSettings("room:9").autonomy).toBe(true);
   });
 
   it("emits conversation_idle after N messages once idle, only to context:read clients", async () => {
     let now = Date.parse("2024-01-01T00:00:00.000Z");
     const store = new MemoryContextStore(() => now);
-    await setup({ now: () => now, context: { store, rooms: ["room:1"], allMemberRooms: false, idleMinMessages: 3, idleMs: 1000, idleCheckMs: 20 } });
+    store.setSettings("room:1", true, "test");
+    await setup({ now: () => now, context: { store, idleMinMessages: 3, idleMs: 1000, idleCheckMs: 20 } });
     const withCtx = await connect(CTX), withoutCtx = await connect(RO);
     await tick(20);
     daou.msg("room:1", "a", { message_id: 1, ts: new Date(now).toISOString() });
@@ -258,6 +436,19 @@ describe("context server", () => {
     });
     expect(withoutCtx.got.some((e) => e.type === "conversation_idle")).toBe(false);
     withCtx.ws.close(); withoutCtx.ws.close();
+  });
+
+  it("does not track context or idle for rooms without autonomy", async () => {
+    let now = Date.parse("2024-01-01T00:00:00.000Z");
+    const store = new MemoryContextStore(() => now);
+    await setup({ now: () => now, context: { store, idleMinMessages: 1, idleMs: 0, idleCheckMs: 20 } });
+    const c = await connect(CTX);
+    daou.msg("room:3", "a", { message_id: 1, ts: new Date(now).toISOString() });
+    now += 60_000;
+    await tick(80);
+    expect(store.list("room:3")).toEqual([]);
+    expect(c.got.filter((e) => e.type === "conversation_idle")).toEqual([]);
+    c.ws.close();
   });
 });
 
@@ -482,16 +673,18 @@ describe("inbound attachments and downloads", () => {
     expect(daou.attachmentLookups).toBeGreaterThanOrEqual(2);
     c.ws.close();
   });
-  it("downloads exact bytes with content-type and UTF-8 filename", async () => {
+  it("downloads exact bytes with mime.ts content-type, UTF-8 filename and one extra lookup", async () => {
     await setup({ attachRetryMs: [0] });
     const data = Buffer.from("download body", "utf8");
     daou.attachments.set(1, [{ name: "다운로드확인.txt", size: data.length, mime: "text/plain", file_id: "f1" }]);
-    daou.binary.set("f1", { data, contentType: "text/plain" });
+    daou.binary.set("f1", { data, contentType: "application/x-upstream" });
     daou.msg("room:1", "다운로드확인.txt", { messageType: "SENDFILE" }); await tick();
+    const lookups = daou.attachmentLookups;
     const r = await fileReq("/bot/files/1");
     expect(r.status).toBe(200);
     expect(Buffer.from(await r.arrayBuffer())).toEqual(data);
     expect(r.headers.get("content-type")).toBe("text/plain");
+    expect(daou.attachmentLookups).toBe(lookups + 1);
     expect(r.headers.get("content-disposition")).toContain(`filename*=UTF-8''${encodeURIComponent("다운로드확인.txt")}`);
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
     expect(r.headers.get("cache-control")).toBe("no-store");
@@ -509,6 +702,43 @@ describe("inbound attachments and downloads", () => {
     expect(denied.status).toBe(403); expect((await denied.json()).error.code).toBe("room_not_allowed");
     const missing = await fileReq("/bot/files/999?room_id=room:1");
     expect(missing.status).toBe(404); expect((await missing.json()).error.code).toBe("not_found");
+  });
+  it("events:read-only may fetch only published ids; files:read may name a room explicitly", async () => {
+    await setup({ attachRetryMs: [0] });
+    const data = Buffer.from("published", "utf8");
+    daou.attachments.set(50, [{ name: "a.txt", size: data.length, mime: "text/plain", file_id: "f50" }]);
+    daou.binary.set("f50", { data });
+
+    expect((await fileReq("/bot/files/50", RO)).status).toBe(404);
+    const explicit = await fileReq("/bot/files/50?room_id=room:1", FULL);
+    expect(explicit.status).toBe(200);
+    const eventsExplicit = await fileReq("/bot/files/50?room_id=room:1", RO);
+    expect(eventsExplicit.status).toBe(403); expect((await eventsExplicit.json()).error.code).toBe("forbidden_scope");
+
+    daou.msg("room:1", "a.txt", { message_id: 50, messageType: "SENDFILE" });
+    await tick();
+    const published = await fileReq("/bot/files/50", RO);
+    expect(published.status).toBe(200);
+    expect(Buffer.from(await published.arrayBuffer())).toEqual(data);
+  });
+  it("does not remember ids filtered out by mention-only", async () => {
+    await setup({ mentionOnly: true, attachRetryMs: [0] });
+    const data = Buffer.from("hidden", "utf8");
+    daou.attachments.set(60, [{ name: "a.txt", size: data.length, mime: "text/plain", file_id: "f60" }]);
+    daou.binary.set("f60", { data });
+    daou.msg("room:1", "a.txt", { message_id: 60, messageType: "SENDFILE" });
+    await tick();
+    expect((await fileReq("/bot/files/60", RO)).status).toBe(404);
+  });
+  it("rate limits /bot/files per token with retry-after", async () => {
+    await setup();
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) statuses.push((await fileReq("/bot/files/999?room_id=room:1")).status);
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(404));
+    expect(statuses[10]).toBe(429);
+    const r = await fileReq("/bot/files/999?room_id=room:1");
+    expect(r.status).toBe(429); expect(r.headers.get("retry-after")).toBeTruthy();
+    expect((await r.json()).error.code).toBe("rate_limited");
   });
   it("rejects files larger than maxFileBytes", async () => {
     await setup({ maxFileBytes: 4 });
@@ -531,6 +761,12 @@ describe("inbound attachments and downloads", () => {
 
 const hasPython = (() => { try { execFileSync("python3", ["--version"], { stdio: "ignore" }); return true; } catch { return false; } })();
 describe("extract", () => {
+  it("strips pathological '<' input in linear time", () => {
+    const input = "<".repeat(500_000) + ">" + "hello";
+    const start = Date.now();
+    expect(stripTags(input)).toBe("hello");
+    expect(Date.now() - start).toBeLessThan(1000);
+  });
   (hasPython ? it : it.skip)("extracts docx text built by python zipfile", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ubm-docx-"));
     const file = path.join(dir, "a.docx");

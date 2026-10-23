@@ -25,20 +25,19 @@ async function main() {
     port = new NotConfiguredPort();
   }
   const tokens = new TokenStore(JSON.parse(fs.readFileSync(env("BOT_TOKENS_FILE"), "utf8")) as TokenRecord[]);
-  const contextRooms = (process.env.BOT_CONTEXT_ROOMS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const allMemberRooms = env("BOT_CONTEXT_ALL_MEMBER_ROOMS", "0") === "1";
   const num = (k: string, d: number) => { const n = Number(env(k, String(d))); return Number.isFinite(n) ? n : d; };
   let context: ContextOpts | undefined;
-  if (contextRooms.length || allMemberRooms) {
+  try {
+    require("node:sqlite");
     context = {
       store: new SqliteContextStore(env("BOT_CONTEXT_DB", "/var/lib/ubm-bot/context.db")),
-      rooms: contextRooms,
-      allMemberRooms,
       retentionDays: num("BOT_CONTEXT_RETENTION_DAYS", 90),
       idleMinMessages: num("BOT_IDLE_MIN_MESSAGES", 5),
       idleMs: num("BOT_IDLE_MINUTES", 20) * 60_000,
     };
-    log(`context enabled rooms=${contextRooms.length ? contextRooms.join(",") : "(none)"} allMemberRooms=${allMemberRooms}`);
+    log(`context enabled db=${env("BOT_CONTEXT_DB", "/var/lib/ubm-bot/context.db")}`);
+  } catch (e) {
+    log(`context disabled: ${String((e as any)?.message ?? e)}`);
   }
   const srv = new BotServer({ port, tokens, allowlist: new Allowlist(env("BOT_ROOMS").split(",").map((s) => s.trim()).filter(Boolean)), mentionOnly: env("BOT_MENTION_ONLY", "0") === "1", audit: new Audit((l) => log(`[audit] ${l}`)), ...(context ? { context } : {}) });
   const p = await srv.listen(Number(env("BOT_PORT", "8787")), env("BOT_HOST", "127.0.0.1"));

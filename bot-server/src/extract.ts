@@ -17,13 +17,45 @@ export class ExtractError extends Error {
 export type ExtractResult = { text: string; mime: string };
 
 const TEXT_EXT = new Set(["txt", "md", "csv", "json", "log"]);
+const MAX_XML_BYTES = 8 * 1024 * 1024;
+const MAX_TEXT_BYTES = 2 * 1024 * 1024;
+const MAX_ZIP_ENTRIES = 300;
+const EXTRACT_DEADLINE_MS = 30_000;
 
 function extension(name: string): string {
   const m = /\.([a-z0-9]{1,8})$/i.exec(String(name ?? ""));
   return m ? m[1].toLowerCase() : "";
 }
 
-async function run(cmd: string, args: string[], timeout = 20_000): Promise<string> {
+function clipUtf8(s: string, maxBytes: number): string {
+  if (Buffer.byteLength(s, "utf8") <= maxBytes) return s;
+  return Buffer.from(s, "utf8").subarray(0, maxBytes).toString("utf8").replace(/\uFFFD$/, "");
+}
+
+function deadlineError(): ExtractError {
+  return new ExtractError(504, "extract_timeout", "attachment extraction timed out");
+}
+
+function checkDeadline(deadline: number): void {
+  if (Date.now() >= deadline) throw deadlineError();
+}
+
+async function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_res, rej) => {
+    timer = setTimeout(() => rej(deadlineError()), ms);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
+async function run(cmd: string, args: string[], deadline: number): Promise<string> {
+  checkDeadline(deadline);
+  const timeout = Math.max(1, Math.min(20_000, deadline - Date.now()));
   const { stdout } = await execFileAsync(cmd, args, { timeout, maxBuffer: 32 * 1024 * 1024, encoding: "utf8" });
   return String(stdout);
 }
@@ -55,16 +87,31 @@ function decodeXml(s: string): string {
     .replace(/&amp;/g, "&");
 }
 
-function stripTags(s: string): string {
-  return decodeXml(s.replace(/<[^>]*>/g, ""));
+/** Linear single-pass tag stripper (avoids regex backtracking on pathological input). */
+export function stripTags(s: string): string {
+  const n = s.length;
+  let i = 0;
+  let start = 0;
+  const pieces: string[] = [];
+  while (i < n) {
+    const lt = s.indexOf("<", i);
+    if (lt < 0) { pieces.push(s.slice(start)); break; }
+    pieces.push(s.slice(start, lt));
+    const gt = s.indexOf(">", lt + 1);
+    if (gt < 0) break;
+    i = gt + 1;
+    start = i;
+  }
+  return decodeXml(pieces.join(""));
 }
 
-function unzipList(file: string): Promise<string[]> {
-  return run("unzip", ["-Z1", file]).then((out) => out.split(/\r?\n/).map((x) => x.trim()).filter(Boolean));
+function unzipList(file: string, deadline: number): Promise<string[]> {
+  return run("unzip", ["-Z1", file], deadline).then((out) => out.split(/\r?\n/).map((x) => x.trim()).filter(Boolean));
 }
 
-function unzipEntry(file: string, entry: string): Promise<string> {
-  return run("unzip", ["-p", file, entry]);
+function unzipEntry(file: string, entry: string, deadline: number): Promise<string> {
+  if (/[*?\[\]]/.test(entry)) return Promise.reject(new ExtractError(422, "unsafe_entry", "archive entry name contains wildcard characters"));
+  return run("unzip", ["-p", file, entry], deadline);
 }
 
 function slideNumber(entry: string): number {
@@ -80,57 +127,74 @@ function xmlTagValues(xml: string, tag = "t"): string[] {
   return out;
 }
 
-async function extractDocx(file: string): Promise<string> {
-  const xml = await unzipEntry(file, "word/document.xml");
-  return decodeXml(xml.replace(/<\/w:p\s*>/gi, "\n").replace(/<[^>]*>/g, ""));
+async function extractDocx(file: string, deadline: number): Promise<string> {
+  const xml = clipUtf8(await unzipEntry(file, "word/document.xml", deadline), MAX_XML_BYTES);
+  return stripTags(xml.replace(/<\/w:p\s*>/gi, "\n"));
 }
 
-async function extractPptx(file: string): Promise<string> {
-  const entries = (await unzipList(file)).filter((e) => /^ppt\/slides\/slide\d+\.xml$/i.test(e)).sort((a, b) => slideNumber(a) - slideNumber(b));
+async function extractPptx(file: string, deadline: number): Promise<string> {
+  const entries = (await unzipList(file, deadline))
+    .filter((e) => /^ppt\/slides\/slide\d+\.xml$/i.test(e))
+    .sort((a, b) => slideNumber(a) - slideNumber(b))
+    .slice(0, MAX_ZIP_ENTRIES);
   const parts: string[] = [];
   for (const entry of entries) {
+    checkDeadline(deadline);
     const n = slideNumber(entry);
     parts.push(`--- slide ${n} ---`);
-    parts.push(stripTags(await unzipEntry(file, entry)).trim());
+    parts.push(stripTags(clipUtf8(await unzipEntry(file, entry, deadline), MAX_XML_BYTES)).trim());
   }
   return parts.join("\n");
 }
 
-async function extractXlsx(file: string): Promise<string> {
-  const entries = (await unzipList(file)).filter((e) => /^xl\/sharedStrings\.xml$/i.test(e) || /^xl\/worksheets\/[^/]+\.xml$/i.test(e));
+async function extractXlsx(file: string, deadline: number): Promise<string> {
+  const entries = (await unzipList(file, deadline))
+    .filter((e) => /^xl\/sharedStrings\.xml$/i.test(e) || /^xl\/worksheets\/[^/]+\.xml$/i.test(e));
   entries.sort((a, b) => (/(^|\/)sharedStrings\.xml$/i.test(a) ? -1 : 1) - (/(^|\/)sharedStrings\.xml$/i.test(b) ? -1 : 1) || a.localeCompare(b));
   const parts: string[] = [];
-  for (const entry of entries) {
-    const values = xmlTagValues(await unzipEntry(file, entry));
+  for (const entry of entries.slice(0, MAX_ZIP_ENTRIES)) {
+    checkDeadline(deadline);
+    const values = xmlTagValues(clipUtf8(await unzipEntry(file, entry, deadline), MAX_XML_BYTES));
     if (values.length) parts.push(values.join("\n"));
   }
   return parts.join("\n");
 }
 
-async function extractHwpx(file: string): Promise<string> {
-  const entries = (await unzipList(file)).filter((e) => /^Contents\/section[^/]*\.xml$/i.test(e));
-  entries.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+async function extractHwpx(file: string, deadline: number): Promise<string> {
+  const entries = (await unzipList(file, deadline))
+    .filter((e) => /^Contents\/section[^/]*\.xml$/i.test(e))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .slice(0, MAX_ZIP_ENTRIES);
   const parts: string[] = [];
-  for (const entry of entries) parts.push(stripTags(await unzipEntry(file, entry)).trim());
+  for (const entry of entries) {
+    checkDeadline(deadline);
+    parts.push(stripTags(clipUtf8(await unzipEntry(file, entry, deadline), MAX_XML_BYTES)).trim());
+  }
   return parts.join("\n");
 }
 
-/** Extract plain text from an inbound attachment. Unsupported types throw ExtractError(415). */
-export async function extractText(name: string, data: Buffer): Promise<ExtractResult> {
+async function extractUncapped(name: string, data: Buffer, deadline: number): Promise<ExtractResult> {
   const ext = extension(name);
   const mime = mimeFor(name);
   if (TEXT_EXT.has(ext)) return { text: data.toString("utf8").replace(/^\uFEFF/, ""), mime };
   if (ext === "pdf") {
     return {
-      text: await withTempFile(name, data, async (file) => run("pdftotext", ["-layout", "-enc", "UTF-8", file, "-"])),
+      text: await withTempFile(name, data, async (file) => run("pdftotext", ["-layout", "-enc", "UTF-8", file, "-"], deadline)),
       mime,
     };
   }
-  if (ext === "docx") return { text: await withTempFile(name, data, extractDocx), mime };
-  if (ext === "pptx") return { text: await withTempFile(name, data, extractPptx), mime };
-  if (ext === "xlsx") return { text: await withTempFile(name, data, extractXlsx), mime };
-  if (ext === "hwpx") return { text: await withTempFile(name, data, extractHwpx), mime };
+  if (ext === "docx") return { text: await withTempFile(name, data, (file) => extractDocx(file, deadline)), mime };
+  if (ext === "pptx") return { text: await withTempFile(name, data, (file) => extractPptx(file, deadline)), mime };
+  if (ext === "xlsx") return { text: await withTempFile(name, data, (file) => extractXlsx(file, deadline)), mime };
+  if (ext === "hwpx") return { text: await withTempFile(name, data, (file) => extractHwpx(file, deadline)), mime };
   throw new ExtractError(415, "unsupported_type", `unsupported attachment type: ${ext || "(none)"}`);
+}
+
+/** Extract plain text from an inbound attachment. Unsupported types throw ExtractError(415). */
+export async function extractText(name: string, data: Buffer): Promise<ExtractResult> {
+  const deadline = Date.now() + EXTRACT_DEADLINE_MS;
+  const result = await withDeadline(extractUncapped(name, data, deadline), EXTRACT_DEADLINE_MS);
+  return { text: clipUtf8(result.text, MAX_TEXT_BYTES), mime: result.mime };
 }
 
 export const extract = extractText;

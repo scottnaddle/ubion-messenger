@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "crypto";
-export type Scope = "events:read" | "messages:send" | "rooms:read" | "files:read" | "context:read";
+export type Scope = "events:read" | "messages:send" | "rooms:read" | "files:read" | "context:read" | "settings:write";
 export type TokenRecord = { id: string; sha256: string; scopes: Scope[]; rooms?: string[] };
 export const hashToken = (t: string) => createHash("sha256").update(t, "utf8").digest("hex");
 export class TokenStore {

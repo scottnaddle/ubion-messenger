@@ -17,6 +17,14 @@ export type StoredMessage = {
 
 export type ListOptions = { since?: string; limit?: number };
 export type RoomSummary = { room_id: string; count: number; last_ts: string };
+export type RoomSettings = {
+  room_id: string;
+  autonomy: boolean;
+  enabled_by: string | null;
+  enabled_at: string | null;
+  updated_by: string | null;
+  updated_at: string | null;
+};
 
 export interface ContextStore {
   add(m: StoredMessage): void;
@@ -24,7 +32,13 @@ export interface ContextStore {
   purgeRoom(room_id: string): number;
   prune(olderThanMs: number): number;
   rooms(): RoomSummary[];
+  getSettings(room_id: string): RoomSettings;
+  setSettings(room_id: string, autonomy: boolean, by: string): RoomSettings;
   close(): void;
+}
+
+function defaultSettings(room_id: string): RoomSettings {
+  return { room_id, autonomy: false, enabled_by: null, enabled_at: null, updated_by: null, updated_at: null };
 }
 
 const DEFAULT_LIMIT = 200;
@@ -66,6 +80,7 @@ function cloneMessage(m: StoredMessage): StoredMessage {
 /** In-memory context store used by tests and small deployments. */
 export class MemoryContextStore implements ContextStore {
   private byRoom = new Map<string, Map<number, StoredMessage>>();
+  private settings = new Map<string, RoomSettings>();
 
   constructor(private now: () => number = Date.now) {}
 
@@ -114,6 +129,26 @@ export class MemoryContextStore implements ContextStore {
     return out.sort((a, b) => a.room_id < b.room_id ? -1 : a.room_id > b.room_id ? 1 : 0);
   }
 
+  getSettings(room_id: string): RoomSettings {
+    const s = this.settings.get(room_id);
+    return s ? { ...s } : defaultSettings(room_id);
+  }
+
+  setSettings(room_id: string, autonomy: boolean, by: string): RoomSettings {
+    const prev = this.settings.get(room_id) ?? defaultSettings(room_id);
+    const ts = new Date(this.now()).toISOString();
+    const next: RoomSettings = {
+      room_id,
+      autonomy,
+      enabled_by: autonomy ? by : prev.enabled_by,
+      enabled_at: autonomy ? ts : prev.enabled_at,
+      updated_by: by,
+      updated_at: ts,
+    };
+    this.settings.set(room_id, next);
+    return { ...next };
+  }
+
   close(): void {}
 }
 
@@ -159,6 +194,14 @@ export class SqliteContextStore implements ContextStore {
         PRIMARY KEY (room_id, message_id)
       );
       CREATE INDEX IF NOT EXISTS idx_messages_room_ts ON messages (room_id, ts);
+      CREATE TABLE IF NOT EXISTS room_settings (
+        room_id TEXT PRIMARY KEY,
+        autonomy INTEGER NOT NULL DEFAULT 0,
+        enabled_by TEXT,
+        enabled_at TEXT,
+        updated_by TEXT,
+        updated_at TEXT
+      );
     `);
   }
 
@@ -200,6 +243,31 @@ export class SqliteContextStore implements ContextStore {
       count: Number(row.count ?? 0),
       last_ts: String(row.last_ts ?? ""),
     }));
+  }
+
+  getSettings(room_id: string): RoomSettings {
+    const row = this.db.prepare("SELECT room_id, autonomy, enabled_by, enabled_at, updated_by, updated_at FROM room_settings WHERE room_id = ?").get(room_id) as Record<string, unknown> | undefined;
+    if (!row) return defaultSettings(room_id);
+    return {
+      room_id: String(row.room_id ?? room_id),
+      autonomy: Number(row.autonomy ?? 0) !== 0,
+      enabled_by: row.enabled_by == null ? null : String(row.enabled_by),
+      enabled_at: row.enabled_at == null ? null : String(row.enabled_at),
+      updated_by: row.updated_by == null ? null : String(row.updated_by),
+      updated_at: row.updated_at == null ? null : String(row.updated_at),
+    };
+  }
+
+  setSettings(room_id: string, autonomy: boolean, by: string): RoomSettings {
+    const prev = this.getSettings(room_id);
+    const ts = new Date(this.now()).toISOString();
+    const enabled_by = autonomy ? by : prev.enabled_by;
+    const enabled_at = autonomy ? ts : prev.enabled_at;
+    this.db.prepare(
+      "INSERT INTO room_settings (room_id, autonomy, enabled_by, enabled_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?) " +
+      "ON CONFLICT(room_id) DO UPDATE SET autonomy = excluded.autonomy, enabled_by = excluded.enabled_by, enabled_at = excluded.enabled_at, updated_by = excluded.updated_by, updated_at = excluded.updated_at"
+    ).run(room_id, autonomy ? 1 : 0, enabled_by, enabled_at, by, ts);
+    return { room_id, autonomy, enabled_by, enabled_at, updated_by: by, updated_at: ts };
   }
 
   close(): void { this.db.close(); }

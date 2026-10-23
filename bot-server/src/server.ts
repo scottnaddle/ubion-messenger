@@ -9,13 +9,14 @@ import { EventLog } from "./events";
 import { RateLimiter } from "./ratelimit";
 import { MultipartError, multipartBoundary, parseMultipart, sanitizeFilename, type MultipartResult } from "./multipart";
 import type { BotAttachment, BotEvent, BotRoom, DaouPort, InboundMessage } from "./types";
-import type { ContextStore, StoredAttachment } from "./context";
+import type { ContextStore, RoomSettings, StoredAttachment } from "./context";
 import { mimeFor } from "./mime";
 import { ExtractError, extractText } from "./extract";
 
 export type ContextOpts = {
-  store: ContextStore; rooms: string[]; allMemberRooms: boolean; retentionDays?: number;
+  store: ContextStore; retentionDays?: number;
   idleMinMessages?: number; idleMs?: number; idleCheckMs?: number;
+  autonomyNotices?: boolean;
 };
 
 export type BotServerOpts = {
@@ -23,10 +24,22 @@ export type BotServerOpts = {
   heartbeatMs?: number; sendRate?: { cap: number; perSec: number }; roomRate?: { cap: number; perSec: number };
   audit?: Audit; maxTextLen?: number; maxFileBytes?: number; now?: () => number;
   statusThrottleMs?: number; placeholderTtlMs?: number; attachRetryMs?: number[]; logger?: (m: string) => void;
-  context?: ContextOpts;
+  context?: ContextOpts; autonomyNotices?: boolean;
 };
 
+const AUTONOMY_ON_NOTICE = "유비온봇 자율활동이 켜졌습니다. 이 방의 대화를 기록하고, 대화가 끝나면 정리해 드립니다. (끄기: 방 설정 > 유비온봇 자율활동)";
+const AUTONOMY_OFF_NOTICE = "유비온봇 자율활동이 꺼졌습니다. 이제 이 방의 대화를 기록하지 않습니다. (멘션하면 계속 답합니다)";
+
 type IdleState = { count: number; first_message_id: number; last_message_id: number; first_ts: string; last_ts: string; last_at: number };
+
+function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_res, rej) => {
+    timer = setTimeout(() => rej(new Error("timeout")), ms);
+    timer.unref?.();
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer!));
+}
 
 type AttachmentMeta = { name: string; size?: number; mime?: string; file_id: string; image?: boolean };
 type Err = { status: number; code: string; message: string };
@@ -40,7 +53,7 @@ export class BotServer {
   private clients = new Set<{ ws: WebSocket; tok: TokenRecord }>();
   private sent = new Map<string, { at: number; body: unknown; status: number }>();
   private inflight = new Map<string, Promise<{ status: number; body: unknown }>>();
-  private sendRl: RateLimiter; private roomRl: RateLimiter;
+  private sendRl: RateLimiter; private roomRl: RateLimiter; private fileRl: RateLimiter; private humanRl: RateLimiter;
   private roomNames = new Map<string, string>();
   private ph = new Map<string, { id: number; timer: NodeJS.Timeout }>();
   private lastStatus = new Map<string, number>();
@@ -60,14 +73,17 @@ export class BotServer {
     this.ctx = o.context;
     this.sendRl = new RateLimiter(o.sendRate?.cap ?? 10, o.sendRate?.perSec ?? 1, now);
     this.roomRl = new RateLimiter(o.roomRate?.cap ?? 5, o.roomRate?.perSec ?? 0.5, now);
+    this.fileRl = new RateLimiter(10, 1, now);
+    this.humanRl = new RateLimiter(10, 0.2, now);
     this.http = http.createServer((q, s) => this.route(q, s).catch(() => this.json(s, 500, { error: { code: "internal", message: "internal error" } })));
     this.http.on("upgrade", (req, sock, head) => this.upgrade(req, sock, head));
     this.offs.push(o.port.onMessage((m) => {
       if (this.isContextRoom(m.room_id)) this.storeContext(m);
       if (m.is_mine || !o.allowlist.allows(m.room_id)) return;
-      if (m.message_id) { void o.port.markRead?.(m.room_id, m.message_id).catch(() => {}); this.rememberMessage(m.message_id, m.room_id); }
+      if (m.message_id) void o.port.markRead?.(m.room_id, m.message_id).catch(() => {});
       const me = o.port.botUserId();
       if (o.mentionOnly && !m.room_id.startsWith("buddy:") && !(me && m.mentions.includes(me)) && !m.text.includes(`@${o.port.botName()}`)) return;
+      if (m.message_id) this.rememberMessage(m.message_id, m.room_id);
       const event_id = this.log.nextId();
       this.inboundChain = this.inboundChain.then(() => this.publishInbound(m, event_id)).catch(() => {});
     }));
@@ -102,7 +118,8 @@ export class BotServer {
 
   private isContextRoom(room_id: string): boolean {
     const c = this.ctx;
-    return !!c && (c.allMemberRooms || c.rooms.includes(room_id));
+    if (!c) return false;
+    try { return c.store.getSettings(room_id).autonomy; } catch { return false; }
   }
 
   private storeContext(m: InboundMessage): void {
@@ -117,7 +134,8 @@ export class BotServer {
     if (looksLikeFile(m) && this.o.allowlist.allows(m.room_id) && this.o.port.getAttachments) {
       const missingIds = source.length === 0 || source.some((a) => !a.file_id);
       if (missingIds) {
-        const fetched = await this.fetchAttachmentsWithRetry(m.room_id, m.message_id);
+        let fetched: AttachmentMeta[] = [];
+        try { fetched = await this.fetchAttachmentsWithRetry(m.room_id, m.message_id); } catch { /* keep known attachments */ }
         if (fetched.length) source = fetched.map((a) => ({ name: a.name, size: a.size, type: a.mime, file_id: a.file_id, image: a.image }));
       }
     }
@@ -163,6 +181,7 @@ export class BotServer {
     const min = c.idleMinMessages ?? 5;
     const idleMs = c.idleMs ?? 20 * 60_000;
     for (const [room_id, st] of this.idle) {
+      if (!this.isContextRoom(room_id)) { this.idle.delete(room_id); continue; }
       if (st.count < min || now - st.last_at < idleMs) continue;
       const event_id = this.log.nextId();
       const ev: BotEvent = {
@@ -202,7 +221,8 @@ export class BotServer {
     let source = Array.isArray(m.attachments) ? m.attachments : [];
     const missingIds = source.length === 0 || source.some((a) => !a.file_id);
     if (missingIds && looksLikeFile(m) && this.o.port.getAttachments) {
-      const fetched = await this.fetchAttachmentsWithRetry(m.room_id, m.message_id);
+      let fetched: AttachmentMeta[] = [];
+      try { fetched = await this.fetchAttachmentsWithRetry(m.room_id, m.message_id); } catch { /* keep known attachments */ }
       if (fetched.length) source = fetched.map((a) => ({ name: a.name, size: a.size, type: a.mime, file_id: a.file_id, image: a.image }));
     }
     const attachments: BotAttachment[] = source.map((a, index) => ({
@@ -222,11 +242,16 @@ export class BotServer {
     const get = port.getAttachments;
     if (!get) return [];
     const delays = this.o.attachRetryMs ?? [0, 500, 1000, 2000];
+    const deadline = Date.now() + 10_000;
     for (const raw of delays) {
       const delay = Math.max(0, Number(raw) || 0);
-      if (delay) await new Promise((r) => setTimeout(r, delay));
+      if (delay) {
+        if (Date.now() + delay >= deadline) break;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+      if (Date.now() >= deadline) break;
       try {
-        const found = await Promise.race([get.call(port, room_id, message_id), new Promise<never>((_, rej) => { const t = setTimeout(() => rej(new Error("timeout")), 10_000); t.unref(); })]);
+        const found = await raceTimeout(Promise.resolve(get.call(port, room_id, message_id)), Math.max(1, deadline - Date.now()));
         if (found && found.length) return found;
       } catch { /* retry */ }
     }
@@ -278,6 +303,8 @@ export class BotServer {
     const path = url.pathname;
     if (q.method === "GET" && path === "/bot/health") return this.json(s, 200, { ok: true, daou: this.o.port.healthy().state, ws_clients: this.clients.size, last_event_id: this.lastId() });
     const tok = this.o.tokens.verify(q.headers.authorization);
+    const settingsMatch = (q.method === "GET" || q.method === "PUT") ? /^\/bot\/rooms\/([^/]+)\/settings$/.exec(path) : null;
+    if (settingsMatch) return this.roomSettings(q, s, tok, settingsMatch[1]);
     if (!tok) return this.fail(s, E(401, "unauthorized", "missing or invalid bearer token"));
     const fileMatch = q.method === "GET" ? /^\/bot\/files\/(\d+)(\/text)?$/.exec(path) : null;
     if (fileMatch) return this.files(q, s, tok, Number(fileMatch[1]), !!fileMatch[2]);
@@ -288,7 +315,7 @@ export class BotServer {
       } else if (!hasScope(tok, "rooms:read")) return this.fail(s, E(403, "forbidden_scope", "rooms:read required"));
       const rooms = (await this.o.port.listRooms())
         .filter((r) => { this.roomNames.set(r.room_id, r.room_name); return all || this.o.allowlist.allows(r.room_id, tok); })
-        .map((r) => ({ room_id: r.room_id, room_name: r.room_name, kind: r.kind ?? "unknown", member_count: r.member_count ?? null, context: this.isContextRoom(r.room_id) }));
+        .map((r) => ({ room_id: r.room_id, room_name: r.room_name, kind: r.kind ?? "unknown", member_count: r.member_count ?? null, autonomy: this.isContextRoom(r.room_id) }));
       return this.json(s, 200, { rooms });
     }
     const messagesMatch = q.method === "GET" ? /^\/bot\/rooms\/([^/]+)\/messages$/.exec(path) : null;
@@ -316,6 +343,76 @@ export class BotServer {
       return this.json(s, r.status, r.body);
     }
     return this.fail(s, E(404, "not_found", "no such endpoint"));
+  }
+
+  private publicSettings(settings: RoomSettings) {
+    return {
+      room_id: settings.room_id, autonomy: settings.autonomy,
+      enabled_by: settings.enabled_by, enabled_at: settings.enabled_at,
+      updated_by: settings.updated_by, updated_at: settings.updated_at, can_edit: true,
+    };
+  }
+
+  private async roomSettings(q: http.IncomingMessage, s: http.ServerResponse, tok: TokenRecord | null, encodedRoom: string) {
+    let room_id: string;
+    try { room_id = decodeURIComponent(encodedRoom); }
+    catch { return this.fail(s, E(400, "bad_request", "invalid room_id")); }
+    const c = this.ctx;
+    if (!c) return this.fail(s, E(404, "context_disabled", "context store is not configured"));
+    const isGet = q.method === "GET";
+    let actor: string;
+    let token_id: string | undefined;
+    if (tok) {
+      if (isGet) {
+        if (!hasScope(tok, "context:read") && !hasScope(tok, "settings:write"))
+          return this.fail(s, E(403, "forbidden_scope", "context:read or settings:write required"));
+      } else if (!hasScope(tok, "settings:write")) {
+        return this.fail(s, E(403, "forbidden_scope", "settings:write required"));
+      }
+      if (tok.rooms && !tok.rooms.includes(room_id))
+        return this.fail(s, E(403, "room_not_allowed", "token is not allowed for this room"));
+      actor = tok.id;
+      token_id = tok.id;
+    } else {
+      const raw = q.headers["x-daou-session"];
+      const cookie = typeof raw === "string" ? raw : undefined;
+      if (!cookie) return this.fail(s, E(401, "unauthorized", "missing authentication"));
+      if (cookie.length > 4096 || /[\r\n]/.test(cookie))
+        return this.fail(s, E(401, "invalid_session", "invalid session"));
+      const verify = this.o.port.verifyUserSession;
+      if (!verify) return this.fail(s, E(401, "invalid_session", "invalid session"));
+      let user: { user_id: string; name: string } | null = null;
+      try { user = await verify.call(this.o.port, cookie); } catch { user = null; }
+      if (!user) return this.fail(s, E(401, "invalid_session", "invalid session"));
+      const rl = this.humanRl.take(user.user_id);
+      if (!rl.ok) {
+        const retry = Math.ceil(rl.retryAfterMs / 1000);
+        return this.json(s, 429, { error: { code: "rate_limited", message: "slow down", retry_after_s: retry } }, { "retry-after": String(retry) });
+      }
+      let member = false;
+      try { member = !!(this.o.port.isRoomMember && await this.o.port.isRoomMember(room_id, user.user_id)); } catch { member = false; }
+      if (!member) return this.fail(s, E(403, "not_room_member", "user is not a member of this room"));
+      actor = user.user_id;
+    }
+    if (isGet) return this.json(s, 200, this.publicSettings(c.store.getSettings(room_id)));
+    let b: any;
+    try { b = JSON.parse(await readBody(q, 16 * 1024)); }
+    catch { return this.fail(s, E(400, "bad_request", "invalid JSON body")); }
+    if (!b || typeof b.autonomy !== "boolean") return this.fail(s, E(400, "bad_request", "autonomy (boolean) required"));
+    const prev = c.store.getSettings(room_id);
+    const changed = prev.autonomy !== b.autonomy;
+    const settings = c.store.setSettings(room_id, b.autonomy, actor);
+    if (!b.autonomy) this.idle.delete(room_id);
+    let notice_sent = false;
+    if (changed) {
+      this.audit.log({ action: "settings_update", ...(token_id ? { token_id } : {}), actor, room_id, autonomy: b.autonomy, status: "ok" });
+      const notices = this.o.autonomyNotices ?? this.ctx?.autonomyNotices ?? true;
+      if (notices) {
+        try { await this.o.port.sendText(room_id, b.autonomy ? AUTONOMY_ON_NOTICE : AUTONOMY_OFF_NOTICE); notice_sent = true; }
+        catch (e: any) { this.logf(`autonomy notice failed room=${room_id} err=${String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 120)}`); }
+      }
+    }
+    return this.json(s, 200, { settings: this.publicSettings(settings), notice_sent });
   }
 
   private roomMessages(url: URL, s: http.ServerResponse, tok: TokenRecord, room_id: string) {
@@ -366,9 +463,17 @@ export class BotServer {
         if (!Number.isSafeInteger(n)) badIndex = true; else index = n;
       }
     }
-    if (!hasScope(tok, "files:read") && !hasScope(tok, "events:read")) {
+    const hasFiles = hasScope(tok, "files:read");
+    const hasEvents = hasScope(tok, "events:read");
+    if (!hasFiles && !hasEvents) {
       this.fileAudit(action, tok, queryRoom ?? this.messageRooms.get(message_id), message_id, undefined, "denied", "forbidden_scope");
       return this.fail(s, E(403, "forbidden_scope", "files:read or events:read required"));
+    }
+    const frl = this.fileRl.take(tok.id);
+    if (!frl.ok) {
+      const retry = Math.ceil(frl.retryAfterMs / 1000);
+      this.fileAudit(action, tok, queryRoom ?? this.messageRooms.get(message_id), message_id, undefined, "limited", "rate_limited");
+      return this.json(s, 429, { error: { code: "rate_limited", message: "slow down", retry_after_s: retry } }, { "retry-after": String(retry) });
     }
     if (badIndex) {
       this.fileAudit(action, tok, queryRoom ?? this.messageRooms.get(message_id), message_id, undefined, "error", "not_found");
@@ -379,6 +484,10 @@ export class BotServer {
     let atts: AttachmentMeta[] = [];
     const cached = this.messageRooms.get(message_id);
     if (queryRoom) {
+      if (!hasFiles) {
+        this.fileAudit(action, tok, queryRoom, message_id, undefined, "denied", "forbidden_scope");
+        return this.fail(s, E(403, "forbidden_scope", "files:read required for explicit room_id"));
+      }
       room_id = queryRoom;
       if (!this.o.allowlist.allows(room_id, tok)) {
         this.fileAudit(action, tok, room_id, message_id, undefined, "denied", "room_not_allowed");
@@ -392,12 +501,6 @@ export class BotServer {
         return this.fail(s, E(403, "room_not_allowed", "room is not allowlisted"));
       }
       atts = await this.lookupAttachments(room_id, message_id);
-    } else {
-      for (const candidate of this.o.allowlist.rooms()) {
-        if (!this.o.allowlist.allows(candidate, tok)) continue;
-        const found = await this.lookupAttachments(candidate, message_id);
-        if (found.length) { room_id = candidate; atts = found; this.rememberMessage(message_id, candidate); break; }
-      }
     }
     if (!room_id || !atts.length) {
       this.fileAudit(action, tok, room_id, message_id, undefined, "error", "not_found");
@@ -419,7 +522,7 @@ export class BotServer {
       return this.fail(s, E(404, "not_found", "attachment not found"));
     }
     let file: { data: Buffer; contentType: string; name: string };
-    try { file = await download.call(this.o.port, room_id, message_id, index); }
+    try { file = await download.call(this.o.port, room_id, message_id, index, att.file_id); }
     catch {
       this.fileAudit(action, tok, room_id, message_id, att, "error", "not_found");
       return this.fail(s, E(404, "not_found", "attachment not found"));
@@ -429,7 +532,7 @@ export class BotServer {
       return this.fail(s, E(413, "too_large", "file exceeds maxFileBytes"));
     }
     const name = file.name || att.name || "file";
-    const mime = file.contentType && !/^application\/octet-stream\b/i.test(file.contentType) ? file.contentType : att.mime || mimeFor(name);
+    const mime = mimeFor(name);
     if (!textMode) {
       this.fileAudit(action, tok, room_id, message_id, { ...att, name }, "ok");
       s.writeHead(200, {

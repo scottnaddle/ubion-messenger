@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { MessengerCore } from "../../desktop/electron/core/messenger";
 import { HttpError } from "../../desktop/electron/core/daou-client";
 import type { AttachModel, RoomKind } from "../../desktop/electron/core/types";
@@ -33,6 +34,7 @@ export function describeError(e: unknown): string {
 /** Real DaouPort over the desktop MessengerCore (REST + BOSH). Logs in as the dedicated bot account only. */
 export class CorePort implements DaouPort {
   core: MessengerCore; private policy = new ReloginPolicy(); private known = new Set<string>(); state = "offline";
+  private sessionCache = new Map<string, { at: number; user: { user_id: string; name: string } | null }>();
   constructor(private cfg: { serverUrl: string; username: string; password: string }, private log: (m: string) => void) {
     this.core = new MessengerCore(cfg.serverUrl);
     this.core.log = (m) => log(`[core] ${m}`);
@@ -79,14 +81,63 @@ export class CorePort implements DaouPort {
     const ext = a.extention ? `.${String(a.extention).replace(/^\./, "")}` : "";
     return [{ name, size: a.size, mime: mimeFor(/\.[a-z0-9]{1,8}$/i.test(name) ? name : `${name}${ext}`), file_id: a.cryptId, image: !!a.imageFile }];
   }
-  async downloadAttachment(room_id: string, message_id: number, index: number): Promise<{ data: Buffer; contentType: string; name: string }> {
-    const atts = await this.getAttachments(room_id, message_id);
-    const att = atts[index];
-    if (!att) throw new Error("attachment not found");
-    const res = await this.core.client.fetchBinary(this.core.client.fileUrlPath(att.file_id, message_id));
-    const guessed = att.mime || mimeFor(att.name);
-    const contentType = !res.contentType || /^application\/octet-stream\b/i.test(res.contentType) ? guessed : res.contentType;
-    return { data: res.data, contentType, name: att.name };
+  async downloadAttachment(room_id: string, message_id: number, index: number, file_id?: string): Promise<{ data: Buffer; contentType: string; name: string }> {
+    let id = file_id;
+    let name = "";
+    if (!id) {
+      const atts = await this.getAttachments(room_id, message_id);
+      const att = atts[index];
+      if (!att) throw new Error("attachment not found");
+      id = att.file_id;
+      name = att.name;
+    }
+    const res = await this.core.client.fetchBinary(this.core.client.fileUrlPath(id, message_id));
+    return { data: res.data, contentType: mimeFor(name), name };
+  }
+  async verifyUserSession(cookie: string): Promise<{ user_id: string; name: string } | null> {
+    const key = createHash("sha256").update(cookie, "utf8").digest("hex");
+    const now = Date.now();
+    const hit = this.sessionCache.get(key);
+    if (hit && now - hit.at < 60_000) return hit.user;
+    let user: { user_id: string; name: string } | null = null;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      const res = await fetch(`${this.cfg.serverUrl.replace(/\/$/, "")}/api/user/session`, {
+        method: "GET",
+        headers: { Cookie: cookie, "X-Requested-With": "XMLHttpRequest", Accept: "application/json, text/javascript, */*; q=0.01" },
+        redirect: "manual",
+        signal: ctrl.signal,
+      });
+      if (res.status === 200) {
+        const body: any = await res.json().catch(() => null);
+        const id = body?.data?.id;
+        if (id != null && id !== "") user = { user_id: String(id), name: String(body?.data?.name ?? "") };
+      }
+    } catch {
+      user = null;
+    } finally {
+      clearTimeout(timer);
+    }
+    this.sessionCache.set(key, { at: now, user });
+    while (this.sessionCache.size > 500) {
+      const first = this.sessionCache.keys().next();
+      if (first.done) break;
+      this.sessionCache.delete(first.value);
+    }
+    return user;
+  }
+  async isRoomMember(room_id: string, user_id: string): Promise<boolean> {
+    const i = room_id.indexOf(":");
+    const kind = i < 0 ? "" : room_id.slice(0, i);
+    const seq = i < 0 ? Number.NaN : Number(room_id.slice(i + 1));
+    if (!Number.isFinite(seq)) return false;
+    if (kind === "buddy") return String(seq) === String(user_id);
+    if (kind === "room") {
+      const members = await this.core.client.listMembers(seq);
+      return members.some((m) => String(m.userId) === String(user_id));
+    }
+    return false;
   }
   onMessage(cb: (m: InboundMessage) => void) {
     return this.core.on("message", (m) => (m as any).attachUpdate ? undefined : cb({
