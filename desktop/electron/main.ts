@@ -1324,7 +1324,12 @@ function registerIpc() {
     searchCache.clear();
     return { docs: 0 };
   });
-  handle("msg:send", (key: string, text: string) => core.sendText(key, text));
+  handle("msg:send", (key: string, text: string) => {
+    // 안전 모드(UBM_SELF_ONLY)에서는 일반 전송도 나에게만. 인용 답장(quote reply)은 렌더러에서
+    // 본문을 조합해 이 msg:send 경로로 전송하므로, 이 가드가 그 경로까지 커버한다 (files:sendBuffer와 동일).
+    if (process.env.UBM_SELF_ONLY === "1") guardedRoomSeq(key);
+    return core.sendText(key, text);
+  });
   handle("msg:delete", (ids: unknown) => core.client.deleteChatMessages(ids));
   handle("msg:forwardRoom", (roomSeq: number, cryptIds: string[]) => {
     const me = core.user?.id;
