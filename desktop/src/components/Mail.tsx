@@ -68,7 +68,8 @@ function MailBody({ html, onHeight }: { html: string; onHeight?: (h: number) => 
   return <iframe ref={ref} className="mail-frame" title="메일 본문" sandbox="allow-same-origin" srcDoc={doc} style={{ height: h }} onLoad={onLoad} />;
 }
 
-function Overview({ page, inboxUnread, folders, onSender, onPick }: {
+function Overview({ page, inboxUnread, folders, onSender, onPick, onWrite }: {
+  onWrite: () => void;
   page: MailListPage | null; inboxUnread: number; folders: MailFolders | null; onSender: (q: string) => void; onPick: (m: MailListItem) => void;
 }) {
   const o = mailOverview(page, inboxUnread);
@@ -108,8 +109,8 @@ function Overview({ page, inboxUnread, folders, onSender, onPick }: {
         </section>
       </div>
       <div className="mail-ov-actions">
-        <button className="primary small" onClick={() => open(WRITE_URL)}><Icon name="external" size={14} /> 웹에서 메일 쓰기</button>
-        <span className="muted tiny">메일을 선택하면 여기에서 바로 읽을 수 있습니다. 쓰기·답장은 웹 메일에서 열립니다.</span>
+        <button className="primary small" onClick={onWrite}>메일 쓰기</button>
+        <span className="muted tiny">메일을 선택하면 여기에서 바로 읽을 수 있습니다.</span>
       </div>
     </div>
   );
@@ -351,7 +352,7 @@ export function Mail() {
             </div>
           </div>
         )}
-        {!compose && !sel && <Overview page={list} inboxUnread={inboxUnread} folders={folders} onSender={(q) => search(undefined, q)} onPick={(m) => void openMsg(m)} />}
+        {!compose && !sel && <Overview page={list} inboxUnread={inboxUnread} folders={folders} onSender={(q) => search(undefined, q)} onPick={(m) => void openMsg(m)} onWrite={() => startCompose("new")} />}
         {!compose && sel && msgLoading && <div className="muted small pad">불러오는 중…</div>}
         {!compose && sel && msgErr && <div className="mail-error pad"><span>{msgErr}</span><button className="link" onClick={() => void openMsg(sel)}>다시 시도</button></div>}
         {!compose && sel && msg && body && (
