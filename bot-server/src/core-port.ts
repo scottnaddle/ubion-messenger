@@ -63,7 +63,7 @@ export class CorePort implements DaouPort {
   async deleteMessages(_room_id: string, ids: number[]) { await this.core.client.deleteChatMessages(ids); }
   async markRead(room_id: string, message_id: number) { try { await this.core.markRead(room_id, message_id); } catch (e) { this.log(`markRead failed ${room_id}: ${describeError(e)}`); } }
   onMessage(cb: (m: InboundMessage) => void) {
-    return this.core.on("message", (m) => cb({
+    return this.core.on("message", (m) => (m as any).attachUpdate ? undefined : cb({
       room_id: m.roomKey, message_id: m.messageId ?? 0, sender: { id: String(m.sendUserSeq ?? ""), name: m.sendUserName }, text: m.message ?? "",
       mentions: [...(m.message ?? "").matchAll(/@\[?([^\s\]]+)/g)].map((x) => x[1]),
       attachments: m.attach ? [{ name: (m.attach as any).name ?? "file", size: (m.attach as any).size }] : [], reply_to: null,

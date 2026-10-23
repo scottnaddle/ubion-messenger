@@ -131,6 +131,7 @@ function wireCore() {
     core.on("portalNewPostSummary", (p) => notifyNewPostSummary(p)),
     core.on("rooms", () => updateBadge()),
     core.on("message", (m) => {
+      if ((m as any).attachUpdate) return; // attach fill-in of an already-delivered file message (renderer upserts it)
       maybeNotify(m);
       try {
         const ev = todoService.handleMessage(m, m.roomKey, m.roomKind, m.isMine, core.user?.id);
