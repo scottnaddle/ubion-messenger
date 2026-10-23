@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, media, type ChatMessage } from "../api";
 import { attachKind, durationLabel, expiryLabel, fileIcon, isExpired, sizeLabel } from "../../electron/core/attach";
+import { isPreviewExtension } from "../../electron/core/doc-preview";
 import { Icon } from "./ui";
 import { ForwardModal } from "./ForwardModal";
 
@@ -85,8 +86,25 @@ export function FileCard({
       canNotice={!!ctxNotice} onNotice={ctxNotice} onClose={() => setMenu(null)}
     />
   );
+  const canPreview = !expired && !!a.cryptId && m.messageId != null && kind === "file" && isPreviewExtension(a.name, a.extention);
+  const [previewing, setPreviewing] = useState(false);
+  const preview = async () => {
+    if (!canPreview || previewing) return;
+    setPreviewing(true);
+    try {
+      await api().previewFile(a.cryptId, m.messageId!, a.name, a.extention);
+    } catch (e) {
+      toast(`미리보기 실패: ${(e as Error).message}`);
+    } finally {
+      setPreviewing(false);
+    }
+  };
   const actions = (
     <div className="fc-actions">
+      {canPreview && <>
+        <button className="link tiny" disabled={previewing} onClick={() => void preview()}>{previewing ? "여는 중…" : "미리보기"}</button>
+        <span className="fc-sep">|</span>
+      </>}
       <button className="link tiny" disabled={expired} onClick={() => save("downloads")}>저장</button>
       <span className="fc-sep">|</span>
       <button className="link tiny" disabled={expired} onClick={() => save("saveAs")}>다른 이름으로 저장</button>

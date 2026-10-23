@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": ["vite/client"]
   },
-  "include": ["src/**/*", "electron/core/types.ts", "electron/core/messages.ts", "electron/core/chat-delete.ts", "electron/core/forward.ts", "electron/core/room-notice.ts", "electron/core/flex.ts", "electron/core/portal.ts", "electron/core/attach.ts", "electron/core/mail.ts", "electron/core/mail-compose.ts", "electron/core/mail-text.ts", "electron/core/mail-attach.ts", "electron/core/bot-settings.ts", "electron/core/backup.ts", "electron/core/capture.ts"]
+  "include": ["src/**/*", "electron/core/types.ts", "electron/core/messages.ts", "electron/core/chat-delete.ts", "electron/core/forward.ts", "electron/core/room-notice.ts", "electron/core/flex.ts", "electron/core/portal.ts", "electron/core/attach.ts", "electron/core/mail.ts", "electron/core/mail-compose.ts", "electron/core/mail-text.ts", "electron/core/mail-attach.ts", "electron/core/bot-settings.ts", "electron/core/backup.ts", "electron/core/capture.ts", "electron/core/doc-preview.ts"]
 }

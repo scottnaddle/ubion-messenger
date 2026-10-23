@@ -37,6 +37,7 @@ import { shouldNotify } from "./core/room-push";
 import { apiRoomSeq, checkForwardTarget } from "./core/forward";
 import { backupFileName, historyClearEnabled, normalizeBackupFileType } from "./core/backup";
 import { maskSecrets } from "./core/mask";
+import { buildPreviewUrl, docViewerServerEnabled, docViewerTemplate, planPreview, previewTempName, type PreviewMode } from "./core/doc-preview";
 import {
   CAPTURE_OVERLAY_DONE, CAPTURE_OVERLAY_IMAGE, CAPTURE_START, captureFileName, captureOverlayUrl, capturePermissionError,
   captureScale, captureThumbnailSize, normalizeCropRect, pickScreenSource, type CaptureResult,
@@ -286,6 +287,8 @@ async function syncPortalCookies() {
 
 async function clearPortalSession() {
   if (portalWin && !portalWin.isDestroyed()) portalWin.close();
+  if (docViewerWin && !docViewerWin.isDestroyed()) docViewerWin.close();
+  clearPreviewTemp();
   await portalSession().clearStorageData().catch(() => undefined);
 }
 
@@ -533,6 +536,50 @@ async function openPortalWindow(url: string) {
   });
   portalWin.on("closed", () => (portalWin = null));
   await portalWin.loadURL(url);
+}
+
+// ---------- 문서 미리보기 viewer window ----------
+/** Feature flag: server doc viewer only when UBM_DOC_VIEWER_URL is set (the official viewer URL is still unknown). */
+const DOC_VIEWER_SERVER = docViewerServerEnabled(process.env);
+let docViewerWin: BrowserWindow | null = null;
+const previewTempDir = () => path.join(app.getPath("temp"), "ubion-preview");
+
+/**
+ * server=true: the configured doc-viewer URL in the portal partition (SSO cookies synced first), same-host only.
+ * server=false: a downloaded temp file (pdf/images/txt) in a cookie-less in-memory session; no navigation.
+ * plugins:true enables Chromium's built-in PDF viewer.
+ */
+async function openDocViewer(o: { url?: string; file?: string; title: string; server: boolean }) {
+  if (o.server) await syncPortalCookies();
+  if (docViewerWin && !docViewerWin.isDestroyed()) docViewerWin.close();
+  const base = core.client.baseUrl;
+  const w = new BrowserWindow({
+    width: 1000, height: 860, title: `${o.title} — 미리보기`, autoHideMenuBar: true,
+    webPreferences: {
+      partition: o.server ? PORTAL_PARTITION : "doc-preview", plugins: true,
+      contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true,
+    },
+  });
+  docViewerWin = w;
+  w.on("page-title-updated", (e) => e.preventDefault());
+  w.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (/^https?:/.test(u)) void shell.openExternal(u);
+    return { action: "deny" };
+  });
+  const block = (e: Electron.Event, u: string) => {
+    if (o.server && isPortalUrl(u, base)) return;
+    e.preventDefault();
+    if (/^https?:/.test(u)) void shell.openExternal(u);
+  };
+  w.webContents.on("will-navigate", block);
+  w.webContents.on("will-redirect", block);
+  w.on("closed", () => { if (docViewerWin === w) docViewerWin = null; });
+  if (o.server && o.url) await w.loadURL(o.url);
+  else if (o.file) await w.loadFile(o.file);
+}
+
+function clearPreviewTemp() {
+  try { fs.rmSync(previewTempDir(), { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
 function notifyNewPost(p: MessengerEventMap["portalNewPost"]) {
@@ -1083,6 +1130,37 @@ function registerIpc() {
     if (mode === "open") await shell.openPath(r.target);
     return r.target;
   });
+  handle("file:preview", async (cryptId: string, messageId: number, name: string, ext?: string): Promise<{ mode: PreviewMode }> => {
+    if (typeof cryptId !== "string" || !cryptId) throw new Error("미리보기할 파일 정보가 없습니다.");
+    const mid = Number.isFinite(Number(messageId)) ? Number(messageId) : undefined;
+    const template = DOC_VIEWER_SERVER ? docViewerTemplate(process.env) : "";
+    const mode = planPreview(name, ext, DOC_VIEWER_SERVER);
+    try {
+      if (mode === "server") {
+        const url = buildPreviewUrl(core.client.baseUrl, cryptId, core.user?.id, template);
+        if (!url) throw new Error("문서 뷰어 주소(UBM_DOC_VIEWER_URL)가 올바르지 않습니다.");
+        await openDocViewer({ url, title: name, server: true });
+        return { mode };
+      }
+      const p = core.client.fileUrlPath(cryptId, mid);
+      const hit = mediaCache.get(p);
+      const { data, contentType } = hit || (await core.client.fetchBinary(p));
+      if (!hit) mediaCache.set(p, { data, contentType });
+      const dir = previewTempDir();
+      fs.mkdirSync(dir, { recursive: true });
+      const target = path.join(dir, previewTempName(name, mid, ext));
+      fs.writeFileSync(target, data);
+      if (mode === "inapp") await openDocViewer({ file: target, title: name, server: false });
+      else {
+        const err = await shell.openPath(target);
+        if (err) throw new Error(err);
+      }
+      return { mode };
+    } catch (e) {
+      console.warn("file preview failed:", maskSecrets(String((e as Error)?.message ?? e)));
+      throw e;
+    }
+  });
   handle("files:showInFolder", (p: string) => {
     if (typeof p === "string" && savedPaths.has(p)) shell.showItemInFolder(p);
   });
@@ -1202,6 +1280,7 @@ app.on("before-quit", () => {
   quitting = true;
   awayMonitor?.stop();
   core.shutdown();
+  clearPreviewTemp();
 });
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin" && !settings.closeToTray) app.quit();

@@ -7,6 +7,7 @@ import type {
 import type { BotSettingsResult } from "../electron/core/bot-settings";
 import type { BackupFileType, BackupItem } from "../electron/core/backup";
 import type { CaptureResult } from "../electron/core/capture";
+import type { PreviewMode } from "../electron/core/doc-preview";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
 
 export type LockStatus = { enabled: boolean; locked: boolean; timeoutMin: number };
@@ -43,6 +44,8 @@ export type Bridge = {
   forwardToMembers(memberSeqs: number[], cryptIds: string[], roomType: "single" | "group"): Promise<{ ok: true; count: number }>;
   registerNotice(key: string, messageId: number): Promise<Room>;
   setRoomPush(key: string, usePush: boolean): Promise<void>;
+  /** 문서 미리보기: server viewer (UBM_DOC_VIEWER_URL) or local download → in-app window / OS default app. */
+  previewFile(cryptId: string, messageId: number, name: string, ext?: string): Promise<{ mode: PreviewMode }>;
   /** 화면 캡쳐: region-select overlay; null when cancelled (Esc). */
   captureScreen(): Promise<CaptureResult | null>;
   backup: {

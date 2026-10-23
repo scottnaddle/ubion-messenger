@@ -1,6 +1,7 @@
 /** Mock bridge for headless UI screenshots / browser preview (only when window.ubion is absent). Fake data only. */
 import type { Bridge } from "./api";
 import { captureFileName } from "../electron/core/capture";
+import { isLocalInAppExtension } from "../electron/core/doc-preview";
 
 export function installMockIfNeeded() {
   if ((window as any).ubion) return;
@@ -122,6 +123,10 @@ export function installMockIfNeeded() {
         };
       }
       return room as any;
+    },
+    previewFile: async (_cryptId: string, _messageId: number, name: string) => {
+      if (new URLSearchParams(location.search).get("previewfail")) throw new Error("미리보기 실패 (mock)");
+      return { mode: isLocalInAppExtension(name) ? "inapp" as const : "external" as const };
     },
     captureScreen: async () => {
       if (new URLSearchParams(location.search).get("capturefail")) throw new Error("화면 캡쳐 권한이 없습니다 (mock)");
