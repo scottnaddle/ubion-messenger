@@ -105,6 +105,8 @@ export class MessengerCore {
   log: (msg: string) => void = (m) => console.log(`[core] ${m}`);
   private em = new EventEmitter();
   private rooms = new Map<string, Room>();
+  /** Locally-created group rooms the server list has not caught up with yet. */
+  private pendingGroupRooms = new Map<string, Room>();
   /** Optimistic per-room notification toggles; kept until the server reports the same value. */
   private roomPushOverrides = new Map<string, boolean>();
   private presence = new Map<number, Map<string, Presence>>();
@@ -204,6 +206,7 @@ export class MessengerCore {
     this.transport = null;
     await this.client.logout();
     this.rooms.clear();
+    this.pendingGroupRooms.clear();
     this.roomPushOverrides.clear();
     this.presence.clear();
     this.lastIds.clear();
@@ -554,6 +557,11 @@ export class MessengerCore {
       else room.usePush = desired;
     }
     this.rooms = new Map(list.map((r) => [r.key, r]));
+    // The server can lag behind a just-created group room; keep showing it until it appears.
+    for (const [key, room] of this.pendingGroupRooms) {
+      if (this.rooms.has(key)) this.pendingGroupRooms.delete(key);
+      else this.rooms.set(key, room);
+    }
     if (this.activeRoomKey && this.focused) {
       const a = this.rooms.get(this.activeRoomKey);
       if (a) a.unread = 0;
@@ -670,10 +678,24 @@ export class MessengerCore {
 
   async createGroup(memberIds: number[]): Promise<Room> {
     const seq = await this.client.createGroupRoom(memberIds);
-    await this.refreshRooms();
-    return this.rooms.get(`room:${seq}`) || {
-      key: `room:${seq}`, kind: "room", seq, name: "새 대화방", preview: "", unread: 0, usePin: false, usePush: true, avatar: "", isSelf: false,
+    const key = `room:${seq}`;
+    // Register a placeholder first: a brand-new room is often absent from the server list,
+    // and a failing refresh must not lose a room the server already created.
+    const byId = new Map((this.usersCache || []).map((p) => [p.userId, p.name]));
+    const names = memberIds.map((id) => byId.get(id)).filter((n): n is string => !!n);
+    const placeholder: Room = {
+      key, kind: "room", seq, name: names.length ? names.join(", ") : "새 대화방",
+      preview: "", unread: 0, usePin: false, usePush: true, avatar: "", isSelf: false,
     };
+    this.pendingGroupRooms.set(key, placeholder);
+    this.rooms.set(key, placeholder);
+    try {
+      await this.refreshRooms();
+    } catch (e) {
+      this.log(`createGroup refresh failed: ${(e as Error).message}`);
+      this.emitRooms();
+    }
+    return this.rooms.get(key) || placeholder;
   }
 
   async setPin(key: string, pin: boolean) {

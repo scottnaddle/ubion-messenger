@@ -31,6 +31,21 @@ export class HttpError extends Error {
 const ROOM_TYPE: Record<string, string> = { buddy: "single", room: "room", pubsub: "pubsub" };
 
 /**
+ * Exact official create-group request path:
+ * POST /api/chat/rooms?memberSeq=..&memberSeq=..&userSeq=<me>, JSON body.
+ * Drops invalid ids and the caller's own id, and dedupes repeated members.
+ */
+export function buildCreateGroupRoomPath(memberIds: number[], userSeq: number): string {
+  const me = Number(userSeq);
+  const ids = [
+    ...new Set(memberIds.map(Number).filter((id) => Number.isFinite(id) && id > 0 && id !== me)),
+  ];
+  if (!ids.length) throw new Error("대화 상대를 선택하세요");
+  const qs = ids.map((id) => `memberSeq=${id}`).join("&");
+  return `/api/chat/rooms?${qs}&userSeq=${me}`;
+}
+
+/**
  * DaouOffice (Group Office) REST client, cookie SSO (GOSSOcookie).
  * Endpoints mirrored from the official UBIONMessenger renderer bundle.
  * Never logs credentials or cookies.
@@ -499,9 +514,10 @@ export class DaouClient {
 
   async createGroupRoom(memberIds: number[]): Promise<number> {
     const uid = this.requireUser().id;
-    const qs = memberIds.map((id) => `memberSeq=${id}`).join("&");
-    const body = await this.getJson(`/api/chat/rooms?${qs}&userSeq=${uid}`, { method: "POST", json: {} });
-    return Number(body.data.roomSeq);
+    const body = await this.getJson(buildCreateGroupRoomPath(memberIds, uid), { method: "POST", json: {} });
+    const roomSeq = Number(body?.data?.roomSeq);
+    if (!Number.isFinite(roomSeq) || roomSeq <= 0) throw new Error("그룹 대화방을 만들지 못했습니다");
+    return roomSeq;
   }
 
   // ---------- files ----------
