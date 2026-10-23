@@ -28,6 +28,7 @@ import {
   FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY, parseFlexTodoTotal, flexProgressCountFromText,
 } from "./core/flex";
 import { normalizeApprovalDocId, normalizeApprovalListArgs } from "./core/portal";
+import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import {
   accountKey, isWebLoginNavAllowed, isWebLoginSuccessUrl, markWebAccount, planLogin, unmarkWebAccount,
   webLoginUrl, WEB_LOGIN_MESSAGE,
@@ -753,6 +754,11 @@ function registerIpc() {
   handle("portal:menu", (force?: boolean) => core.portal.menu(core.client.baseUrl, !!force));
   handle("portal:setActive", (active: boolean) => core.portal.setHomeActive(!!active));
   handle("portal:mailFolders", () => core.portal.mailFolders());
+  handle("portal:mailList", (folder: unknown, page: unknown, keyword: unknown) => {
+    const a = normalizeMailListArgs(folder, page, keyword);
+    return core.portal.mailList(a.folder, a.page, a.keyword);
+  });
+  handle("portal:mailRead", (folder: unknown, uid: unknown) => core.portal.mailRead(validFolder(folder), normalizeMailUid(uid)));
   handle("portal:approvalList", (box: unknown, page: unknown, keyword: unknown) => {
     const a = normalizeApprovalListArgs(box, page, keyword);
     return core.portal.approvalList(a.box, a.page, a.keyword);

@@ -29,6 +29,8 @@ const api = {
     setActive: (active: boolean) => call<void>("portal:setActive", active),
     menu: (force?: boolean) => call<{ items: import("./core/portal").MenuEntry[]; source: "server" | "static" }>("portal:menu", force),
     mailFolders: () => call<import("./core/portal").MailFolders>("portal:mailFolders"),
+    mailList: (folder: string, page: number, keyword = "") => call<import("./core/mail").MailListPage>("portal:mailList", folder, page, keyword),
+    mailRead: (folder: string, uid: number) => call<import("./core/mail").MailMessage>("portal:mailRead", folder, uid),
     approvalList: (box: import("./core/portal").ApprovalBox, page: number, keyword = "") =>
       call<import("./core/portal").ApprovalList>("portal:approvalList", box, page, keyword),
     approvalCounts: () => call<{ todo: number; upcoming: number }>("portal:approvalCounts"),

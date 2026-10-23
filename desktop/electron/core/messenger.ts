@@ -118,7 +118,7 @@ export class MessengerCore {
 
   constructor(serverUrl?: string) {
     this.client = new DaouClient(serverUrl);
-    this.portal = new PortalService((path) => this.client.request(path, { method: "GET" }), (e, p) => this.emit(e, p as any));
+    this.portal = new PortalService((path, init) => this.client.request(path, init?.method === "POST" ? { method: "POST", json: init.json } : { method: "GET" }), (e, p) => this.emit(e, p as any));
     this.em.setMaxListeners(50);
     this.portal.getUserId = () => this.client.user?.id ?? null;
   }

@@ -55,7 +55,45 @@ function unwrap(el: Element) {
   parent.removeChild(el);
 }
 
-export function sanitizeHtml(html: string): string {
+export type MailSanitizeResult = { html: string; blockedImages: number };
+
+/**
+ * Mail bodies: same allowlist as sanitizeHtml, plus remote content blocking (tracking pixels) unless
+ * `showImages`. Blocked <img> keep their size as an empty placeholder; style url(http…) is dropped.
+ * Links get data-ext-href so the renderer can open them in the external browser (never in-app).
+ */
+export function sanitizeMailHtml(html: string, showImages = false): MailSanitizeResult {
+  if (!html || typeof DOMParser === "undefined") return { html: "", blockedImages: 0 };
+  const clean = sanitizeHtml(html, { keepRemoteImages: true });
+  const doc = new DOMParser().parseFromString(clean, "text/html");
+  let blocked = 0;
+  for (const img of Array.from(doc.body.querySelectorAll("img"))) {
+    const src = img.getAttribute("src") || "";
+    if (/^data:image\//i.test(src)) continue;
+    if (!showImages) {
+      blocked++;
+      img.removeAttribute("src");
+      img.setAttribute("data-blocked", "1");
+      img.setAttribute("alt", img.getAttribute("alt") || "");
+    }
+  }
+  for (const el of Array.from(doc.body.querySelectorAll("[style], [background]"))) {
+    el.removeAttribute("background");
+    const st = el.getAttribute("style");
+    if (st && !showImages && /url\(/i.test(st)) {
+      blocked++;
+      el.setAttribute("style", st.replace(/url\([^)]*\)/gi, "none"));
+    }
+  }
+  for (const a of Array.from(doc.body.querySelectorAll("a"))) {
+    const href = a.getAttribute("href") || "";
+    if (/^(https?|mailto):/i.test(href)) a.setAttribute("data-ext-href", href);
+    a.removeAttribute("target");
+  }
+  return { html: doc.body.innerHTML, blockedImages: blocked };
+}
+
+export function sanitizeHtml(html: string, opts: { keepRemoteImages?: boolean } = {}): string {
   if (!html) return "";
   if (typeof DOMParser === "undefined") return "";
   const doc = new DOMParser().parseFromString(String(html), "text/html");
@@ -85,7 +123,7 @@ export function sanitizeHtml(html: string): string {
     }
     // Portal-relative images (signature stamps, thumbs) need the portal session cookie and would
     // resolve to file:// in the app — drop them instead of showing broken images.
-    if (tag === "img" && !/^(https:\/\/|data:image\/)/i.test(el.getAttribute("src") || "")) {
+    if (tag === "img" && !/^(https:\/\/|data:image\/)/i.test(el.getAttribute("src") || "") && !(opts.keepRemoteImages && /^http:\/\//i.test(el.getAttribute("src") || ""))) {
       el.remove();
     }
   }
