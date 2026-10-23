@@ -1,10 +1,11 @@
 /**
- * 이모지 리액션: our own server (bot.ubion.global) keyed by roomSeq:messageId. Behind UBM_REACTIONS=1
- * (needs a server deploy). UBION users only — original-app users cannot see these.
+ * 이모지 리액션: our own server (bot.ubion.global) keyed by roomSeq:messageId. On by default in 1.0.22;
+ * set UBM_REACTIONS=0 to hide the feature. UBION users only — original-app users cannot see these.
  *
  * ⚠ UNVERIFIED request shape:
  *   GET  {base}/v1/reactions?roomSeq=123&ids=1,2,3  → 200 { reactions: { [messageId]: { [emoji]: number[] } } }
  *   POST {base}/v1/reactions  body { roomSeq, messageId, emoji }  → toggles the caller's reaction
+ *        → 200 { ok, added, messageId, reactions: { [emoji]: number[] } } (one message's emoji map)
  * Auth headers: X-UBM-User-Seq (caller seq) + X-UBM-Session (DaouOffice session proof). Headers are never logged.
  */
 
@@ -12,8 +13,11 @@ import { checkForwardTarget } from "./forward";
 
 export const REACTIONS_ENV = "UBM_REACTIONS";
 export const REACTIONS_DISABLED_TEXT = "이모지 리액션은 아직 지원되지 않습니다";
-export const REACTION_EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
-export const REACTION_MAX_EMOJI_LENGTH = 8;
+export const REACTION_EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🎉", "🔥"] as const;
+/** UTF-16 code units, not code points: large ZWJ sequences are rejected instead of silently truncated. */
+export const REACTION_MAX_EMOJI_LENGTH = 16;
+const EMOJI_SEQUENCE_RE =
+  /^(?:\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})*(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})*)*|\p{Regional_Indicator}{2}|[0-9#*]\uFE0F?\u20E3)$/u;
 const MAX_SESSION_LENGTH = 4096;
 
 export type ReactionsCaps = { enabled: boolean };
@@ -31,7 +35,7 @@ export type ReactionsOptions = {
 export type ReactionsResult<T = ReactionMap> = { ok: true; data: T } | { ok: false; message: string };
 
 export function reactionsEnabled(env: Record<string, string | undefined> | undefined): boolean {
-  return env?.[REACTIONS_ENV] === "1";
+  return env?.[REACTIONS_ENV] !== "0";
 }
 
 export function reactionsCaps(env: Record<string, string | undefined> | undefined): ReactionsCaps {
@@ -67,9 +71,24 @@ export function normalizeMessageIds(value: unknown): number[] {
 
 export function normalizeEmoji(value: unknown): string {
   if (typeof value !== "string") throw new Error("이모지를 선택하세요");
-  const emoji = Array.from(value.trim()).slice(0, REACTION_MAX_EMOJI_LENGTH).join("");
-  if (!emoji) throw new Error("이모지를 선택하세요");
+  const emoji = value.trim();
+  if (!emoji || emoji.length > REACTION_MAX_EMOJI_LENGTH || !EMOJI_SEQUENCE_RE.test(emoji)) {
+    throw new Error("이모지를 선택하세요");
+  }
   return emoji;
+}
+
+/** Coerce one message's `{ [emoji]: userSeq[] }` map (GET entries and POST `reactions`). */
+function parseEmojiMap(value: unknown): Record<string, number[]> {
+  const emojiMap: Record<string, number[]> = {};
+  if (!value || typeof value !== "object") return emojiMap;
+  for (const [emoji, seqs] of Object.entries(value as Record<string, unknown>)) {
+    const list = Array.isArray(seqs)
+      ? seqs.map((s) => Number(s)).filter((n) => Number.isSafeInteger(n) && n > 0)
+      : [];
+    if (list.length) emojiMap[emoji] = list;
+  }
+  return emojiMap;
 }
 
 /** Parse/coerce the documented GET response into ReactionMap (messageId → emoji → userSeqs). */
@@ -79,17 +98,20 @@ export function parseReactions(body: unknown): ReactionMap {
   const reactions = (body as Record<string, unknown>).reactions;
   if (!reactions || typeof reactions !== "object") return out;
   for (const [messageId, byEmoji] of Object.entries(reactions as Record<string, unknown>)) {
-    if (!byEmoji || typeof byEmoji !== "object") continue;
-    const emojiMap: Record<string, number[]> = {};
-    for (const [emoji, seqs] of Object.entries(byEmoji as Record<string, unknown>)) {
-      const list = Array.isArray(seqs)
-        ? seqs.map((s) => Number(s)).filter((n) => Number.isSafeInteger(n) && n > 0)
-        : [];
-      if (list.length) emojiMap[emoji] = list;
-    }
+    const emojiMap = parseEmojiMap(byEmoji);
     if (Object.keys(emojiMap).length) out[messageId] = emojiMap;
   }
   return out;
+}
+
+/**
+ * Parse the POST response. Its `reactions` is ONE message's emoji map, not keyed by messageId, so wrap it
+ * with the messageId we sent. An empty map is kept as an empty entry so callers can reconcile a removal.
+ */
+export function parseReactionToggle(body: unknown, messageId: number): ReactionMap {
+  const key = String(messageId);
+  if (!body || typeof body !== "object") return { [key]: {} };
+  return { [key]: parseEmojiMap((body as Record<string, unknown>).reactions) };
 }
 
 export function reactionUserSeqs(map: ReactionMap, messageId: unknown, emoji: string): number[] {
@@ -114,7 +136,12 @@ export function createReactionsClient({
 }: ReactionsOptions) {
   const root = String(baseUrl).replace(/\/+$/, "");
 
-  async function request(method: "GET" | "POST", path: string, body?: unknown): Promise<ReactionsResult> {
+  async function request(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    parse: (data: unknown) => ReactionMap = parseReactions,
+  ): Promise<ReactionsResult> {
     const userSeq = getUserSeq();
     if (!Number.isSafeInteger(userSeq) || userSeq <= 0) return { ok: false, message: "로그인이 필요합니다" };
     let session: string;
@@ -164,7 +191,7 @@ export function createReactionsClient({
     } catch {
       data = null;
     }
-    return { ok: true, data: parseReactions(data) };
+    return { ok: true, data: parse(data) };
   }
 
   return {
@@ -174,6 +201,7 @@ export function createReactionsClient({
       return request("GET", `/v1/reactions?${query}`);
     },
     toggle: (roomSeq: number, messageId: number, emoji: string): Promise<ReactionsResult> =>
-      request("POST", "/v1/reactions", { roomSeq, messageId, emoji }),
+      request("POST", "/v1/reactions", { roomSeq, messageId, emoji },
+        (data) => parseReactionToggle(data, messageId)),
   };
 }

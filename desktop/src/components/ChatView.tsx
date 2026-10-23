@@ -28,7 +28,10 @@ import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
 import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
-import { applyToggle } from "../lib/reactions";
+import {
+  applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionPollIds, reactionUiVisibility,
+  REACTION_POLL_MS,
+} from "../lib/reactions";
 import { composeQuoteText, decodePollId, isAuthMarkerText, parseMessage, truncateQuote } from "../lib/markers";
 import { FileCard, MediaViewer } from "./FileCard";
 import { BackupModal } from "./BackupModal";
@@ -105,6 +108,7 @@ export function ChatView({
   const [botDisabled, setBotDisabled] = useState(false);
   const [reactions, setReactions] = useState<ReactionMap | undefined>(undefined);
   const [reactionsOn, setReactionsOn] = useState(false);
+  const [reactionsFailed, setReactionsFailed] = useState(false);
   const [editOn, setEditOn] = useState(true);
   const [summaryOn, setSummaryOn] = useState(false);
   const [summaryBusy, setSummaryBusy] = useState(false);
@@ -123,6 +127,18 @@ export function ChatView({
   const isGroupRoom = room.kind === "room" && !room.isSelf;
   const botRoom = isBotGroupRoom(room, roomMembers);
   const memberNames = useMemo(() => roomMembers.map((m) => m.name), [roomMembers]);
+  const reactionNames = useMemo(() => {
+    const names = new Map<number, string>();
+    for (const member of roomMembers) names.set(member.userId, member.name);
+    return names;
+  }, [roomMembers]);
+  const reactionIds = useMemo(() => reactionPollIds(msgs), [msgs]);
+  const reactionPollKey = reactionIds.join(",");
+  const reactionsRef = useRef<ReactionMap>({});
+  const reactionIdsRef = useRef<number[]>(reactionIds);
+  reactionIdsRef.current = reactionIds;
+  const reactionsRoomRef = useRef(reactionsRoomSeq);
+  reactionsRoomRef.current = reactionsRoomSeq;
   const listRef = useRef<HTMLDivElement>(null);
   const stickBottom = useRef(true);
   const prevHeight = useRef<number | null>(null);
@@ -190,7 +206,7 @@ export function ChatView({
     };
   }, [room.key, toast]);
 
-  // 이모지 리액션: server capability once, then poll per room on open/history (best effort).
+  // 이모지 리액션: server capability once (UBM_REACTIONS defaults on in 1.0.22).
   useEffect(() => {
     api().reactions.caps().then((c) => setReactionsOn(c.enabled)).catch(() => setReactionsOn(false));
   }, []);
@@ -206,21 +222,101 @@ export function ChatView({
   useEffect(() => {
     api().polls.caps().then((c) => setPollsOn(c.enabled)).catch(() => setPollsOn(false));
   }, []);
+  // Room change / caps off: never show the previous room's chips.
+  useEffect(() => {
+    reactionsRef.current = {};
+    setReactions(undefined);
+    setReactionsFailed(false);
+  }, [reactionsRoomSeq, reactionsOn]);
+  // While the room is open and the window is visible: immediate fetch, then every 5 s. Failed calls hide the
+  // chips and retry quietly with backoff (30 s → … → 5 min) so they reappear when the server recovers.
   useEffect(() => {
     if (!reactionsOn || reactionsRoomSeq == null) return;
-    let alive = true;
-    const ids = msgs.map((m) => m.messageId).filter((n): n is number => n != null);
-    api()
-      .reactions.list(reactionsRoomSeq, ids)
-      .then((map) => { if (alive) setReactions(map); })
-      .catch(() => { if (alive) setReactions(undefined); });
-    return () => { alive = false; };
-  }, [reactionsOn, reactionsRoomSeq, msgs]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+    let failures = 0;
+
+    const schedule = (delay: number) => {
+      if (cancelled) return;
+      if (timer != null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        void poll();
+      }, delay);
+    };
+
+    const poll = async (): Promise<void> => {
+      if (cancelled || inFlight) return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        schedule(REACTION_POLL_MS);
+        return;
+      }
+      const ids = reactionIdsRef.current;
+      if (!ids.length) {
+        schedule(REACTION_POLL_MS);
+        return;
+      }
+      inFlight = true;
+      try {
+        const map = await api().reactions.list(reactionsRoomSeq, ids);
+        if (cancelled) return;
+        failures = 0;
+        reactionsRef.current = map;
+        setReactions(map);
+        setReactionsFailed(false);
+        schedule(REACTION_POLL_MS);
+      } catch {
+        if (cancelled) return;
+        failures += 1;
+        reactionsRef.current = {};
+        setReactions(undefined);
+        setReactionsFailed(true);
+        schedule(nextReactionPollDelay(failures));
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const onVisibility = () => {
+      if (typeof document === "undefined" || document.visibilityState !== "visible") return;
+      if (timer != null) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      void poll();
+    };
+
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer != null) clearTimeout(timer);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [reactionsOn, reactionsRoomSeq, reactionPollKey]);
   const toggleReaction = useCallback((messageId: number, emoji: string) => {
-    if (reactionsRoomSeq == null) return;
-    setReactions((m) => applyToggle(m ?? {}, messageId, emoji, me.id));
-    api().reactions.toggle(reactionsRoomSeq, messageId, emoji).then(setReactions).catch(() => undefined);
-  }, [reactionsRoomSeq, me.id]);
+    if (!reactionsOn || reactionsFailed || reactionsRoomSeq == null) return;
+    const roomSeq = reactionsRoomSeq;
+    const previous = reactionsRef.current ?? {};
+    const optimistic = applyToggle(previous, messageId, emoji, me.id);
+    reactionsRef.current = optimistic;
+    setReactions(optimistic);
+    api()
+      .reactions.toggle(roomSeq, messageId, emoji)
+      .then((update) => {
+        if (reactionsRoomRef.current !== roomSeq) return;
+        const merged = mergeReactionUpdate(reactionsRef.current ?? {}, update);
+        reactionsRef.current = merged;
+        setReactions(merged);
+      })
+      .catch(() => {
+        if (reactionsRoomRef.current !== roomSeq) return;
+        reactionsRef.current = previous;
+        setReactions(previous);
+      });
+  }, [reactionsOn, reactionsFailed, reactionsRoomSeq, me.id]);
+  const showReactions = reactionUiVisibility(reactionsOn, reactionsFailed).show;
 
   // group room members (mentions + popup), cached per room
   useEffect(() => {
@@ -764,6 +860,7 @@ export function ChatView({
                     onEdit={editOn && canDeleteMessage(m, me.id) && !isDeletedMessage(m) ? () => requestEdit(m) : undefined}
                     onReply={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestReply(m) : undefined}
                     reactions={reactions} onToggleReaction={toggleReaction}
+                    reactionNames={reactionNames} showReactions={showReactions}
                     pollsOn={pollsOn}
                   />
                 </Fragment>
@@ -1149,13 +1246,14 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
-  onEdit, onReply, reactions, onToggleReaction, pollsOn,
+  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, pollsOn,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
   onSave?: () => void; onRemind?: () => void; onEdit?: () => void; onReply?: () => void;
   reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
+  reactionNames: ReadonlyMap<number, string>; showReactions: boolean;
   pollsOn: boolean;
 }) {
   const t = useT();
@@ -1207,6 +1305,10 @@ function MessageRow({
               {!m.pending && <LinkPreview text={m.message} />}
             </div>
           )}
+          {showReactions && !deleted && !m.pending && !m.failed && m.messageId != null && (
+            <ReactionBar map={reactions} messageId={m.messageId} me={meId} names={reactionNames}
+              onToggle={(e) => onToggleReaction(m.messageId!, e)} />
+          )}
           <div className="msg-meta">
             {m.failed ? (
               <button className="link danger tiny" onClick={onRetry}>{t("전송 실패 · 재시도")}</button>
@@ -1219,9 +1321,6 @@ function MessageRow({
               </>
             )}
           </div>
-          {!deleted && !m.pending && !m.failed && m.messageId != null && (
-            <ReactionBar map={reactions} messageId={m.messageId} me={meId} onToggle={(e) => onToggleReaction(m.messageId!, e)} />
-          )}
         </div>
       </div>
     </div>

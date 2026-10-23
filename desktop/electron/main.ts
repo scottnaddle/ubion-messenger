@@ -1848,7 +1848,7 @@ function registerIpc() {
     return { text: currentStatusText };
   });
   handle("status:presenceStatus", () => core.allStatusMessages());
-  // 이모지 리액션: our server (bot.ubion.global) keyed by roomSeq:messageId. Behind UBM_REACTIONS=1.
+  // 이모지 리액션: our server (bot.ubion.global) keyed by roomSeq:messageId. On by default; UBM_REACTIONS=0 disables.
   const REACTIONS_ON = reactionsEnabled(process.env);
   handle("reactions:caps", () => reactionsCaps(process.env));
   handle("reactions:list", async (roomSeq: unknown, ids: unknown) => {

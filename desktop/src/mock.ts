@@ -291,7 +291,8 @@ export function installMockIfNeeded() {
       presenceStatus: async () => ({}) as Record<number, string>,
     },
     reactions: {
-      caps: async () => ({ enabled: new URLSearchParams(location.search).has("reactions") }),
+      // 1.0.22: reactions are on by default; ?reactions=0 previews the disabled state.
+      caps: async () => ({ enabled: new URLSearchParams(location.search).get("reactions") !== "0" }),
       list: async () => ({}),
       toggle: async () => ({}),
     },

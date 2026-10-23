@@ -130,6 +130,7 @@ const dict: Record<string, string> = {
   "파일 첨부": "Đính kèm tệp",
   "화면 캡쳐": "Chụp màn hình",
   "이모티콘": "Biểu tượng cảm xúc",
+  "더보기": "Xem thêm",
   "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)": "Nhập tin nhắn (Enter để gửi, Shift+Enter để xuống dòng)",
   "전송": "Gửi",
   "대화 검색": "Tìm cuộc trò chuyện",

@@ -130,6 +130,7 @@ const dict: Record<string, string> = {
   "파일 첨부": "添加附件",
   "화면 캡쳐": "截图",
   "이모티콘": "表情",
+  "더보기": "更多",
   "메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)": "输入消息（Enter 发送，Shift+Enter 换行）",
   "전송": "发送",
   "대화 검색": "搜索会话",

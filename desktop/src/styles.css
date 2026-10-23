@@ -147,7 +147,7 @@ input, textarea, select { font: inherit; color: inherit; }
 .msg-main { min-width: 0; max-width: 70%; display: flex; flex-direction: column; }
 .msg.mine { justify-content: flex-end; } .msg.mine .msg-main { align-items: flex-end; }
 .msg-name { font-size: .82em; font-weight: 600; margin: 0 0 3px 2px; }
-.msg-line { display: flex; align-items: flex-end; gap: 6px; }
+.msg-line { display: flex; align-items: flex-end; gap: 6px; flex-wrap: wrap; }
 .msg.mine .msg-line { flex-direction: row-reverse; }
 .bubble { background: var(--other); padding: 8px 12px; border-radius: 4px 14px 14px 14px; white-space: pre-wrap; word-break: break-word; user-select: text; }
 .msg.grouped .bubble { border-radius: 14px; }
@@ -191,6 +191,25 @@ input, textarea, select { font: inherit; color: inherit; }
 .img-bubble img { display: block; max-width: 280px; max-height: 260px; min-width: 80px; min-height: 60px; object-fit: cover; }
 .msg-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 0; flex: none; padding-bottom: 1px; }
 .msg.mine .msg-meta { align-items: flex-end; } .msg:not(.mine) .msg-meta { align-items: flex-start; }
+.reactions { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; align-self: flex-end; position: relative; min-width: 0; max-width: 100%; }
+.reaction-chips { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.reaction-chip { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 7px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--bg2); color: var(--fg); font-size: 12px; line-height: 1; cursor: pointer; white-space: nowrap; }
+.reaction-chip:hover { background: var(--bg3); border-color: var(--accent); }
+.reaction-chip.mine { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.reaction-emoji { font-size: 13px; line-height: 1; }
+.reaction-count { font-variant-numeric: tabular-nums; }
+.reaction-add { width: 26px; height: 22px; flex: none; border-radius: 999px; border: 1px solid var(--line); background: var(--bg2);
+  color: var(--muted); font-size: 11px; line-height: 1; display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
+.msg:hover .reaction-add, .reaction-add:focus-visible, .reaction-add[aria-expanded="true"] { opacity: 1; }
+.reaction-add:hover { color: var(--accent); border-color: var(--accent); background: var(--bg3); }
+.reaction-pop { position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 22; display: flex; align-items: center; gap: 2px; padding: 5px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.msg.mine .reaction-pop { right: auto; left: 0; }
+.reaction-cell { width: 30px; height: 30px; border-radius: 8px; font-size: 19px; line-height: 1; display: grid; place-items: center; }
+.reaction-cell:hover { background: var(--bg3); }
+.reaction-more { height: 30px; padding: 0 8px; border-radius: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.reaction-more:hover { background: var(--bg3); color: var(--fg); }
 .bot-status-bubble { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; }
 .bot-status-text { white-space: pre-wrap; }
 .bot-status-dots { display: inline-flex; align-items: center; gap: 3px; }

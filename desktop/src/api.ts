@@ -142,7 +142,7 @@ export type Bridge = {
     set(text: string): Promise<{ text: string | null }>;
     presenceStatus(): Promise<Record<number, string>>;
   };
-  /** 이모지 리액션 (our server, keyed by roomSeq:messageId), gated by UBM_REACTIONS=1. */
+  /** 이모지 리액션 (our server, keyed by roomSeq:messageId), on by default; UBM_REACTIONS=0 disables. */
   reactions: {
     caps(): Promise<ReactionsCaps>;
     list(roomSeq: number, messageIds: number[]): Promise<ReactionMap>;
