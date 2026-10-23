@@ -48,7 +48,11 @@ export function createStatusClient({
       const doFetch = fetchImpl ?? globalThis.fetch;
       res = await doFetch(`${root}/v1/status/${encodeURIComponent(String(userSeq))}`, {
         method,
-        headers: { "Content-Type": "application/json", "X-UBM-Session": cookie },
+        headers: {
+          "Content-Type": "application/json",
+          "X-UBM-User-Seq": String(userSeq),
+          "X-UBM-Session": cookie,
+        },
         body: method === "PUT" ? JSON.stringify({ text: text ?? "" }) : undefined,
         signal: controller.signal,
       });

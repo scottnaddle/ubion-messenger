@@ -9,17 +9,20 @@ const settings = {
   updated_by: "8", updated_at: "2026-01-02T00:00:00Z", can_edit: true,
 };
 
-const client = (fetch: typeof globalThis.fetch, cookie = "GOSSOcookie=secret; other=yes") =>
-  createBotSettingsClient({ getCookieHeader: async () => cookie, fetch });
+const client = (fetch: typeof globalThis.fetch, token = "ubm-token-value", userSeq = 42) =>
+  createBotSettingsClient({ getUserSeq: () => userSeq, getSessionHeader: async () => token, fetch });
 
 describe("bot room settings client", () => {
-  it("URL-encodes the room id and sends the Daou session header", async () => {
+  it("URL-encodes the room id and sends the UBION auth headers (never cookies)", async () => {
     const fetch = vi.fn(async () => json(settings));
     const r = await client(fetch).get("room:27673");
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url, init] = fetch.mock.calls[0] as any;
     expect(url).toBe("https://bot.ubion.global/bot/rooms/room%3A27673/settings");
-    expect(init.headers["X-Daou-Session"]).toBe("GOSSOcookie=secret; other=yes");
+    expect(init.headers["X-UBM-Session"]).toBe("ubm-token-value");
+    expect(init.headers["X-UBM-User-Seq"]).toBe("42");
+    expect(init.headers["X-Daou-Session"]).toBeUndefined();
+    expect(init.headers.Cookie).toBeUndefined();
     expect(init.method).toBe("GET");
     expect(init.body).toBeUndefined();
     expect(r).toEqual({
@@ -60,7 +63,8 @@ describe("bot room settings client", () => {
     expect(net).toMatchObject({ ok: false, kind: "network" });
 
     const timed = await createBotSettingsClient({
-      getCookieHeader: async () => "a=b",
+      getUserSeq: () => 1,
+      getSessionHeader: async () => "a=b",
       timeoutMs: 5,
       fetch: slowFetch,
     }).get("room:1");
@@ -74,14 +78,16 @@ describe("bot room settings client", () => {
     expect(badShape).toMatchObject({ ok: false, kind: "bad_response" });
   });
 
-  it("rejects oversized or CR/LF cookies without calling fetch or echoing the cookie", async () => {
+  it("rejects a missing user seq, or oversized / CRLF sessions without calling fetch or echoing the token", async () => {
     const fetch = vi.fn(async () => json(settings));
+    const noUser = await client(fetch, "a=b", 0).get("room:1");
     const long = await client(fetch, "a".repeat(4097)).get("room:1");
     const crlf = await client(fetch, "a=b\r\nInjected: yes").get("room:1");
+    expect(noUser).toMatchObject({ ok: false, kind: "auth" });
     expect(long).toMatchObject({ ok: false, kind: "auth" });
     expect(crlf).toMatchObject({ ok: false, kind: "auth" });
     expect(fetch).not.toHaveBeenCalled();
-    expect(JSON.stringify([long, crlf])).not.toContain("a=b");
+    expect(JSON.stringify([noUser, long, crlf])).not.toContain("a=b");
   });
 });
 

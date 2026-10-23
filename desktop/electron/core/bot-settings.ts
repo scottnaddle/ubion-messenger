@@ -1,7 +1,7 @@
 /**
  * UBION bot per-room autonomy settings.
- * Talks to bot.ubion.global with the DaouOffice session cookies supplied by the caller.
- * Cookies are only ever sent in the X-Daou-Session header; they are never logged or included in errors.
+ * Talks to bot.ubion.global with the UBION server token supplied by the caller (never DaouOffice cookies).
+ * Auth is sent only in X-UBM-User-Seq + X-UBM-Session; headers are never logged or included in errors.
  */
 
 export type BotSettingsState = {
@@ -30,12 +30,13 @@ export const BOT_MESSAGES = BOT_ERROR_MESSAGES;
 
 export type BotSettingsOptions = {
   baseUrl?: string;
-  getCookieHeader: () => Promise<string>;
+  getUserSeq: () => number;
+  getSessionHeader: () => Promise<string>;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 };
 
-const MAX_COOKIE_LENGTH = 4096;
+const MAX_SESSION_LENGTH = 4096;
 
 function fail(kind: BotSettingsErrorKind, retryAfterS?: number): BotSettingsResult {
   return retryAfterS != null && Number.isFinite(retryAfterS)
@@ -51,7 +52,8 @@ function retryAfterFrom(data: any, res: Response): number | undefined {
 
 export function createBotSettingsClient({
   baseUrl = "https://bot.ubion.global",
-  getCookieHeader,
+  getUserSeq,
+  getSessionHeader,
   fetch: fetchImpl,
   timeoutMs = 8000,
 }: BotSettingsOptions) {
@@ -59,13 +61,20 @@ export function createBotSettingsClient({
 
   async function request(method: "GET" | "PUT", roomId: string, autonomy?: boolean): Promise<BotSettingsResult> {
     try {
-      let cookie: string;
+      const userSeq = getUserSeq();
+      if (!Number.isSafeInteger(userSeq) || userSeq <= 0) return fail("auth");
+      let session: string;
       try {
-        cookie = await getCookieHeader();
+        session = await getSessionHeader();
       } catch {
         return fail("auth");
       }
-      if (typeof cookie !== "string" || cookie.length > MAX_COOKIE_LENGTH || /[\r\n]/.test(cookie)) {
+      if (
+        typeof session !== "string" ||
+        session.length > MAX_SESSION_LENGTH ||
+        session.length === 0 ||
+        /[\r\n]/.test(session)
+      ) {
         return fail("auth");
       }
 
@@ -78,7 +87,8 @@ export function createBotSettingsClient({
           method,
           headers: {
             "Content-Type": "application/json",
-            "X-Daou-Session": cookie,
+            "X-UBM-User-Seq": String(userSeq),
+            "X-UBM-Session": session,
           },
           body: method === "PUT" ? JSON.stringify({ autonomy: !!autonomy }) : undefined,
           signal: controller.signal,
