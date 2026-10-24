@@ -579,8 +579,8 @@ const dict: Record<string, string> = {
   "내 봇과 대화": "Talk to my bot",
   "할 일 완료": "Mark to-do done",
   "연결된 메시지가 현재 불러온 대화에 없습니다": "That message is not in the loaded history",
-  "유비온 비서 · 이 기기의 스텁 대화": "UBION assistant · on-device stub",
-  "내 봇에게 메시지": "Message my bot",
+  "유비온 비서": "UBION assistant",
+  "아직 이 대화에서는 사용할 수 없습니다": "Not available in this chat yet",
   "이 기기에만 저장되는 별도 대화입니다.": "A separate chat stored only on this device.",
 };
 

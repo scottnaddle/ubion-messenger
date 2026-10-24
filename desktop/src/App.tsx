@@ -454,8 +454,6 @@ export function App() {
         <div className="panes">
           {view === "mail" ? (
             <Mail />
-          ) : view === "assistant" ? (
-            <PersonalBotChat userId={user.id} />
           ) : view === "approval" ? (
             <Approval />
           ) : view === "flex" ? (
@@ -466,12 +464,12 @@ export function App() {
                 <Home onLocal={setView} onOpenBot={() => void openPersonalBot()} />
               ) : view === "menu" ? (
                 <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} toast={toast} onOpenSaved={() => setSavedOpen(true)} />
-              ) : view === "chats" ? (
+              ) : view === "chats" || view === "assistant" ? (
                 <Sidebar
                   rooms={rooms}
-                  activeKey={activeKey}
+                  activeKey={view === "assistant" ? null : activeKey}
                   presence={presence}
-                  onOpen={setActiveKey}
+                  onOpen={(k) => { setActiveKey(k); setView("chats"); }}
                   toast={toast}
                   botUserSeq={botUserSeq}
                   onOpenBot={() => void openPersonalBot()}
@@ -489,7 +487,9 @@ export function App() {
                   }}
                 />
               )}
-              {view === "home" || view === "menu" ? null : activeRoom ? (
+              {view === "assistant" ? (
+                <PersonalBotChat userId={user.id} />
+              ) : view === "home" || view === "menu" ? null : activeRoom ? (
                 <ChatView
                   key={activeRoom.key}
                   room={activeRoom}

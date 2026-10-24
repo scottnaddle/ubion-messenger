@@ -288,14 +288,8 @@ input, textarea, select { font: inherit; color: inherit; }
 .room-ai-bot:hover { border-color: var(--accent); }
 .msg.msg-jump { background: var(--accent-soft); border-radius: 12px; }
 .bot-entry { margin: 0 6px 6px; width: calc(100% - 12px); }
-.assistant { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
-.assistant-log { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
-.assistant-row { display: flex; }
-.assistant-row.mine { justify-content: flex-end; }
-.assistant-bubble { max-width: 72%; padding: 8px 12px; border-radius: 14px; background: var(--other); white-space: pre-wrap; word-break: break-word; }
-.assistant-row.mine .assistant-bubble { background: var(--mine); color: var(--mine-fg); }
-.assistant-compose { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
-.assistant-compose input { flex: 1; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg2); color: var(--fg); font: inherit; }
+.personal-bot .composer .icon-btn:disabled { opacity: .35; cursor: default; }
+.personal-bot .composer .icon-btn:disabled:hover { background: none; color: var(--muted); }
 .home-card .primary { margin-top: 8px; }
 .search-results { flex: 1; overflow-y: auto; }
 .search-hit { padding: 9px 16px; border-bottom: 1px solid var(--line); }
