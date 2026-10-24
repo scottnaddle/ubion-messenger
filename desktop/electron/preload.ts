@@ -144,6 +144,13 @@ const api = {
       call<{ ok: true }>("portal:approvalAction", kind, id, comment),
     flexPending: (force?: boolean) => call<{ count: number | null; at: number; error?: string }>("portal:flexPending", force),
   },
+  personalBotSettings: {
+    open: (userId: number) => call<void>("personalBot:openSettings", userId),
+    changed: (userId: number, snapshot: import("../src/lib/personal-bot-settings").BotSettingsSnapshot) =>
+      call<void>("personalBot:settingsChanged", userId, snapshot),
+    onChanged: (cb: (payload: { userId: number } & import("../src/lib/personal-bot-settings").BotSettingsSnapshot) => void) =>
+      sub("personal-bot:settings", cb),
+  },
   google: {
     status: (userId: number) => call<{ connectors: { id: "google-drive" | "google-calendar"; connected: boolean; account?: string }[] }>("google:status", userId),
     connect: (userId: number, id: "google-drive" | "google-calendar") => call<{ connected: true; account?: string }>("google:connect", userId, id),

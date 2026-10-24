@@ -110,6 +110,8 @@ def personal_bot_chat(body: dict):
 
 Defined in `desktop/src/lib/connectors.ts`. Per-user toggles: `ubm.personal-bot.connectors.v1:<userId>`.
 
+The gear in the 내 봇 header opens a settings window (`personalBot:openSettings`). **커넥터** is the section that holds these toggles and Google **연결** / **연결 해제**. The same storage key is used. Closing the window returns to the chat.
+
 | id | state by default | advertised read tool | notes |
 | --- | --- | --- | --- |
 | `ubion-mail` | ready | `ubion_mail_list` | Inbox list via the logged-in session. `ubion_mail_send` exists but is a gated write and is not advertised. |

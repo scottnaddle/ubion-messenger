@@ -84,6 +84,7 @@ import {
 } from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
 import { isBotAuthDm } from "../src/lib/markers";
+import { readSettingsSnapshot, rendererUrlWithBotSettings, botSettingsQuery } from "../src/lib/personal-bot-settings";
 import { createBotSettingsClient } from "./core/bot-settings";
 import { createUbmAuth, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
 import { applyMainLanguage, filterLanguagePatch, i18nCaps, tm } from "./core/i18n-main";
@@ -947,6 +948,8 @@ async function openPortalWindow(url: string) {
 /** Feature flag: server doc viewer only when UBM_DOC_VIEWER_URL is set (the official viewer URL is still unknown). */
 const DOC_VIEWER_SERVER = docViewerServerEnabled(process.env);
 let docViewerWin: BrowserWindow | null = null;
+let personalBotSettingsWin: BrowserWindow | null = null;
+let personalBotSettingsUserId = 0;
 const previewTempDir = () => path.join(app.getPath("temp"), "ubion-preview");
 
 /**
@@ -1129,6 +1132,72 @@ function maybeNotify(m: MessengerEventMap["message"]) {
   n.show();
   if (process.platform === "darwin" && !win?.isFocused()) app.dock?.bounce("informational");
   else if (!win?.isFocused()) win?.flashFrame(true);
+}
+
+function personalBotSettingsTarget(userId: number): { url: string } | { file: string; query: Record<string, string> } {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+  if (rendererUrl) return { url: rendererUrlWithBotSettings(rendererUrl, userId) };
+  return { file: path.join(__dirname, "../renderer/index.html"), query: botSettingsQuery(userId) };
+}
+
+async function loadPersonalBotSettings(target: BrowserWindow, userId: number) {
+  personalBotSettingsUserId = userId;
+  const dest = personalBotSettingsTarget(userId);
+  if ("url" in dest) await target.loadURL(dest.url);
+  else await target.loadFile(dest.file, { query: dest.query });
+}
+
+/** Gear in 내 봇 opens this child window. Closing it focuses the chat again. */
+function openPersonalBotSettings(userId: number) {
+  const existing = personalBotSettingsWin;
+  if (existing && !existing.isDestroyed()) {
+    if (personalBotSettingsUserId !== userId) void loadPersonalBotSettings(existing, userId).catch(() => undefined);
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const parent = win && !win.isDestroyed() ? win : undefined;
+  const w = new BrowserWindow({
+    width: 880,
+    height: 640,
+    minWidth: 720,
+    minHeight: 480,
+    title: "내 봇 설정",
+    parent,
+    autoHideMenuBar: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#16181d" : "#ffffff",
+    icon: resPath("icon.png"),
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/index.js"),
+      contextIsolation: true,
+      sandbox: false,
+      nodeIntegration: false,
+      spellcheck: false,
+    },
+  });
+  personalBotSettingsWin = w;
+  const guardNav = (e: Electron.Event, url: string) => {
+    const allowed = (url.startsWith("http://localhost") || url.startsWith("file:")) && url.includes("botSettings=1");
+    if (allowed) return;
+    e.preventDefault();
+    if (/^https?:/.test(url) && !url.startsWith("http://localhost")) shell.openExternal(url);
+  };
+  w.on("page-title-updated", (e) => {
+    e.preventDefault();
+    if (!w.isDestroyed()) w.setTitle("내 봇 설정");
+  });
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  w.webContents.on("will-navigate", guardNav);
+  w.webContents.on("will-redirect", guardNav);
+  w.on("closed", () => {
+    if (personalBotSettingsWin === w) personalBotSettingsWin = null;
+    if (win && !win.isDestroyed()) win.focus();
+  });
+  void loadPersonalBotSettings(w, userId).catch(() => undefined);
 }
 
 // ---------- window ----------
@@ -1367,6 +1436,7 @@ function registerIpc() {
   });
   handle("auth:logout", async () => {
     searchCache?.flush();
+    if (personalBotSettingsWin && !personalBotSettingsWin.isDestroyed()) personalBotSettingsWin.close();
     await core.logout("user");
     await ubmAuth.logout();
     mediaCache.clear();
@@ -2073,6 +2143,15 @@ function registerIpc() {
   });
   handle("portal:approvalCounts", () => core.portal.approvalCounts());
   handle("portal:calendarToday", () => core.portal.todayEvents());
+  handle("personalBot:openSettings", (userId: unknown) => {
+    openPersonalBotSettings(googleUser(userId));
+  });
+  handle("personalBot:settingsChanged", (userId: unknown, snapshot: unknown) => {
+    const id = googleUser(userId);
+    const snap = readSettingsSnapshot(snapshot);
+    if (!snap) return;
+    send("personal-bot:settings", { userId: id, ...snap });
+  });
   handle("google:status", (userId: unknown) => googleHost.status(googleUser(userId)));
   handle("google:connect", (userId: unknown, id: unknown) => googleHost.connect(googleUser(userId), googleId(id)));
   handle("google:disconnect", (userId: unknown, id: unknown) => googleHost.disconnect(googleUser(userId), googleId(id)));

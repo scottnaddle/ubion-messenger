@@ -19,6 +19,7 @@ import type { Poll, PollCaps, PollInput } from "../electron/core/polls";
 import type { EditCaps, ReplyTarget } from "../electron/core/edit-reply";
 import type { BotSummaryCaps } from "../electron/core/bot-summary";
 import type { SummaryMode } from "./lib/bot-summary";
+import type { BotSettingsSnapshot } from "./lib/personal-bot-settings";
 import type { Language } from "./lib/i18n-core";
 import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
@@ -194,6 +195,15 @@ export type Bridge = {
     mailSend(draft: import("../electron/core/mail-compose").MailDraft): Promise<{ ok: true }>;
     approvalAction(kind: "approve" | "return", id: number | string, comment?: string): Promise<{ ok: true }>;
     flexPending(force?: boolean): Promise<{ count: number | null; at: number; error?: string }>;
+  };
+  /**
+   * 내 봇 settings window. Present in Electron. Browser preview omits it and the
+   * gear falls back to the in-app panel.
+   */
+  personalBotSettings?: {
+    open(userId: number): Promise<void>;
+    changed(userId: number, snapshot: BotSettingsSnapshot): Promise<void>;
+    onChanged(cb: (payload: { userId: number } & BotSettingsSnapshot) => void): () => void;
   };
   /** Google Drive / Calendar for 내 봇. Tokens stay in the main process. */
   google: {

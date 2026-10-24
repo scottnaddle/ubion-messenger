@@ -51,12 +51,16 @@ describe("PersonalBotChat", () => {
     expect(host.textContent).not.toContain("스텁 대화");
     const gear = host.querySelector<HTMLButtonElement>("[aria-label='비서 연결']");
     await act(async () => { gear!.click(); });
+    expect(host.querySelector(".bot-connectors")).toBeNull();
+    expect(host.querySelector(".bot-settings-nav")?.textContent).toContain("커넥터");
+    expect(host.textContent).toContain("내 봇 설정");
     expect(host.textContent).toContain("회사 메일");
     expect(host.textContent).toContain("나중에 연결");
     const connect = [...host.querySelectorAll("button")].find((button) => button.textContent === "연결");
     await act(async () => { connect!.click(); });
     expect(host.textContent).toContain("Google 연결은 앱에서만 사용할 수 있습니다.");
     await act(async () => { gear!.click(); });
+    expect(host.querySelector(".bot-settings")).toBeNull();
 
     const ta = host.querySelector("textarea")!;
     await act(async () => { setTextarea(ta, "오늘 일정 있어?"); });
@@ -75,6 +79,28 @@ describe("PersonalBotChat", () => {
     expect(host.textContent).not.toContain("메모해 두었습니다");
     expect(host.querySelectorAll(".msg.mine").length).toBe(1);
     await act(async () => { root.unmount(); });
+  });
+
+  it("opens a settings window from the gear when the desktop bridge is present", async () => {
+    const open = vi.fn(async () => undefined);
+    const prev = window.ubion;
+    (window as unknown as { ubion?: { personalBotSettings: { open: typeof open } } }).ubion = {
+      personalBotSettings: { open },
+    };
+    try {
+      const client: PersonalBotClient = { mode: "live", reply: async () => "ok" };
+      const { host, root } = await renderChat(client);
+      const gear = host.querySelector<HTMLButtonElement>("[aria-label='비서 연결']")!;
+      await act(async () => { gear.click(); });
+      expect(open).toHaveBeenCalledWith(7);
+      expect(host.querySelector(".bot-settings")).toBeNull();
+      expect(host.querySelector(".bot-connectors")).toBeNull();
+      expect(host.textContent).not.toContain("나중에 연결");
+      await act(async () => { root.unmount(); });
+    } finally {
+      if (prev) window.ubion = prev;
+      else delete (window as unknown as { ubion?: unknown }).ubion;
+    }
   });
 
   it("shows a Korean error and does not fall back to the stub", async () => {

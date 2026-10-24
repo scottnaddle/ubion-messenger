@@ -1,6 +1,6 @@
 # Google Drive and Calendar connectors (1.1.6)
 
-내 봇 can search Drive and read the text of common documents after the user clicks **연결** in the connector gear, then summarize that text in Korean. This is a desktop OAuth public client (PKCE + loopback). The MiniMax proxy never receives Google tokens. Company mail, approval, and calendar still use the logged-in Daou session.
+내 봇 can search Drive and read the text of common documents after the user opens **내 봇 설정** from the gear in the chat header and clicks **연결**, then summarize that text in Korean. The gear opens a settings window (section list on the left, **커넥터** on the right). It is not a dropdown. This is a desktop OAuth public client (PKCE + loopback). The MiniMax proxy never receives Google tokens. Company mail, approval, and calendar still use the logged-in Daou session.
 
 The desktop executes the tools. The proxy only forwards the schemas the desktop advertises.
 

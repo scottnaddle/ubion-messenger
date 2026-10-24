@@ -504,12 +504,29 @@ input, textarea, select { font: inherit; color: inherit; }
 .video-bubble { cursor: pointer !important; }
 .inline-video { display: block; width: 280px; max-width: 100%; max-height: 210px; background: #111; border-radius: 12px; }
 .media-card:has(.inline-video) { max-width: 280px; }
-.bot-connectors { margin: 0 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); box-shadow: var(--shadow); padding: 6px 10px; }
-.bot-conn { display: flex; align-items: center; gap: 8px; padding: 6px 2px; font-size: .9em; }
-.bot-conn .tiny { margin-left: auto; }
-.bot-conn-btn { border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 8px; padding: 2px 8px; font-size: .85em; cursor: pointer; }
+#root:has(> .bot-settings) { display: flex; flex-direction: column; }
+.bot-settings-panel { flex: 1; min-height: 0; display: flex; background: var(--bg); }
+.bot-settings { flex: 1; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--fg); }
+.bot-settings-head { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); min-height: 60px; }
+.bot-settings-title { font-weight: 700; font-size: 1.05em; }
+.bot-settings-head .bot-conn-btn { margin-left: auto; }
+.bot-settings-body { flex: 1; display: flex; min-height: 0; }
+.bot-settings-nav { width: 180px; flex: none; border-right: 1px solid var(--line); background: var(--bg2); padding: 12px 8px; display: flex; flex-direction: column; gap: 4px; }
+.bot-settings-nav button { text-align: left; padding: 9px 12px; border-radius: 8px; color: var(--fg); }
+.bot-settings-nav button:hover { background: var(--bg3); }
+.bot-settings-nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+.bot-settings-main { flex: 1; overflow: auto; padding: 22px 28px 32px; }
+.bot-settings-main h2 { margin: 0 0 6px; font-size: 1.15em; }
+.bot-settings-lead { margin: 0 0 16px; }
+.bot-settings-main .banner { margin: 0 0 12px; border-radius: 8px; }
+.bot-conn-list { display: flex; flex-direction: column; }
+.bot-conn { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.bot-conn-copy { flex: 1; min-width: 0; }
+.bot-conn-name { font-weight: 600; }
+.bot-conn-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.bot-conn-btn { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 8px; padding: 6px 12px; font-size: .88em; cursor: pointer; }
+.bot-conn-btn:hover:not(:disabled) { background: var(--bg3); }
 .bot-conn-btn:disabled { opacity: .6; cursor: default; }
-.bot-connectors .banner { margin: 4px 0 6px; }
 .video-frame { min-width: 160px; min-height: 110px; background: #111; display: grid; place-items: center; }
 .play-ic { position: absolute; inset: 0; margin: auto; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; font-size: 18px; padding-left: 3px; }
 .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.65); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 4px; }

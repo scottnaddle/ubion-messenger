@@ -156,31 +156,39 @@ export function connectorStorageKey(userId: number): string | null {
   return `${CONNECTOR_STORAGE_PREFIX}${userId}`;
 }
 
-export function loadConnectorPrefs(storage: Pick<Storage, "getItem">, userId: number): ConnectorPrefs {
+export function normalizeConnectorPrefs(data: unknown): ConnectorPrefs {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+  const prefs: ConnectorPrefs = {};
+  for (const [id, value] of Object.entries(data)) {
+    if (!value || typeof value !== "object") continue;
+    const enabled = (value as { enabled?: unknown }).enabled;
+    const oauthToken = (value as { oauthToken?: unknown }).oauthToken;
+    prefs[id] = {
+      ...(typeof enabled === "boolean" ? { enabled } : {}),
+      ...(typeof oauthToken === "string" && oauthToken.trim() ? { oauthToken: oauthToken.trim() } : {}),
+    };
+  }
+  return prefs;
+}
+
+type PrefsStorage = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+
+export function loadConnectorPrefs(storage: Pick<PrefsStorage, "getItem">, userId: number): ConnectorPrefs {
   const key = connectorStorageKey(userId);
   if (!key) return {};
   try {
     const raw = storage.getItem(key);
     if (!raw) return {};
-    const data = JSON.parse(raw) as unknown;
-    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
-    const prefs: ConnectorPrefs = {};
-    for (const [id, value] of Object.entries(data)) {
-      if (!value || typeof value !== "object") continue;
-      const enabled = (value as { enabled?: unknown }).enabled;
-      const oauthToken = (value as { oauthToken?: unknown }).oauthToken;
-      prefs[id] = {
-        ...(typeof enabled === "boolean" ? { enabled } : {}),
-        ...(typeof oauthToken === "string" && oauthToken.trim() ? { oauthToken: oauthToken.trim() } : {}),
-      };
-    }
-    return prefs;
+    return normalizeConnectorPrefs(JSON.parse(raw) as unknown);
   } catch {
     return {};
   }
 }
 
-export function saveConnectorPrefs(storage: Pick<Storage, "setItem">, userId: number, prefs: ConnectorPrefs): void {
+export function saveConnectorPrefs(storage: Pick<PrefsStorage, "setItem">, userId: number, prefs: ConnectorPrefs): void {
   const key = connectorStorageKey(userId);
   if (!key) return;
   try {

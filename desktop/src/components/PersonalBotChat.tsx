@@ -6,13 +6,15 @@ import { Avatar, Icon } from "./ui";
 import {
   CONNECTORS,
   connectorStatusList,
+  connectorStorageKey,
   advertisedTools,
   loadConnectorPrefs,
   resolveConnectors,
-  saveConnectorPrefs,
   type ConnectorLinkMap,
   type ConnectorPrefs,
 } from "../lib/connectors";
+import { PersonalBotSettings } from "./PersonalBotSettings";
+import { readSettingsSnapshot, type BotSettingsLink } from "../lib/personal-bot-settings";
 import { executePersonalBotTool, ubionFromBridge } from "../lib/personal-bot-tools";
 import {
   createPersonalBotClient,
@@ -28,23 +30,7 @@ import {
 
 const defaultClient = createPersonalBotClient();
 
-function connectorLabel(t: (key: string) => string, id: string): string {
-  if (id === "ubion-mail") return t("회사 메일");
-  if (id === "ubion-approval") return t("결재 대기");
-  if (id === "ubion-calendar") return t("오늘 일정");
-  if (id === "google-drive") return t("Google Drive");
-  if (id === "google-calendar") return t("Google Calendar");
-  return id;
-}
-
-function connectorStateLabel(t: (key: string) => string, state: "ready" | "off" | "connect-later"): string {
-  if (state === "ready") return t("사용 중");
-  if (state === "off") return t("꺼짐");
-  return t("나중에 연결");
-}
-
-type GoogleLink = { connected: boolean; account?: string };
-type GoogleConnectorId = "google-drive" | "google-calendar";
+type GoogleLink = BotSettingsLink;
 
 function linkFlags(links: Record<string, GoogleLink>): ConnectorLinkMap {
   const flags: Record<string, boolean> = {};
@@ -111,9 +97,7 @@ export function PersonalBotChat({
   const [error, setError] = useState("");
   const [prefs, setPrefs] = useState<ConnectorPrefs>(() => loadConnectorPrefs(store, userId));
   const [links, setLinks] = useState<Record<string, GoogleLink>>({});
-  const [busyId, setBusyId] = useState("");
-  const [connectError, setConnectError] = useState("");
-  const [connectOpen, setConnectOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
@@ -126,12 +110,10 @@ export function PersonalBotChat({
     setTurns(loadPersonalBotTurns(store, userId));
     setPrefs(loadConnectorPrefs(store, userId));
     setLinks({});
-    setBusyId("");
-    setConnectError("");
     setDraft("");
     setSending(false);
     setError("");
-    setConnectOpen(false);
+    setSettingsOpen(false);
     let cancel = false;
     const google = googleBridge();
     if (google) {
@@ -148,6 +130,27 @@ export function PersonalBotChat({
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns, store, userId]);
+
+  useEffect(() => {
+    const off = window.ubion?.personalBotSettings?.onChanged?.((payload) => {
+      const user = Number((payload as { userId?: unknown }).userId);
+      const snap = readSettingsSnapshot(payload);
+      if (!snap || user !== userId) return;
+      setPrefs(snap.prefs);
+      setLinks(snap.links);
+    });
+    return () => { off?.(); };
+  }, [userId]);
+
+  useEffect(() => {
+    const key = connectorStorageKey(userId);
+    const onStorage = (e: StorageEvent) => {
+      if (!key || e.key !== key) return;
+      setPrefs(loadConnectorPrefs(store, userId));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [store, userId]);
 
   useEffect(() => {
     const el = taRef.current;
@@ -221,34 +224,17 @@ export function PersonalBotChat({
     });
   };
 
-  const applyStatus = (status: { connectors: { id: string; connected: boolean; account?: string }[] }) => {
-    setLinks(Object.fromEntries(status.connectors.map((item) => [item.id, { connected: item.connected, account: item.account }])));
-  };
-
-  const connectGoogle = (id: GoogleConnectorId) => {
-    const google = googleBridge();
-    if (!google) {
-      setConnectError(t("Google 연결은 앱에서만 사용할 수 있습니다."));
+  const openSettings = () => {
+    if (settingsOpen) {
+      setSettingsOpen(false);
       return;
     }
-    if (busyId) return;
-    setBusyId(id);
-    setConnectError("");
-    void google.connect(userId, id).then(() => google.status(userId)).then(applyStatus).catch((e: unknown) => {
-      const message = e instanceof Error && e.message ? e.message : t("Google 연결에 실패했습니다.");
-      setConnectError(message);
-    }).finally(() => setBusyId((current) => (current === id ? "" : current)));
-  };
-
-  const disconnectGoogle = (id: GoogleConnectorId) => {
-    const google = googleBridge();
-    if (!google || busyId) return;
-    setBusyId(id);
-    setConnectError("");
-    void google.disconnect(userId, id).then(() => google.status(userId)).then(applyStatus).catch((e: unknown) => {
-      const message = e instanceof Error && e.message ? e.message : t("Google 연결에 실패했습니다.");
-      setConnectError(message);
-    }).finally(() => setBusyId((current) => (current === id ? "" : current)));
+    const opener = window.ubion?.personalBotSettings?.open;
+    if (!opener) {
+      setSettingsOpen(true);
+      return;
+    }
+    void opener(userId).catch(() => setSettingsOpen(true));
   };
 
   return (
@@ -259,48 +245,24 @@ export function PersonalBotChat({
           <div className="name">{t("내 봇")} <span className="tag">{t("비서")}</span></div>
           <div className="sub muted">{t("유비온 비서")}</div>
         </div>
-        <button type="button" className={`icon-btn ${connectOpen ? "on" : ""}`} title={t("비서 연결")} aria-label={t("비서 연결")} onClick={() => setConnectOpen((open) => !open)}>
+        <button type="button" className={`icon-btn ${settingsOpen ? "on" : ""}`} title={t("비서 연결")} aria-label={t("비서 연결")} aria-expanded={settingsOpen} onClick={openSettings}>
           <Icon name="gear" size={18} />
         </button>
       </header>
-      {connectOpen && (
-        <div className="bot-connectors" role="dialog" aria-label={t("비서 연결")}>
-          {connectError && <div className="banner bad" role="alert">{connectError}</div>}
-          {resolveConnectors(prefs, CONNECTORS, linkFlags(links)).map((connector) => {
-            const linked = links[connector.id];
-            const googleId = connector.id === "google-drive" || connector.id === "google-calendar" ? connector.id : null;
-            const stateText = googleId && connector.state === "ready" ? t("연결됨") : connectorStateLabel(t, connector.state);
-            const account = googleId && linked?.account ? ` · ${linked.account}` : "";
-            return (
-              <div key={connector.id} className="bot-conn">
-                <span>{connectorLabel(t, connector.id)}</span>
-                <span className="muted tiny">{stateText}{account}</span>
-                {googleId && connector.state === "connect-later" && (
-                  <button type="button" className="bot-conn-btn" disabled={!!busyId} onClick={() => connectGoogle(googleId)}>
-                    {busyId === googleId ? t("연결 중") : t("연결")}
-                  </button>
-                )}
-                {googleId && linked?.connected && (
-                  <button type="button" className="bot-conn-btn" disabled={!!busyId} onClick={() => disconnectGoogle(googleId)}>
-                    {t("연결 해제")}
-                  </button>
-                )}
-                <input
-                  type="checkbox"
-                  aria-label={connectorLabel(t, connector.id)}
-                  checked={connector.state !== "off"}
-                  onChange={() => {
-                    const enabled = connector.state === "off";
-                    const next = { ...prefs, [connector.id]: { ...prefs[connector.id], enabled } };
-                    setPrefs(next);
-                    saveConnectorPrefs(store, userId, next);
-                  }}
-                />
-              </div>
-            );
-          })}
+      {settingsOpen ? (
+        <div className="bot-settings-panel">
+          <PersonalBotSettings
+            userId={userId}
+            storage={store}
+            onClose={() => setSettingsOpen(false)}
+            onChanged={(snapshot) => {
+              setPrefs(snapshot.prefs);
+              setLinks(snapshot.links);
+            }}
+          />
         </div>
-      )}
+      ) : (
+      <>
       <div className="chat-body">
         <div className="msg-list" ref={listRef}>
           {turns.filter((turn) => (turn.role === "user" || turn.role === "bot") && turn.text.trim()).map((turn, i, shown) => {
@@ -381,6 +343,8 @@ export function PersonalBotChat({
           <Icon name="send" size={18} />
         </button>
       </form>
+      </>
+      )}
     </section>
   );
 }
