@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
 import { useT } from "../lib/i18n";
-import { isMobileUi } from "../lib/compact";
+import { isMobileUi, useIsCompact } from "../lib/compact";
 import { sanitizeMailHtml } from "../lib/sanitize";
 import { fileIcon } from "../../electron/core/attach";
 import { applyMailDelete, isTrashFolder } from "../../electron/core/mail";
@@ -122,7 +122,9 @@ function Overview({ page, inboxUnread, folders, onSender, onPick, onWrite }: {
 
 export function Mail() {
   const mobile = isMobileUi();
+  const compact = useIsCompact();
   const t = useT();
+  const [pane, setPane] = useState<"folders" | "list" | "read">("folders");
   const [folders, setFolders] = useState<MailFolders | null>(null);
   const [folderErr, setFolderErr] = useState("");
   const [folder, setFolder] = useState("Inbox");
@@ -168,12 +170,13 @@ export function Mail() {
   const curFolder = allFolders.find((f) => f.fullName === folder);
   const inboxUnread = allFolders.find((f) => f.fullName === "Inbox")?.unseenCnt ?? (folder === "Inbox" ? list?.unread ?? 0 : 0);
 
-  const pickFolder = (f: MailFolder) => { setFolder(f.fullName); setSel(null); setMsg(null); setKw(""); setQuery(""); };
+  const pickFolder = (f: MailFolder) => { setFolder(f.fullName); setSel(null); setMsg(null); setKw(""); setQuery(""); setPane("list"); };
   const search = (e?: React.FormEvent, q = kw) => { e?.preventDefault(); setKw(q); setQuery(q.trim()); setSel(null); setMsg(null); };
 
   /** Opening = server read call, which marks the message read (normal mail behaviour). */
   const openMsg = async (m: MailListItem) => {
     const req = ++msgReq.current;
+    setPane("read");
     setSel(m); setMsg(null); setMsgErr(""); setMsgLoading(true); setShowImages(false);
     try {
       const r = await api().portal.mailRead(m.folder, m.uid);
@@ -218,7 +221,7 @@ export function Mail() {
     setItems(remaining); setChecked(new Set());
     setList((l) => l && { ...l, total: Math.max(0, l.total - uids.length), unread: Math.max(0, l.unread - unreadRemoved) });
     if (unreadRemoved) bumpUnread(f, -unreadRemoved);
-    if (sel && uids.includes(sel.uid)) { if (next) void openMsg(next); else { setSel(null); setMsg(null); } }
+    if (sel && uids.includes(sel.uid)) { if (next) void openMsg(next); else { setSel(null); setMsg(null); setPane("list"); } }
     try {
       await api().portal.mailDelete(f, uids);
       setToast(inTrash ? t("{n}통을 영구 삭제했습니다", { n: uids.length }) : t("{n}통을 휴지통으로 이동했습니다", { n: uids.length }));
@@ -268,7 +271,7 @@ export function Mail() {
   const percent = folders ? Math.max(0, Math.min(100, folders.quota.percent)) : 0;
 
   return (
-    <div className="mail3">
+    <div className={`mail3${compact ? ` mail-stack mail-stack-${pane}` : ""}`}>
       <aside className="mail-pane-folders">
         <div className="side-head home-head">
           <h2>{t("메일")}</h2>
@@ -297,6 +300,11 @@ export function Mail() {
       </aside>
 
       <section className="mail-pane-list">
+        {compact && (
+          <div className="mail-stack-head">
+            <button className="chat-back" onClick={() => setPane("folders")}>{t("← 메일함")}</button>
+          </div>
+        )}
         <form className="search-box mail-search" onSubmit={search}>
           <Icon name="search" size={16} />
           <input placeholder={t("{folder}에서 검색", { folder: curFolder?.name || t("메일함") })} value={kw} onChange={(e) => setKw(e.target.value)} />
@@ -342,6 +350,11 @@ export function Mail() {
       </section>
 
       <section className="mail-pane-read">
+        {compact && (
+          <div className="mail-stack-head">
+            <button className="chat-back" onClick={() => { setPane("list"); setSel(null); setMsg(null); }}>{t("← 목록")}</button>
+          </div>
+        )}
         {compose && <MailCompose key={JSON.stringify(compose).length + compose.mode + (compose.ref?.uid ?? "")} initial={compose} onClose={() => setCompose(null)} onSent={onSent} />}
         {toast && <div className="approval-toast" role="status">{toast}</div>}
         {confirmDel && (
@@ -367,12 +380,14 @@ export function Mail() {
               <div className="mail-read-title">
                 <h3>{msg.important && <span className="mail-imp">!</span>}{msg.subject || t("(제목 없음)")}</h3>
                 <div className="mail-read-actions">
-                  <button className="link" onClick={() => startCompose("reply")}>{t("↩ 답장")}</button>
-                  <button className="link" onClick={() => startCompose("replyAll")}>{t("전체 답장")}</button>
-                  <button className="link" onClick={() => startCompose("forward")}>{t("→ 전달")}</button>
-                  {canDelete && <button className="link danger" title={t("삭제 (Delete)")} onClick={() => askDelete([msg.uid])}><Icon name="trash" size={14} /> {inTrash ? t("영구 삭제") : t("삭제")}</button>}
+                  {!mobile && <>
+                    <button className="link" onClick={() => startCompose("reply")}>{t("↩ 답장")}</button>
+                    <button className="link" onClick={() => startCompose("replyAll")}>{t("전체 답장")}</button>
+                    <button className="link" onClick={() => startCompose("forward")}>{t("→ 전달")}</button>
+                    {canDelete && <button className="link danger" title={t("삭제 (Delete)")} onClick={() => askDelete([msg.uid])}><Icon name="trash" size={14} /> {inTrash ? t("영구 삭제") : t("삭제")}</button>}
+                  </>}
                   <button className="link" onClick={() => open(mailUrl(msg.folder, String(msg.uid)))}>{t("웹에서 열기")}</button>
-                  <button className="icon-btn" title={t("닫기")} onClick={() => { setSel(null); setMsg(null); }}><Icon name="close" size={16} /></button>
+                  {!compact && <button className="icon-btn" title={t("닫기")} onClick={() => { setSel(null); setMsg(null); }}><Icon name="close" size={16} /></button>}
                 </div>
               </div>
               <div className="mail-read-meta">

@@ -148,19 +148,49 @@ html.ubm-mobile .app.compact .rail-btn svg { flex: none; }
 /* Desktop rail has no labels in the button; hide if present outside compact */
 html.ubm-mobile .app:not(.compact) .rail-btn .rail-label { display: none; }
 
-/* Simplify mail/approval chrome on phone */
+/* Phone stack: mail folders → list → read, approval boxes → list → detail */
 @media (max-width: 767px) {
-  html.ubm-mobile .mail,
-  html.ubm-mobile .approval { flex-direction: column; }
-  html.ubm-mobile .mail-pane-folders,
-  html.ubm-mobile .approval-boxes { width: 100%; max-width: none; border-right: 0; }
+  html.ubm-mobile .mail3.mail-stack,
+  html.ubm-mobile .approval.approval-stack { flex-direction: column; }
+  html.ubm-mobile .mail3.mail-stack > .mail-pane-folders,
+  html.ubm-mobile .mail3.mail-stack > .mail-pane-list,
+  html.ubm-mobile .mail3.mail-stack > .mail-pane-read,
+  html.ubm-mobile .approval.approval-stack > .approval-boxes,
+  html.ubm-mobile .approval.approval-stack > .approval-list,
+  html.ubm-mobile .approval.approval-stack > .approval-detail {
+    display: none;
+    flex: 1;
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    border-right: 0;
+  }
+  html.ubm-mobile .mail3.mail-stack-folders > .mail-pane-folders,
+  html.ubm-mobile .mail3.mail-stack-list > .mail-pane-list,
+  html.ubm-mobile .approval.approval-stack-boxes > .approval-boxes,
+  html.ubm-mobile .approval.approval-stack-list > .approval-list { display: flex; }
+  html.ubm-mobile .mail3.mail-stack-read > .mail-pane-read,
+  html.ubm-mobile .approval.approval-stack-detail > .approval-detail { display: block; }
+
+  html.ubm-mobile .mail-stack-head,
+  html.ubm-mobile .approval-stack-head {
+    display: flex;
+    align-items: center;
+    flex: none;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 6px;
+  }
+  html.ubm-mobile .approval.approval-stack-detail > .approval-detail > .approval-stack-head {
+    margin: -14px -18px 8px;
+    border-bottom: 1px solid var(--line);
+  }
 }
 
 /* Phone-first: no mutating mail/approval actions (list+detail only) */
 html.ubm-mobile .approval-actions,
 html.ubm-mobile .mail-write,
 html.ubm-mobile .compose-discard,
-html.ubm-mobile .mail .modal.compose-discard { display: none !important; }
+html.ubm-mobile .mail3 .modal.compose-discard { display: none !important; }
 /* Hide "메일 쓰기" primary buttons in mail chrome */
 html.ubm-mobile .mail-pane-folders .primary.small,
 html.ubm-mobile .mail-overview .primary.small { display: none !important; }
+html.ubm-mobile .mail-bulk { display: none !important; }

@@ -67,6 +67,7 @@ export type ApprovalAttachment = { id: string; name: string; extention: string; 
 export type ApprovalActivity = {
   type: string; name: string; userName: string; userPosition: string; deptName: string;
   status: string; statusName: string; comment: string; completedAt?: string;
+  userId?: number; thumbnail?: string;
 };
 export type ApprovalActivityGroup = { name: string; activities: ApprovalActivity[] };
 export type ApprovalComment = { id: string; author: string; content: string; createdAt?: string };
@@ -449,6 +450,8 @@ export function parseApprovalDoc(body: any, comments?: any): ApprovalDocumentDet
       type: str(a?.type), name: str(a?.name), userName: str(a?.userName), userPosition: str(a?.userPosition),
       deptName: str(a?.deptName), status: str(a?.status), statusName: str(a?.statusName), comment: str(a?.comment),
       completedAt: a?.completedAt ? str(a.completedAt) : undefined,
+      userId: posInt(a?.userId ?? a?.actorId) ?? undefined,
+      thumbnail: a?.thumbnail ? str(a.thumbnail) : undefined,
     })),
   }));
   const actionCheck: Record<string, boolean> = {};

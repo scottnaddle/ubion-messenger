@@ -339,6 +339,8 @@ const dict: Record<string, string> = {
   "공지톡을 불러오지 못했습니다: {error}": "Không thể tải tin thông báo: {error}",
   "공지톡을 삭제했습니다": "Đã xóa tin thông báo",
   "← 목록": "← Danh sách",
+  "← 메일함": "← Hộp thư",
+  "← 결재함": "← Hộp phê duyệt",
   "전체사용자": "Tất cả người dùng",
   "특정사용자": "Người dùng cụ thể",
   "확인 {done}/{total}": "Đã xem {done}/{total}",

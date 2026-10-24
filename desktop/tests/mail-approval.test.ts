@@ -80,6 +80,7 @@ describe("approval detail", () => {
         apprFlow: { activityGroups: [{ name: "결재선", activities: [{
           type: "approval", name: "승인", userName: "이", userPosition: "팀장", deptName: "재무",
           status: "APPROVED", statusName: "승인", comment: "확인", completedAt: "2026-10-22T10:00:00+09:00",
+          userId: "741", thumbnail: "/profile/741.png",
         }] }] },
         actionCheck: { isApprovalWaitingUser: 1, isAgreementWaitingUser: false },
       },
@@ -94,7 +95,9 @@ describe("approval detail", () => {
       bodyHtml: "<table><tr><td>내용</td></tr></table>", drafterPositionName: "과장",
     });
     expect(r.document.attaches[0]).toMatchObject({ id: "9", name: "영수증.pdf", size: 2048 });
-    expect(r.apprFlow.activityGroups[0].activities[0]).toMatchObject({ userName: "이", statusName: "승인", comment: "확인" });
+    expect(r.apprFlow.activityGroups[0].activities[0]).toMatchObject({
+      userName: "이", statusName: "승인", comment: "확인", userId: 741, thumbnail: "/profile/741.png",
+    });
     expect(r.actionCheck).toEqual({ isApprovalWaitingUser: true, isAgreementWaitingUser: false });
     expect(r.comments).toEqual([
       { id: "3", author: "박", content: "확인했습니다", createdAt: "2026-10-22T11:00:00+09:00" },

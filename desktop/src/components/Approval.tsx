@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { Icon } from "./ui";
+import { Avatar, Icon } from "./ui";
 import { tk, useT } from "../lib/i18n";
-import { isMobileUi } from "../lib/compact";
+import { isMobileUi, useIsCompact } from "../lib/compact";
 import { sanitizeHtml } from "../lib/sanitize";
 import {
   APPROVAL_BOXES, APPROVAL_BOX_LABELS,
@@ -48,8 +48,8 @@ function FlowGroup({ name, activities }: { name: string; activities: ApprovalAct
       {name && <div className="flow-group-name muted small">{name}</div>}
       <div className="flow-steps">
         {activities.map((a, i) => (
-          <div className={`flow-step ${statusClass(a)}`} key={i}>
-            <div className="flow-dot">{i + 1}</div>
+          <div className={`flow-step ${statusClass(a)}`} key={a.userId ?? i}>
+            <Avatar name={a.userName || a.name || "?"} src={a.thumbnail} size={28} />
             <div className="flow-info">
               <b>{a.userName || a.name || "-"}</b>
               <span className="muted small">{[a.deptName, a.userPosition].filter(Boolean).join(" · ")}</span>
@@ -71,6 +71,8 @@ export const canAct = (d: ApprovalDocumentDetail) =>
 export function Approval() {
   const t = useT();
   const mobile = isMobileUi();
+  const compact = useIsCompact();
+  const [pane, setPane] = useState<"boxes" | "list" | "detail">("boxes");
   const [box, setBox] = useState<ApprovalBox>("todo");
   const [page, setPage] = useState(0);
   const [kw, setKw] = useState("");
@@ -124,6 +126,7 @@ export function Approval() {
 
   const openDoc = useCallback(async (item: ApprovalListItem) => {
     const n = ++detailReq.current;
+    setPane("detail");
     setSel(item);
     setDetail(null);
     setDetailError("");
@@ -139,7 +142,7 @@ export function Approval() {
   }, []);
 
   useEffect(() => {
-    if (!list) return;
+    if (compact || !list) return;
     const same = sel && list.items.some((i) => (i.documentId ?? i.id) === (sel.documentId ?? sel.id));
     if (same) return;
     const first = list.items[0];
@@ -151,9 +154,10 @@ export function Approval() {
       setDetailError("");
       setDetailLoading(false);
     }
-  }, [list, sel, openDoc]);
+  }, [compact, list, sel, openDoc]);
 
   const chooseBox = (b: ApprovalBox) => {
+    setPane("list");
     if (b === box && page === 0) {
       // Same box clicked again: deps don't change, so reload explicitly instead of blanking the list.
       void loadList();
@@ -219,7 +223,7 @@ export function Approval() {
   const currentPage = list?.page.page ?? page;
 
   return (
-    <div className="approval">
+    <div className={`approval${compact ? ` approval-stack approval-stack-${pane}` : ""}`}>
       <aside className="approval-boxes">
         <div className="side-head home-head"><h2>{t("전자결재")}</h2></div>
         {APPROVAL_BOXES.map((b) => (
@@ -234,6 +238,11 @@ export function Approval() {
       </aside>
 
       <section className="approval-list">
+        {compact && (
+          <div className="approval-stack-head">
+            <button className="chat-back" onClick={() => setPane("boxes")}>{t("← 결재함")}</button>
+          </div>
+        )}
         <form className="search-box approval-search" onSubmit={search}>
           <Icon name="search" size={16} />
           <input placeholder={t("문서 제목 검색")} value={kw} onChange={(e) => setKw(e.target.value)} />
@@ -282,6 +291,11 @@ export function Approval() {
       </section>
 
       <section className="approval-detail">
+        {compact && (
+          <div className="approval-stack-head">
+            <button className="chat-back" onClick={() => setPane("list")}>{t("← 목록")}</button>
+          </div>
+        )}
         {detailLoading && !detail && <div className="muted small pad">{t("불러오는 중…")}</div>}
         {detailError && !detailLoading && (
           <div className="approval-error pad">

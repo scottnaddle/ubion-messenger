@@ -340,6 +340,8 @@ const dict: Record<string, string> = {
   "공지톡을 불러오지 못했습니다: {error}": "Couldn't load Notice Talks: {error}",
   "공지톡을 삭제했습니다": "Notice Talk deleted",
   "← 목록": "← List",
+  "← 메일함": "← Mailboxes",
+  "← 결재함": "← Approval Boxes",
   "전체사용자": "All Users",
   "특정사용자": "Specific Users",
   "확인 {done}/{total}": "Read {done}/{total}",
