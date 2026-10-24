@@ -4,7 +4,7 @@ import {
 } from "../api";
 import {
   filterMembers, findMentionTrigger, insertMention, parseMentionTokens,
-  type MentionMember, type MentionTrigger,
+  type MentionTrigger,
 } from "../lib/mention";
 import {
   addFilesWithReport, executeSendPlan, folderSkipMessage, formatSize, isImageFile,
@@ -27,6 +27,7 @@ import { REMINDER_PRESETS, type ReminderPreset } from "../../electron/core/remin
 import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
+import { loadRoomMembers, type RoomMemberFace } from "../lib/room-members";
 import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
 import {
   applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionPollIds, REACTION_ROOM_INITIAL, reactionBlockedToast, reactionRoomFailed, reactionToggleErrorText, reactionRoomOk, reactionRoomReason, type ReactionRoomState,
@@ -44,41 +45,13 @@ import { ReactionBar, ReactionPopup, type ReactionPickerState } from "./Reaction
 import { REACTION_EMOJI, REACTION_ROOM_FORBIDDEN } from "../../electron/core/reactions";
 import { PollCard, PollCreateModal } from "./PollCard";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
-import { Avatar, Icon } from "./ui";
+import { Avatar, Icon, RoomAvatar } from "./ui";
 import { tk, useT } from "../lib/i18n";
 import type { Toast, ToastFn } from "../App";
 
 const PRES_LABEL: Record<Presence, string> = { online: tk("온라인"), away: tk("자리 비움"), busy: tk("다른 용무 중"), offline: tk("오프라인") };
 
-type MentionCandidate = MentionMember & { image?: string };
-
-const memberCache = new Map<string, MentionCandidate[]>();
-const memberPending = new Map<string, Promise<MentionCandidate[]>>();
-
-/** Fetch room members once per room; both the composer and message rendering share this cache. */
-function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
-  const cached = memberCache.get(roomKey);
-  if (cached) return Promise.resolve(cached);
-  const pending = memberPending.get(roomKey);
-  if (pending) return pending;
-  const req = api()
-    .call<MentionCandidate[]>("rooms:members", roomKey)
-    .then((list) => {
-      const members = (Array.isArray(list) ? list : [])
-        .filter((m) => m && typeof m.name === "string" && m.name)
-        .map((m) => ({
-          userId: Number(m.userId), name: m.name,
-          position: m.position || "", department: m.department || "", image: m.image || "",
-        }));
-      memberCache.set(roomKey, members);
-      return members;
-    })
-    // don't cache failures, so a transient error doesn't disable mentions for the room until restart
-    .catch(() => [] as MentionCandidate[])
-    .finally(() => { memberPending.delete(roomKey); });
-  memberPending.set(roomKey, req);
-  return req;
-}
+type MentionCandidate = RoomMemberFace;
 
 export function ChatView({
   room, me, focused, presence, statusMessage, botStatus, botUserSeq, toast,
@@ -793,7 +766,7 @@ export function ChatView({
       onDrop={canSend ? onDrop : undefined}
     >
       <header className="chat-head">
-        <Avatar name={room.name} src={room.avatar} size={34} presence={room.peerUserId ? presence || "offline" : undefined} />
+        <RoomAvatar room={room} size={34} presence={room.peerUserId ? presence || "offline" : undefined} />
         <div className="chat-title">
           <div className="name">{room.name}</div>
           <div className="sub muted">{subtitle}</div>
