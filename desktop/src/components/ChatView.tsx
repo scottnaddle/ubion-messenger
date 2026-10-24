@@ -771,7 +771,11 @@ export function ChatView({
     return () => window.clearTimeout(timer);
   }, [jumpKey]);
   const jumpToTodo = (todo: RoomAiTodo) => {
-    const present = (todo.sourceMessageIds ?? []).filter((id) => msgs.some((m) => m.messageId === id));
+    const present: number[] = [];
+    for (const id of todo.sourceMessageIds ?? []) {
+      const hit = msgs.find((m) => m.messageId != null && String(m.messageId) === String(id));
+      if (hit?.messageId != null && !present.includes(hit.messageId)) present.push(hit.messageId);
+    }
     if (!present.length) {
       toast(t("연결된 메시지가 현재 불러온 대화에 없습니다"));
       return;

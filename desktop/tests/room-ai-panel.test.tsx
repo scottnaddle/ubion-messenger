@@ -3,7 +3,7 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { RoomAiService, type StorageLike } from "../src/lib/room-ai";
+import { RoomAiService, ROOM_AI_LIVE_ERROR, type RoomAiProvider, type StorageLike } from "../src/lib/room-ai";
 import { RoomAiPanel } from "../src/components/RoomAiPanel";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -111,6 +111,30 @@ describe("Room AI panel", () => {
     expect(summarize).not.toHaveBeenCalled();
     if (hidden) Object.defineProperty(document, "hidden", hidden);
     else delete (document as { hidden?: boolean }).hidden;
+    await act(async () => { root.unmount(); });
+    host.remove();
+  });
+
+  it("shows the live proxy error instead of a stub summary", async () => {
+    const provider: RoomAiProvider = {
+      summarize: async () => { throw new Error(ROOM_AI_LIVE_ERROR); },
+      extractTodos: async () => [],
+    };
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <RoomAiPanel
+          roomKey="room:9" userId={7} messages={messages} focused historyLoading={false}
+          service={new RoomAiService(provider)} storage={memory()} pollMs={60_000}
+        />,
+      );
+    });
+    await flush();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain(ROOM_AI_LIVE_ERROR);
+    expect(host.textContent).not.toContain("[스텁]");
     await act(async () => { root.unmount(); });
     host.remove();
   });

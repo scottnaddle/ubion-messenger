@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ROOM_AI_ROOM_LIMIT, loadRoomAi, mergeRoomAiTodos, roomAiFingerprint, roomAiShouldRun, roomAiTodoId,
   saveRoomAi, stubExtractTodos, stubSummarize, toggleRoomAiTodo, toRoomAiMessages,
-  RoomAiService, type RoomAiMessage, type StorageLike,
+  RoomAiService, HttpRoomAiProvider, UBM_ROOM_AI_URL, ROOM_AI_LIVE_ERROR, ROOM_AI_SERVER_ERROR, ROOM_AI_LIVE_BAD,
+  resolveRoomAiUrl, parseRoomAiResponse,
+  type RoomAiMessage, type StorageLike,
 } from "../src/lib/room-ai";
 
 function memory(): StorageLike {
@@ -48,9 +50,9 @@ describe("room AI stub provider", () => {
       summarize: vi.fn(async () => "  한 줄 요약  "),
       extractTodos: vi.fn(async () => [{ title: "확인하기", assignee: "김민수" }]),
     };
-    const result = await new RoomAiService(provider).run(sample);
-    expect(provider.summarize).toHaveBeenCalledWith(sample);
-    expect(provider.extractTodos).toHaveBeenCalledWith(sample);
+    const result = await new RoomAiService(provider).run("room:9", sample);
+    expect(provider.summarize).toHaveBeenCalledWith(sample, "room:9");
+    expect(provider.extractTodos).toHaveBeenCalledWith(sample, "room:9");
     expect(result).toEqual({ summary: "한 줄 요약", todos: [{ title: "확인하기", assignee: "김민수" }] });
   });
 });
@@ -138,3 +140,60 @@ describe("room AI local todos", () => {
     expect(loadRoomAi(storage, 7, `room:${ROOM_AI_ROOM_LIMIT}`)?.summary).toBe("s");
   });
 });
+
+describe("live room AI provider", () => {
+  it("defaults to the local proxy unless the stub flag or vitest is set", () => {
+    expect(UBM_ROOM_AI_URL).toBe("http://127.0.0.1:8787/v1/room-ai/run");
+    expect(resolveRoomAiUrl({})).toBe(UBM_ROOM_AI_URL);
+    expect(resolveRoomAiUrl({ VITE_UBM_ROOM_AI_URL: "http://127.0.0.1:9/v1/room-ai/run" })).toBe("http://127.0.0.1:9/v1/room-ai/run");
+    expect(resolveRoomAiUrl({ VITE_UBM_ROOM_AI_STUB: "1" })).toBeNull();
+    expect(resolveRoomAiUrl({ VITEST: true })).toBeNull();
+  });
+
+  it("posts the transcript once and keeps string source ids", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        summary: "회의에서 자료 검토와 내일 회신을 정했습니다.",
+        todos: [{ title: "자료 검토", assignee: "김민수", due: "내일", sourceMessageIds: ["1", 2] }],
+      }),
+    }) as Response);
+    const provider = new HttpRoomAiProvider({ url: UBM_ROOM_AI_URL, fetchImpl });
+    const service = new RoomAiService(provider);
+    const result = await service.run("room:9", sample);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe(UBM_ROOM_AI_URL);
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    expect(body).toEqual({
+      roomKey: "room:9",
+      messages: [
+        { id: 1, sender: "김민수", text: "자료 검토 부탁합니다", createdAt: "2026-10-24T09:00:00+09:00" },
+        { id: 2, sender: "이서연", text: "내일까지 회신해주세요", createdAt: "2026-10-24T09:05:00+09:00" },
+      ],
+    });
+    expect(JSON.stringify(initHeaders(fetchImpl.mock.calls[0][1]))).not.toMatch(/authorization|api-key|minimax/i);
+    expect(result.summary).toContain("자료 검토");
+    expect(result.todos[0].sourceMessageIds).toEqual(["1", 2]);
+  });
+
+  it("surfaces a Korean error on network and 5xx and does not invent a stub summary", async () => {
+    const down = new HttpRoomAiProvider({
+      fetchImpl: vi.fn(async () => { throw new Error("ECONNREFUSED"); }),
+    });
+    await expect(down.summarize(sample, "room:9")).rejects.toThrow(ROOM_AI_LIVE_ERROR);
+
+    const server = new HttpRoomAiProvider({
+      fetchImpl: vi.fn(async () => ({ ok: false, status: 502, json: async () => ({}) }) as Response),
+    });
+    await expect(server.extractTodos(sample, "room:9")).rejects.toThrow(ROOM_AI_SERVER_ERROR);
+
+    expect(() => parseRoomAiResponse({ summary: "" })).toThrow(ROOM_AI_LIVE_BAD);
+  });
+});
+
+function initHeaders(init?: RequestInit): Record<string, string> {
+  const headers = init?.headers;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return {};
+  return headers as Record<string, string>;
+}

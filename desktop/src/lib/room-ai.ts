@@ -1,15 +1,12 @@
 /**
  * 암묵적 방 AI (1.1 alpha). Summary + todo extraction stay out of the chat transcript.
  *
- * The desktop never holds a MiniMax key. This module is the provider seam: the alpha ships a
- * deterministic stub so the panel works offline. A later company proxy (bot.ubion.global style)
- * should accept the same RoomAiProvider calls and keep the key server-side.
- *
- * Suggested proxy shape (not called from here):
- *   POST {UBM_BOT_API_URL}/v1/room-ai/run
- *   headers: X-UBM-User-Seq, X-UBM-Session   (never DaouOffice cookies)
- *   body: { roomKey, messages: [{ id?, sender, text, createdAt }] }
- *   200: { summary: string, todos: [{ title, assignee?, due?, sourceMessageIds?: number[] }] }
+ * The desktop never holds a MiniMax key. Scott's alpha talks to a local proxy that keeps the key:
+ *   POST http://127.0.0.1:8787/v1/room-ai/run
+ *   body: { roomKey, messages: [{ id, sender, text, createdAt }] }
+ *   200: { summary, todos: [{ title, assignee?, due?, sourceMessageIds?: (string|number)[] }] }
+ * Override the URL with VITE_UBM_ROOM_AI_URL. VITE_UBM_ROOM_AI_STUB=1 forces the offline stub.
+ * A network or 5xx failure is shown in the panel. It does not silently switch to the stub.
  */
 
 export const ROOM_AI_STORAGE_KEY = "ubm.room-ai.v1";
@@ -18,6 +15,11 @@ export const ROOM_AI_ROOM_LIMIT = 200;
 export const ROOM_AI_TODO_LIMIT = 30;
 /** Foreground refresh while a room stays open. Does not run when the window is hidden or unfocused. */
 export const ROOM_AI_POLL_MS = 3 * 60_000;
+/** Scott-only alpha. The MiniMax key stays on this local proxy, never in the app. */
+export const UBM_ROOM_AI_URL = "http://127.0.0.1:8787/v1/room-ai/run";
+export const ROOM_AI_LIVE_ERROR = "방 AI 서버에 연결하지 못했습니다.";
+export const ROOM_AI_SERVER_ERROR = "방 AI 서버가 응답하지 못했습니다.";
+export const ROOM_AI_LIVE_BAD = "방 AI 응답을 확인하지 못했습니다.";
 
 export type RoomAiMessage = {
   id?: number;
@@ -41,8 +43,8 @@ export type RoomAiTodoDraft = {
   title: string;
   assignee?: string;
   due?: string;
-  /** Message ids in the window this item was synthesized from. */
-  sourceMessageIds?: number[];
+  /** Message ids in the window this item was synthesized from. Numbers or decimal strings. */
+  sourceMessageIds?: (number | string)[];
 };
 
 export type RoomAiTodo = RoomAiTodoDraft & {
@@ -60,9 +62,15 @@ export type RoomAiRecord = {
 export type RoomAiRunReason = "open" | "timer" | "refresh";
 
 export interface RoomAiProvider {
-  summarize(roomMessages: RoomAiMessage[]): Promise<string>;
-  extractTodos(roomMessages: RoomAiMessage[]): Promise<RoomAiTodoDraft[]>;
+  summarize(roomMessages: RoomAiMessage[], roomKey?: string): Promise<string>;
+  extractTodos(roomMessages: RoomAiMessage[], roomKey?: string): Promise<RoomAiTodoDraft[]>;
 }
+
+export type RoomAiEnv = {
+  VITE_UBM_ROOM_AI_URL?: string;
+  VITE_UBM_ROOM_AI_STUB?: string;
+  VITEST?: boolean | string;
+};
 
 export type StorageLike = Pick<Storage, "getItem" | "setItem">;
 
@@ -166,12 +174,29 @@ function dueFrom(text: string): string | undefined {
   return undefined;
 }
 
-function sourceIds(ids: readonly number[]): number[] {
-  const out: number[] = [];
-  for (const id of ids) {
-    if (typeof id === "number" && Number.isSafeInteger(id) && id > 0 && !out.includes(id)) out.push(id);
+/** Keep numeric ids as numbers and decimal strings as strings. Both match a chat messageId via String(). */
+export function normalizeSourceMessageIds(ids: readonly unknown[] | undefined): (number | string)[] {
+  const out: (number | string)[] = [];
+  const seen = new Set<string>();
+  for (const id of ids ?? []) {
+    let key: string | null = null;
+    let value: number | string | null = null;
+    if (typeof id === "number" && Number.isSafeInteger(id) && id > 0) {
+      key = String(id);
+      value = id;
+    } else if (typeof id === "string" && /^[1-9]\d*$/.test(id.trim())) {
+      key = String(Number(id.trim()));
+      value = key;
+    }
+    if (!key || value == null || seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
   }
   return out;
+}
+
+function sourceIds(ids: readonly unknown[] | undefined): (number | string)[] {
+  return normalizeSourceMessageIds(ids);
 }
 
 /**
@@ -275,12 +300,133 @@ export class StubRoomAiProvider implements RoomAiProvider {
 export class RoomAiService {
   constructor(private readonly provider: RoomAiProvider) {}
 
-  async run(roomMessages: RoomAiMessage[]): Promise<{ summary: string; todos: RoomAiTodoDraft[] }> {
+  async run(roomKey: string, roomMessages: RoomAiMessage[]): Promise<{ summary: string; todos: RoomAiTodoDraft[] }> {
     const [summary, todos] = await Promise.all([
-      this.provider.summarize(roomMessages),
-      this.provider.extractTodos(roomMessages),
+      this.provider.summarize(roomMessages, roomKey),
+      this.provider.extractTodos(roomMessages, roomKey),
     ]);
     return { summary: summary.trim(), todos };
+  }
+}
+
+/** Null means "use the stub" (explicit stub flag, or the vitest runner). Otherwise the live proxy URL. */
+export function resolveRoomAiUrl(env: RoomAiEnv | undefined): string | null {
+  if (!env) return UBM_ROOM_AI_URL;
+  if (env.VITE_UBM_ROOM_AI_STUB === "1" || env.VITEST === true || env.VITEST === "true") return null;
+  const custom = typeof env.VITE_UBM_ROOM_AI_URL === "string" ? env.VITE_UBM_ROOM_AI_URL.trim() : "";
+  return custom || UBM_ROOM_AI_URL;
+}
+
+function roomAiEnvFromBuild(): RoomAiEnv {
+  return {
+    VITE_UBM_ROOM_AI_URL: import.meta.env.VITE_UBM_ROOM_AI_URL,
+    VITE_UBM_ROOM_AI_STUB: import.meta.env.VITE_UBM_ROOM_AI_STUB,
+    VITEST: import.meta.env.VITEST,
+  };
+}
+
+export function createRoomAiService(env: RoomAiEnv = roomAiEnvFromBuild()): RoomAiService {
+  const url = resolveRoomAiUrl(env);
+  if (!url) return new RoomAiService(new StubRoomAiProvider());
+  return new RoomAiService(new HttpRoomAiProvider({ url }));
+}
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+export function parseRoomAiResponse(data: unknown): { summary: string; todos: RoomAiTodoDraft[] } {
+  if (!data || typeof data !== "object") throw new Error(ROOM_AI_LIVE_BAD);
+  const summary = (data as { summary?: unknown }).summary;
+  if (typeof summary !== "string" || !summary.trim()) throw new Error(ROOM_AI_LIVE_BAD);
+  const rawTodos = (data as { todos?: unknown }).todos;
+  if (rawTodos != null && !Array.isArray(rawTodos)) throw new Error(ROOM_AI_LIVE_BAD);
+  const todos: RoomAiTodoDraft[] = [];
+  for (const item of rawTodos ?? []) {
+    if (!item || typeof item !== "object") continue;
+    const title = (item as { title?: unknown }).title;
+    if (typeof title !== "string" || !title.trim()) continue;
+    const assignee = (item as { assignee?: unknown }).assignee;
+    const due = (item as { due?: unknown }).due;
+    const sourceMessageIds = (item as { sourceMessageIds?: unknown }).sourceMessageIds;
+    const ids = normalizeSourceMessageIds(Array.isArray(sourceMessageIds) ? sourceMessageIds : []);
+    todos.push({
+      title: title.trim(),
+      ...(typeof assignee === "string" && assignee.trim() ? { assignee: assignee.trim() } : {}),
+      ...(typeof due === "string" && due.trim() ? { due: due.trim() } : {}),
+      ...(ids.length ? { sourceMessageIds: ids } : {}),
+    });
+  }
+  return { summary: summary.trim(), todos };
+}
+
+/**
+ * One POST per transcript. summarize and extractTodos share that response.
+ * Failures throw a short Korean Error. Callers must not replace them with the stub.
+ */
+export class HttpRoomAiProvider implements RoomAiProvider {
+  private readonly pending = new Map<string, Promise<{ summary: string; todos: RoomAiTodoDraft[] }>>();
+
+  constructor(private readonly opts: { url?: string; fetchImpl?: FetchLike; timeoutMs?: number } = {}) {}
+
+  private endpoint(): string {
+    return (this.opts.url || UBM_ROOM_AI_URL).trim();
+  }
+
+  private load(roomKey: string, messages: RoomAiMessage[]): Promise<{ summary: string; todos: RoomAiTodoDraft[] }> {
+    const key = `${roomKey}\n${roomAiFingerprint(messages)}`;
+    const existing = this.pending.get(key);
+    if (existing) return existing;
+    const job = this.post(roomKey, messages).finally(() => {
+      if (this.pending.get(key) === job) this.pending.delete(key);
+    });
+    this.pending.set(key, job);
+    return job;
+  }
+
+  async summarize(roomMessages: RoomAiMessage[], roomKey = ""): Promise<string> {
+    return (await this.load(roomKey, roomMessages)).summary;
+  }
+
+  async extractTodos(roomMessages: RoomAiMessage[], roomKey = ""): Promise<RoomAiTodoDraft[]> {
+    return (await this.load(roomKey, roomMessages)).todos;
+  }
+
+  private async post(roomKey: string, messages: RoomAiMessage[]): Promise<{ summary: string; todos: RoomAiTodoDraft[] }> {
+    const fetchImpl = this.opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    const timeoutMs = this.opts.timeoutMs ?? 45_000;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      let res: Response;
+      try {
+        res = await fetchImpl(this.endpoint(), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            roomKey,
+            messages: messages.map((m) => ({
+              id: m.id,
+              sender: m.sender ?? "",
+              text: m.text,
+              createdAt: m.createdAt,
+            })),
+          }),
+          signal: controller.signal,
+        });
+      } catch {
+        throw new Error(ROOM_AI_LIVE_ERROR);
+      }
+      if (res.status >= 500) throw new Error(ROOM_AI_SERVER_ERROR);
+      if (!res.ok) throw new Error(ROOM_AI_LIVE_BAD);
+      let data: unknown;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(ROOM_AI_LIVE_BAD);
+      }
+      return parseRoomAiResponse(data);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 }
 

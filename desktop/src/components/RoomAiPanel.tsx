@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../lib/i18n";
 import {
   loadRoomAi, mergeRoomAiTodos, roomAiFingerprint, roomAiShouldRun, saveRoomAi, toggleRoomAiTodo,
-  toRoomAiMessages, RoomAiService, StubRoomAiProvider, ROOM_AI_POLL_MS,
+  toRoomAiMessages, RoomAiService, createRoomAiService, ROOM_AI_POLL_MS,
   type RoomAiRecord, type RoomAiRunReason, type RoomAiSource, type RoomAiTodo, type StorageLike,
 } from "../lib/room-ai";
 
-const defaultService = new RoomAiService(new StubRoomAiProvider());
+const defaultService = createRoomAiService();
 
 function browserStorage(): StorageLike | null {
   try {
@@ -42,6 +42,7 @@ export function RoomAiPanel({
   const fingerprint = useMemo(() => roomAiFingerprint(aiMessages), [aiMessages]);
   const [record, setRecord] = useState<RoomAiRecord | null>(null);
   const [phase, setPhase] = useState<"idle" | "thinking" | "error">("idle");
+  const [errorText, setErrorText] = useState("");
   const [hidden, setHidden] = useState(() => typeof document !== "undefined" && document.hidden);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const ticketRef = useRef(0);
@@ -49,6 +50,7 @@ export function RoomAiPanel({
 
   useEffect(() => {
     setPhase("idle");
+    setErrorText("");
     setRecord(store ? loadRoomAi(store, userId, roomKey) : null);
   }, [store, userId, roomKey]);
 
@@ -63,8 +65,9 @@ export function RoomAiPanel({
     const ticket = ++ticketRef.current;
     inFlight.current = true;
     setPhase("thinking");
+    setErrorText("");
     try {
-      const result = await service.run(aiMessages);
+      const result = await service.run(roomKey, aiMessages);
       if (ticket !== ticketRef.current) return;
       const next: RoomAiRecord = {
         summary: result.summary,
@@ -75,9 +78,10 @@ export function RoomAiPanel({
       saveRoomAi(store, userId, roomKey, next);
       setRecord(next);
       setPhase("idle");
-    } catch {
+    } catch (err) {
       if (ticket !== ticketRef.current) return;
       setPhase("error");
+      setErrorText(err instanceof Error && err.message ? err.message : "");
     } finally {
       if (ticket === ticketRef.current) inFlight.current = false;
     }
@@ -148,7 +152,7 @@ export function RoomAiPanel({
               <span className="bot-status-dots" aria-hidden="true"><i /><i /><i /></span>
             </span>
           ) : phase === "error" ? (
-            <span className="room-ai-error">{t("요약을 만들지 못했습니다.")}</span>
+            <span className="room-ai-error">{errorText || t("요약을 만들지 못했습니다.")}</span>
           ) : !focused || hidden ? (
             <span className="muted tiny">{t("앱이 앞에 있을 때만 갱신합니다")}</span>
           ) : (
