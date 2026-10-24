@@ -378,6 +378,10 @@ export function installMockIfNeeded() {
         page: { page: 0, offset: 20, total: 1, totalPage: 1, lastPage: true },
       }),
       approvalCounts: async () => ({ todo: 1, upcoming: 0 }),
+      calendarToday: async () => ({
+        total: 1,
+        items: [{ id: "e1", calendarId: 1, calendarName: "내 캘린더", summary: "주간회의", location: "3층", allDay: false, start: isoNow, end: isoNow, type: "normal", url: "/app/calendar/1/event/e1" }],
+      }),
       mailUpload: async (name: string, data: ArrayBuffer) => {
         await new Promise((r) => setTimeout(r, 1500));
         if (name.includes("실패")) throw new Error("첨부 업로드 실패 (mock)");

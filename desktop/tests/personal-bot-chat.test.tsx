@@ -49,6 +49,11 @@ describe("PersonalBotChat", () => {
     expect(host.querySelector(".send-btn")).not.toBeNull();
     expect(host.textContent).toContain(PERSONAL_BOT_GREETING);
     expect(host.textContent).not.toContain("스텁 대화");
+    const gear = host.querySelector<HTMLButtonElement>("[aria-label='비서 연결']");
+    await act(async () => { gear!.click(); });
+    expect(host.textContent).toContain("회사 메일");
+    expect(host.textContent).toContain("나중에 연결");
+    await act(async () => { gear!.click(); });
 
     const ta = host.querySelector("textarea")!;
     await act(async () => { setTextarea(ta, "오늘 일정 있어?"); });

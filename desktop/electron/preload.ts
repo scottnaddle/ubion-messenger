@@ -134,6 +134,7 @@ const api = {
     approvalList: (box: import("./core/portal").ApprovalBox, page: number, keyword = "") =>
       call<import("./core/portal").ApprovalList>("portal:approvalList", box, page, keyword),
     approvalCounts: () => call<{ todo: number; upcoming: number }>("portal:approvalCounts"),
+    calendarToday: () => call<import("./core/portal").PortalList<import("./core/portal").CalendarEvent>>("portal:calendarToday"),
     approvalDoc: (id: number | string) => call<import("./core/portal").ApprovalDocumentDetail>("portal:approvalDoc", id),
     mailUpload: (name: string, data: ArrayBuffer, mime?: string) => call<import("./core/mail-attach").UploadedAttach>("portal:mailUpload", name, data, mime),
     mailCaps: () => call<{ delete: boolean }>("portal:mailCaps"),

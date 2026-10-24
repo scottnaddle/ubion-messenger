@@ -1,0 +1,202 @@
+/**
+ * 내 봇 connector registry. Company tools run in the desktop against the logged-in
+ * DaouOffice session. Google connectors stay "connect later" until an OAuth token
+ * is stored and an executor is plugged in. Nothing here talks to MiniMax.
+ */
+
+export type ConnectorAvailability = "session" | "connect-later";
+export type ConnectorState = "ready" | "off" | "connect-later";
+export type ToolEffect = "read" | "write";
+
+export type ToolSchema = {
+  name: string;
+  description: string;
+  effect: ToolEffect;
+  parameters: {
+    type: "object";
+    properties: Record<string, { type: string; description?: string; enum?: string[] }>;
+    required?: string[];
+  };
+};
+
+export type ConnectorDef = {
+  id: string;
+  label: string;
+  kind: "ubion" | "google" | "mcp";
+  availability: ConnectorAvailability;
+  tools: ToolSchema[];
+};
+
+export type ConnectorPrefs = Record<string, { enabled?: boolean; oauthToken?: string }>;
+
+export type ResolvedConnector = ConnectorDef & { state: ConnectorState };
+
+export const CONNECTOR_STORAGE_PREFIX = "ubm.personal-bot.connectors.v1:";
+
+const READ_LIMIT = { type: "number", description: "최대 8건" };
+
+export const CONNECTORS: readonly ConnectorDef[] = [
+  {
+    id: "ubion-mail",
+    label: "회사 메일",
+    kind: "ubion",
+    availability: "session",
+    tools: [
+      {
+        name: "ubion_mail_list",
+        description: "로그인한 유비온 메일함의 최근 메일을 읽습니다. 메일을 열거나 보내지 않습니다.",
+        effect: "read",
+        parameters: {
+          type: "object",
+          properties: {
+            folder: { type: "string", description: "폴더 이름. 기본값 Inbox" },
+            keyword: { type: "string", description: "제목/본문 검색어" },
+            limit: READ_LIMIT,
+          },
+        },
+      },
+      {
+        name: "ubion_mail_send",
+        description: "메일을 보냅니다. 1.1.3에서는 실행되지 않습니다.",
+        effect: "write",
+        parameters: {
+          type: "object",
+          properties: {
+            to: { type: "string" },
+            subject: { type: "string" },
+            body: { type: "string" },
+          },
+          required: ["to", "subject", "body"],
+        },
+      },
+    ],
+  },
+  {
+    id: "ubion-approval",
+    label: "결재 대기",
+    kind: "ubion",
+    availability: "session",
+    tools: [{
+      name: "ubion_approval_list",
+      description: "로그인한 사용자의 결재 대기 또는 예정 문서를 읽습니다. 승인하거나 반려하지 않습니다.",
+      effect: "read",
+      parameters: {
+        type: "object",
+        properties: {
+          box: { type: "string", enum: ["todo", "upcoming"], description: "todo=결재 대기, upcoming=결재 예정" },
+          limit: READ_LIMIT,
+        },
+      },
+    }],
+  },
+  {
+    id: "ubion-calendar",
+    label: "오늘 일정",
+    kind: "ubion",
+    availability: "session",
+    tools: [{
+      name: "ubion_calendar_today",
+      description: "로그인한 사용자의 오늘 유비온 일정을 읽습니다. 일정을 만들거나 지우지 않습니다.",
+      effect: "read",
+      parameters: { type: "object", properties: {} },
+    }],
+  },
+  {
+    id: "google-drive",
+    label: "Google Drive",
+    kind: "google",
+    availability: "connect-later",
+    tools: [{
+      name: "google_drive_list",
+      description: "연결한 Google Drive에서 파일을 찾습니다.",
+      effect: "read",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          limit: READ_LIMIT,
+        },
+      },
+    }],
+  },
+  {
+    id: "google-calendar",
+    label: "Google Calendar",
+    kind: "google",
+    availability: "connect-later",
+    tools: [{
+      name: "google_calendar_today",
+      description: "연결한 Google Calendar의 오늘 일정을 읽습니다.",
+      effect: "read",
+      parameters: { type: "object", properties: {} },
+    }],
+  },
+];
+
+export function connectorStorageKey(userId: number): string | null {
+  if (!Number.isSafeInteger(userId)) return null;
+  return `${CONNECTOR_STORAGE_PREFIX}${userId}`;
+}
+
+export function loadConnectorPrefs(storage: Pick<Storage, "getItem">, userId: number): ConnectorPrefs {
+  const key = connectorStorageKey(userId);
+  if (!key) return {};
+  try {
+    const raw = storage.getItem(key);
+    if (!raw) return {};
+    const data = JSON.parse(raw) as unknown;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+    const prefs: ConnectorPrefs = {};
+    for (const [id, value] of Object.entries(data)) {
+      if (!value || typeof value !== "object") continue;
+      const enabled = (value as { enabled?: unknown }).enabled;
+      const oauthToken = (value as { oauthToken?: unknown }).oauthToken;
+      prefs[id] = {
+        ...(typeof enabled === "boolean" ? { enabled } : {}),
+        ...(typeof oauthToken === "string" && oauthToken.trim() ? { oauthToken: oauthToken.trim() } : {}),
+      };
+    }
+    return prefs;
+  } catch {
+    return {};
+  }
+}
+
+export function saveConnectorPrefs(storage: Pick<Storage, "setItem">, userId: number, prefs: ConnectorPrefs): void {
+  const key = connectorStorageKey(userId);
+  if (!key) return;
+  try {
+    storage.setItem(key, JSON.stringify(prefs));
+  } catch {
+    /* best-effort */
+  }
+}
+
+export function connectorState(def: ConnectorDef, pref: { enabled?: boolean; oauthToken?: string } | undefined): ConnectorState {
+  if (pref?.enabled === false) return "off";
+  if (def.availability === "connect-later" && !pref?.oauthToken) return "connect-later";
+  return "ready";
+}
+
+export function resolveConnectors(prefs: ConnectorPrefs = {}, catalog: readonly ConnectorDef[] = CONNECTORS): ResolvedConnector[] {
+  return catalog.map((def) => ({ ...def, state: connectorState(def, prefs[def.id]) }));
+}
+
+/** Schemas the proxy may offer the model. Writes stay gated and are not advertised. */
+export function advertisedTools(resolved: readonly ResolvedConnector[]): ToolSchema[] {
+  return resolved
+    .filter((c) => c.state === "ready")
+    .flatMap((c) => c.tools.filter((tool) => tool.effect === "read"));
+}
+
+export function connectorStatusList(resolved: readonly ResolvedConnector[]): { id: string; label: string; state: ConnectorState }[] {
+  return resolved.map((c) => ({ id: c.id, label: c.label, state: c.state }));
+}
+
+export function findTool(resolved: readonly ResolvedConnector[], name: string): { connector: ResolvedConnector; tool: ToolSchema } | null {
+  for (const connector of resolved) {
+    const tool = connector.tools.find((item) => item.name === name);
+    if (tool) return { connector, tool };
+  }
+  return null;
+}

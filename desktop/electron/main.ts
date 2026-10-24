@@ -94,6 +94,7 @@ import {
 } from "./lock-store";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import { guessMime } from "./core/mime";
+import { buildMediaResponse } from "./core/media-response";
 import {
   accountKey, isWebLoginNavAllowed, isWebLoginSuccessUrl, markWebAccount, planLogin, unmarkWebAccount,
   webLoginUrl, WEB_LOGIN_MESSAGE,
@@ -2005,6 +2006,7 @@ function registerIpc() {
     return core.portal.approvalList(a.box, a.page, a.keyword);
   });
   handle("portal:approvalCounts", () => core.portal.approvalCounts());
+  handle("portal:calendarToday", () => core.portal.todayEvents());
   handle("portal:mailUpload", (name: unknown, data: unknown, mime: unknown) => core.portal.mailUpload(name, data, mime));
   handle("portal:mailCaps", () => core.portal.mailCaps());
   handle("portal:mailDelete", (folder: unknown, uids: unknown) => core.portal.mailDelete(folder, uids));
@@ -2045,7 +2047,8 @@ function registerMediaProtocol() {
       const hit = mediaCache.get(p);
       const { data, contentType } = hit || (await core.client.fetchBinary(p));
       if (!hit) mediaCache.set(p, { data, contentType });
-      return new Response(new Uint8Array(data), { headers: { "content-type": contentType, "cache-control": "max-age=86400" } });
+      const built = buildMediaResponse(data, contentType, req.headers.get("range"));
+      return new Response(new Uint8Array(built.body), { status: built.status, headers: built.headers });
     } catch {
       return new Response("", { status: 404 });
     }

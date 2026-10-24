@@ -1,6 +1,6 @@
-# 내 봇 proxy contract (1.1.2)
+# 내 봇 proxy contract (1.1.3)
 
-Desktop build **1.1.2** calls this route on the Mac mini proxy. The app does not hold a MiniMax key and does not fall back to the stub when the call fails.
+Desktop build **1.1.3** calls this route on the Mac mini proxy. The app does not hold a MiniMax key. The proxy does **not** receive DaouOffice passwords, cookies, or session tokens. Company tools run in the desktop.
 
 Room AI is unchanged: `POST /v1/room-ai/run`.
 
@@ -14,61 +14,108 @@ Request:
 {
   "userId": 7,
   "messages": [
-    { "role": "user", "content": "오늘 일정 있어?" },
-    { "role": "assistant", "content": "일정은 아직 연결 전입니다. 시간만 메모해 두실 내용을 말씀해 주세요." },
-    { "role": "user", "content": "내일 오전으로 잡아줘" }
+    { "role": "user", "content": "오늘 메일 뭐 왔어?" }
+  ],
+  "tools": [
+    {
+      "name": "ubion_mail_list",
+      "description": "로그인한 유비온 메일함의 최근 메일을 읽습니다. 메일을 열거나 보내지 않습니다.",
+      "parameters": { "type": "object", "properties": { "folder": { "type": "string" }, "keyword": { "type": "string" }, "limit": { "type": "number" } } }
+    }
+  ],
+  "connectorStatus": [
+    { "id": "ubion-mail", "label": "회사 메일", "state": "ready" },
+    { "id": "ubion-approval", "label": "결재 대기", "state": "ready" },
+    { "id": "ubion-calendar", "label": "오늘 일정", "state": "ready" },
+    { "id": "google-drive", "label": "Google Drive", "state": "connect-later" },
+    { "id": "google-calendar", "label": "Google Calendar", "state": "connect-later" }
   ]
 }
 ```
 
-`messages` is the personal-bot session only (`ubm.personal-bot.v1:<userId>`). It is not the 유비온봇 DM and not the 나 room. Roles are `user` or `assistant`. There is no `system` field. The desktop omits its local greeting and any `[스텁]` lines.
+`messages` is only `ubm.personal-bot.v1:<userId>`. Roles:
 
-Success `200`:
+- `user` / `assistant`: `{ role, content, toolCalls? }`
+- `tool`: `{ role: "tool", toolCallId, name, content }` where `content` is the JSON string the desktop got from the user's session
+
+`tools` is the enabled read tools. Write tools are not advertised. `connectorStatus` says what is `ready`, `off`, or `connect-later`.
+
+Success when the model can answer:
 
 ```json
-{ "reply": "일정은 아직 연결 전이라 캘린더에 넣지는 못합니다. 내일 오전으로 기억해 두고, 연결되면 그때 잡아드릴게요." }
+{ "reply": "받은편지함에 결재 안내 메일이 하나 있습니다." }
 ```
 
-`reply` must be a non-empty string. The desktop shows it as the assistant bubble.
+Success when the model needs a tool. Return this **instead of calling Daou yourself**:
+
+```json
+{ "toolCalls": [{ "id": "call_1", "name": "ubion_mail_list", "arguments": { "folder": "Inbox", "limit": 5 } }] }
+```
+
+`arguments` may be an object or a JSON string. If `toolCalls` is non-empty, the desktop ignores `reply` and runs the tools. It posts again with the assistant tool-call message and one `role: "tool"` result per call. Repeat until `{ "reply" }` or 4 rounds.
 
 Failure:
 
-- connection error or timeout (45s): desktop shows `내 봇 서버에 연결하지 못했습니다.`
+- connection error or timeout (45s): `내 봇 서버에 연결하지 못했습니다.`
 - HTTP status ≥ 500: `내 봇 서버가 응답하지 못했습니다.`
-- any other non-200, or JSON without a non-empty `reply`: `내 봇 응답을 확인하지 못했습니다.`
+- any other non-200, or JSON with neither a reply nor toolCalls: `내 봇 응답을 확인하지 못했습니다.`
 
-Do not answer those with a stub sentence. The desktop will not replace them.
+Do not invent tool results and do not fall back to a stub sentence.
 
 ## Model
 
-Use **MiniMax-M3.1-Flash**, the same MiniMax client as `/v1/room-ai/run`. Prepend this system prompt (the desktop does not send it):
+Use **MiniMax-M3.1-Flash**. Prepend this system prompt (the desktop does not send it):
 
 ```
 당신은 유비온 메신저의 개인 비서입니다. 한국어로 대화하듯 답합니다.
-메일, 전자결재, 일정은 아직 연결되어 있지 않습니다. 그 기능을 물으면 아직 연결 전이라고 짧게 말하고, 이어서 지금 도울 수 있는 범위를 안내합니다.
+요청 본문의 tools와 connectorStatus를 따르세요.
+tools에 있는 도구는 이미 로그인된 유비온 세션으로 데스크톱이 실행합니다. 그 도구가 있으면 회사 메일·결재·일정이 연결되지 않았다고 말하지 마세요.
+connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 토큰을 연결하기 전에는 connect-later입니다.
+회사 데이터를 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.
 사용자의 문장을 되풀이하거나 "메모해 두었습니다"라고만 답하지 마세요.
 ```
 
 ## Patch for `server.py`
 
-Reuse the existing MiniMax call. Shape only:
+Keep the MiniMax key on the proxy. Pass `tools` through to the model. If the model asks for tools, return them. Do not execute them.
 
 ```python
 PERSONAL_BOT_SYSTEM = """당신은 유비온 메신저의 개인 비서입니다. 한국어로 대화하듯 답합니다.
-메일, 전자결재, 일정은 아직 연결되어 있지 않습니다. 그 기능을 물으면 아직 연결 전이라고 짧게 말하고, 이어서 지금 도울 수 있는 범위를 안내합니다.
+요청 본문의 tools와 connectorStatus를 따르세요.
+tools에 있는 도구는 이미 로그인된 유비온 세션으로 데스크톱이 실행합니다. 그 도구가 있으면 회사 메일·결재·일정이 연결되지 않았다고 말하지 마세요.
+connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 토큰을 연결하기 전에는 connect-later입니다.
+회사 데이터를 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.
 사용자의 문장을 되풀이하거나 "메모해 두었습니다"라고만 답하지 마세요."""
 
 @app.post("/v1/personal-bot/chat")
 def personal_bot_chat(body: dict):
-    messages = body.get("messages") or []
-    # messages: [{ "role": "user" | "assistant", "content": str }, ...]
-    # Do not read the 유비온봇 DM or the 나 room.
-    reply = minimax_chat(
+    # body["messages"] may include role "tool" results from the desktop.
+    # body["tools"] is the advertised schema. Do not call Daou from here.
+    result = minimax_chat(
         model="MiniMax-M3.1-Flash",
         system=PERSONAL_BOT_SYSTEM,
-        messages=messages,
+        messages=body.get("messages") or [],
+        tools=body.get("tools") or [],
     )
-    return {"reply": reply}
+    if result.tool_calls:
+        return {"toolCalls": result.tool_calls}  # [{id, name, arguments}]
+    return {"reply": result.text}
 ```
 
-`minimax_chat` means whatever helper `/v1/room-ai/run` already uses. Point it at MiniMax-M3.1-Flash and return the assistant text as `reply`.
+`minimax_chat` is the helper `/v1/room-ai/run` already uses. Map its tool-call objects to `{ id, name, arguments }`.
+
+## Connector registry
+
+Defined in `desktop/src/lib/connectors.ts`. Per-user toggles: `ubm.personal-bot.connectors.v1:<userId>`.
+
+| id | state by default | advertised read tool | notes |
+| --- | --- | --- | --- |
+| `ubion-mail` | ready | `ubion_mail_list` | Inbox list via the logged-in session. `ubion_mail_send` exists but is a gated write and is not advertised. |
+| `ubion-approval` | ready | `ubion_approval_list` | `todo` or `upcoming` only. No approve/reject. |
+| `ubion-calendar` | ready | `ubion_calendar_today` | Today's Daou calendar. |
+| `google-drive` | connect-later | `google_drive_list` once an OAuth token is stored | Toggle off sets `off`. |
+| `google-calendar` | connect-later | `google_calendar_today` once an OAuth token is stored | Same. |
+
+To plug a real Google or MCP executor later, store `oauthToken` on that connector's prefs (state becomes `ready`) and pass a function in `executePersonalBotTool`'s `extra` map under the tool name. The chat loop does not change. Until then the UI says **나중에 연결** and those tools are not sent to the model.
+
+Restart the proxy after updating `server.py`, then rebuild the Mac app at **1.1.3**.

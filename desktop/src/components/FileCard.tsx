@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, media, type ChatMessage } from "../api";
 import { attachKind, durationLabel, expiryLabel, fileIcon, isExpired, sizeLabel } from "../../electron/core/attach";
 import { isPreviewExtension } from "../../electron/core/doc-preview";
@@ -137,14 +137,21 @@ export function FileCard({
     return (
       <div className="media-card" onContextMenu={onCtx}>
         {ctx}{forwardModal}
-        <button className="img-bubble video-bubble" onClick={onOpenMedia} title={a.name}>
-          {poster ? <LazyImg src={poster} alt={a.name} w={a.width} h={a.height} /> : <VideoFrame src={fileUrl(a.cryptId, m.messageId)} size={a.size} />}
-          <span className="play-ic" aria-hidden>▶</span>
-          {durationLabel(a.duration) && <span className="dur">{durationLabel(a.duration)}</span>}
-        </button>
+        <video
+          className="inline-video"
+          src={fileUrl(a.cryptId, m.messageId)}
+          poster={poster || undefined}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label={a.name}
+          onError={() => toast(t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요."))}
+        />
         <div className="fc-name tiny" title={a.name}>{a.name}</div>
+        {durationLabel(a.duration) && <div className="fc-meta tiny"><span>{durationLabel(a.duration)}</span></div>}
         {meta}
         {actions}
+        <button className="link tiny" type="button" onClick={onOpenMedia}>{t("크게 보기")}</button>
       </div>
     );
   }
@@ -176,45 +183,6 @@ function LazyImg({ src, alt, w, h }: { src: string; alt: string; w?: number; h?:
   if (err || !src) return <div className="thumb-fallback"><Icon name="image" size={28} /></div>;
   const style = w && h ? { aspectRatio: `${w} / ${h}` } : undefined;
   return <img className="thumb" src={src} alt={alt} loading="lazy" decoding="async" style={style} onError={() => setErr(true)} />;
-}
-
-const FRAME_MAX_BYTES = 30 * 1024 * 1024;
-/** No server poster: grab the first frame in a hidden <video> once visible (skipped for big files). */
-function VideoFrame({ src, size }: { src: string; size?: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [poster, setPoster] = useState<string | null>(null);
-  const [visible, setVisible] = useState(false);
-  const allowed = !!src && (size == null || size <= FRAME_MAX_BYTES);
-  useEffect(() => {
-    if (!allowed || !ref.current) return;
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && (setVisible(true), io.disconnect()));
-    io.observe(ref.current);
-    return () => io.disconnect();
-  }, [allowed]);
-  useEffect(() => {
-    if (!visible) return;
-    const v = document.createElement("video");
-    v.muted = true; v.preload = "metadata"; v.src = src;
-    const onData = () => { v.currentTime = Math.min(0.1, (v.duration || 1) / 2); };
-    const onSeek = () => {
-      try {
-        const c = document.createElement("canvas");
-        const k = Math.min(1, 480 / (v.videoWidth || 480));
-        c.width = Math.round((v.videoWidth || 320) * k); c.height = Math.round((v.videoHeight || 180) * k);
-        c.getContext("2d")!.drawImage(v, 0, 0, c.width, c.height);
-        setPoster(c.toDataURL("image/jpeg", 0.75));
-      } catch { /* ignore */ }
-      v.removeAttribute("src"); v.load();
-    };
-    v.addEventListener("loadeddata", onData, { once: true });
-    v.addEventListener("seeked", onSeek, { once: true });
-    return () => { v.removeAttribute("src"); v.load(); };
-  }, [visible, src]);
-  return (
-    <div ref={ref} className="video-frame">
-      {poster ? <img className="thumb" src={poster} alt="" /> : <div className="thumb-fallback"><Icon name="file" size={28} /></div>}
-    </div>
-  );
 }
 
 /** Full-screen viewer for images and in-app video player. */

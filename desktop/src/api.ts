@@ -186,6 +186,7 @@ export type Bridge = {
     mailRead(folder: string, uid: number): Promise<MailMessage>;
     approvalList(box: ApprovalBox, page: number, keyword?: string): Promise<ApprovalList>;
     approvalCounts(): Promise<{ todo: number; upcoming: number }>;
+    calendarToday(): Promise<import("../electron/core/portal").PortalList<import("../electron/core/portal").CalendarEvent>>;
     approvalDoc(id: number | string): Promise<ApprovalDocumentDetail>;
     mailUpload(name: string, data: ArrayBuffer, mime?: string): Promise<import("../electron/core/mail-attach").UploadedAttach>;
     mailCaps(): Promise<{ delete: boolean }>;

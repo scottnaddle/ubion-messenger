@@ -5,9 +5,10 @@
  *
  * Live replies go to Scott's Mac mini proxy. The desktop never holds a MiniMax key.
  *   POST http://127.0.0.1:8787/v1/personal-bot/chat
- *   body: { userId, messages: [{ role: "user" | "assistant", content }] }
- *   200: { reply }
+ *   body: { userId, messages, tools, connectorStatus }
+ *   200: { reply } or { toolCalls: [{ id, name, arguments }] }
  * The proxy prepends PERSONAL_BOT_SYSTEM_PROMPT and calls MiniMax-M3.1-Flash.
+ * It does not call Daou. The desktop executes toolCalls and posts the tool results back.
  * Override the URL with VITE_UBM_PERSONAL_BOT_URL.
  * VITE_UBM_PERSONAL_BOT_STUB=1 or VITE_UBM_ROOM_AI_STUB=1 forces the offline stub.
  * A network or 5xx failure is shown in the chat. It does not silently switch to the stub.
@@ -20,15 +21,20 @@ export const PERSONAL_BOT_WIRE_LIMIT = 24;
 export const PERSONAL_BOT_LIVE_ERROR = "내 봇 서버에 연결하지 못했습니다.";
 export const PERSONAL_BOT_SERVER_ERROR = "내 봇 서버가 응답하지 못했습니다.";
 export const PERSONAL_BOT_LIVE_BAD = "내 봇 응답을 확인하지 못했습니다.";
+export const PERSONAL_BOT_TOOL_STEPS = 4;
+export const PERSONAL_BOT_TOOL_ERROR = "내 봇이 도구 호출을 마치지 못했습니다.";
 
 /** Proxy-owned system prompt. The desktop does not send this on the wire. */
 export const PERSONAL_BOT_SYSTEM_PROMPT = [
   "당신은 유비온 메신저의 개인 비서입니다. 한국어로 대화하듯 답합니다.",
-  "메일, 전자결재, 일정은 아직 연결되어 있지 않습니다. 그 기능을 물으면 아직 연결 전이라고 짧게 말하고, 이어서 지금 도울 수 있는 범위를 안내합니다.",
+  "요청 본문의 tools와 connectorStatus를 따르세요.",
+  "tools에 있는 도구는 이미 로그인된 유비온 세션으로 데스크톱이 실행합니다. 그 도구가 있으면 회사 메일·결재·일정이 연결되지 않았다고 말하지 마세요.",
+  "connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 토큰을 연결하기 전에는 connect-later입니다.",
+  "회사 데이터를 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.",
   "사용자의 문장을 되풀이하거나 \"메모해 두었습니다\"라고만 답하지 마세요.",
 ].join("\n");
 
-export const PERSONAL_BOT_GREETING = "안녕하세요. 저는 유비온 비서입니다. 메일·결재·일정은 아직 연결 전이고, 그 외에는 편하게 말씀해 주세요.";
+export const PERSONAL_BOT_GREETING = "안녕하세요. 저는 유비온 비서입니다. 회사 메일, 결재 대기, 오늘 일정을 볼 수 있습니다. Google Drive와 Google 캘린더는 아직 연결 전입니다.";
 
 export type PersonalBotRoom = {
   key: string;
@@ -40,17 +46,39 @@ export type PersonalBotRoom = {
 
 export type PersonalBotTarget = { kind: "local" };
 
-export type PersonalBotTurn = {
+export type PersonalBotToolCall = {
   id: string;
-  role: "user" | "bot";
-  text: string;
-  createdAt?: string;
+  name: string;
+  arguments: Record<string, unknown>;
 };
 
-export type PersonalBotWireMessage = {
-  role: "user" | "assistant";
-  content: string;
+export type PersonalBotTurn = {
+  id: string;
+  role: "user" | "bot" | "tool";
+  text: string;
+  createdAt?: string;
+  toolCalls?: PersonalBotToolCall[];
+  toolCallId?: string;
+  toolName?: string;
 };
+
+export type PersonalBotWireMessage =
+  | { role: "user" | "assistant"; content: string; toolCalls?: PersonalBotToolCall[] }
+  | { role: "tool"; toolCallId: string; name: string; content: string };
+
+export type PersonalBotToolSchema = {
+  name: string;
+  description: string;
+  parameters: {
+    type: "object";
+    properties: Record<string, { type: string; description?: string; enum?: string[] }>;
+    required?: string[];
+  };
+};
+
+export type PersonalBotConnectorStatus = { id: string; label: string; state: "ready" | "off" | "connect-later" };
+
+export type PersonalBotChatResult = { reply: string; toolCalls: PersonalBotToolCall[] };
 
 export type PersonalBotEnv = {
   VITE_UBM_PERSONAL_BOT_URL?: string;
@@ -70,6 +98,7 @@ export type PersonalBotReplyInput = {
 export type PersonalBotClient = {
   mode: "live" | "stub";
   reply(input: PersonalBotReplyInput): Promise<string>;
+  run?(input: PersonalBotRunInput): Promise<{ reply: string; added: PersonalBotWireMessage[] }>;
 };
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -125,13 +154,22 @@ function sanitizeTurns(data: unknown): PersonalBotTurn[] {
     const role = (item as { role?: unknown }).role;
     const text = (item as { text?: unknown }).text;
     const createdAt = (item as { createdAt?: unknown }).createdAt;
+    const toolCalls = parseStoredToolCalls((item as { toolCalls?: unknown }).toolCalls);
+    const toolCallId = (item as { toolCallId?: unknown }).toolCallId;
+    const toolName = (item as { toolName?: unknown }).toolName;
     if (typeof id !== "string" || !id) continue;
-    if (role !== "user" && role !== "bot") continue;
-    if (typeof text !== "string" || !text.trim()) continue;
+    if (role !== "user" && role !== "bot" && role !== "tool") continue;
+    if (role === "tool") {
+      if (typeof text !== "string" || typeof toolCallId !== "string" || typeof toolName !== "string") continue;
+      turns.push({ id, role, text, toolCallId, toolName, ...(typeof createdAt === "string" && createdAt ? { createdAt } : {}) });
+      continue;
+    }
+    if ((typeof text !== "string" || !text.trim()) && !toolCalls.length) continue;
     turns.push({
       id,
       role,
-      text,
+      text: typeof text === "string" ? text : "",
+      ...(toolCalls.length ? { toolCalls } : {}),
       ...(typeof createdAt === "string" && createdAt ? { createdAt } : {}),
     });
   }
@@ -140,10 +178,11 @@ function sanitizeTurns(data: unknown): PersonalBotTurn[] {
 
 /** Drop a transcript that is only the old stub assistant. Keep real replies. */
 export function normalizePersonalBotTurns(turns: readonly PersonalBotTurn[]): PersonalBotTurn[] {
-  const botReplies = turns.filter((turn) => turn.role === "bot" && turn.id !== "greet");
+  const refreshed = turns.map((turn) => turn.id === "greet" ? { ...turn, role: "bot" as const, text: PERSONAL_BOT_GREETING } : turn);
+  const botReplies = refreshed.filter((turn) => turn.role === "bot" && turn.id !== "greet" && turn.text.trim());
   const onlyStubBots = botReplies.length > 0 && botReplies.every((turn) => isStubText(turn.text));
   if (onlyStubBots) return [greetingTurn()];
-  const kept = turns.filter((turn) => !isStubText(turn.text));
+  const kept = refreshed.filter((turn) => !isStubText(turn.text));
   if (!kept.length) return [greetingTurn()];
   return kept.slice(-PERSONAL_BOT_TURN_LIMIT);
 }
@@ -176,18 +215,70 @@ export function savePersonalBotTurns(storage: PersonalBotStorage, userId: number
 export function toPersonalBotWire(turns: readonly PersonalBotTurn[]): PersonalBotWireMessage[] {
   const out: PersonalBotWireMessage[] = [];
   for (const turn of turns) {
+    if (turn.id === "greet" || isStubText(turn.text)) continue;
+    if (turn.role === "tool" && turn.toolCallId && turn.toolName) {
+      out.push({ role: "tool", toolCallId: turn.toolCallId, name: turn.toolName, content: turn.text });
+      continue;
+    }
+    if (turn.role !== "user" && turn.role !== "bot") continue;
     const content = turn.text.trim();
-    if (!content || turn.id === "greet" || isStubText(content)) continue;
-    out.push({ role: turn.role === "user" ? "user" : "assistant", content });
+    if (!content && !turn.toolCalls?.length) continue;
+    out.push({
+      role: turn.role === "user" ? "user" : "assistant",
+      content,
+      ...(turn.toolCalls?.length ? { toolCalls: turn.toolCalls } : {}),
+    });
   }
   return out.slice(-PERSONAL_BOT_WIRE_LIMIT);
 }
 
-export function parsePersonalBotReply(data: unknown): string {
+function parseStoredToolCalls(raw: unknown): PersonalBotToolCall[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PersonalBotToolCall[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const id = (item as { id?: unknown }).id;
+    const name = (item as { name?: unknown }).name;
+    const args = (item as { arguments?: unknown }).arguments;
+    if (typeof id !== "string" || typeof name !== "string" || !args || typeof args !== "object" || Array.isArray(args)) continue;
+    out.push({ id, name, arguments: args as Record<string, unknown> });
+  }
+  return out;
+}
+
+export function parsePersonalBotChatResponse(data: unknown): PersonalBotChatResult {
   if (!data || typeof data !== "object") throw new Error(PERSONAL_BOT_LIVE_BAD);
-  const reply = (data as { reply?: unknown }).reply;
-  if (typeof reply !== "string" || !reply.trim()) throw new Error(PERSONAL_BOT_LIVE_BAD);
-  return reply.trim();
+  const toolCalls = parseWireToolCalls((data as { toolCalls?: unknown }).toolCalls);
+  const replyRaw = (data as { reply?: unknown }).reply;
+  const reply = typeof replyRaw === "string" ? replyRaw.trim() : "";
+  if (!toolCalls.length && !reply) throw new Error(PERSONAL_BOT_LIVE_BAD);
+  return { reply, toolCalls };
+}
+
+function parseWireToolCalls(raw: unknown): PersonalBotToolCall[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) throw new Error(PERSONAL_BOT_LIVE_BAD);
+  const out: PersonalBotToolCall[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") throw new Error(PERSONAL_BOT_LIVE_BAD);
+    const id = (item as { id?: unknown }).id;
+    const name = (item as { name?: unknown }).name;
+    let args: unknown = (item as { arguments?: unknown }).arguments ?? (item as { args?: unknown }).args ?? {};
+    if (typeof args === "string") {
+      try { args = JSON.parse(args) as unknown; } catch { throw new Error(PERSONAL_BOT_LIVE_BAD); }
+    }
+    if (typeof id !== "string" || !id || typeof name !== "string" || !name) throw new Error(PERSONAL_BOT_LIVE_BAD);
+    if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error(PERSONAL_BOT_LIVE_BAD);
+    out.push({ id, name, arguments: args as Record<string, unknown> });
+  }
+  return out;
+}
+
+export function parsePersonalBotReply(data: unknown): string {
+  const parsed = parsePersonalBotChatResponse(data);
+  if (parsed.toolCalls.length && !parsed.reply) throw new Error(PERSONAL_BOT_LIVE_BAD);
+  if (!parsed.reply) throw new Error(PERSONAL_BOT_LIVE_BAD);
+  return parsed.reply;
 }
 
 export async function requestPersonalBotReply(opts: {
@@ -237,6 +328,115 @@ export async function requestPersonalBotReply(opts: {
   }
 }
 
+export type PersonalBotRunInput = {
+  userId: number;
+  messages: readonly PersonalBotWireMessage[];
+  tools: readonly PersonalBotToolSchema[];
+  connectorStatus: readonly PersonalBotConnectorStatus[];
+  signal?: AbortSignal;
+  execute(call: PersonalBotToolCall): Promise<string>;
+};
+
+export async function requestPersonalBotChat(opts: {
+  userId: number;
+  messages: readonly PersonalBotWireMessage[];
+  tools?: readonly PersonalBotToolSchema[];
+  connectorStatus?: readonly PersonalBotConnectorStatus[];
+  url?: string;
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<PersonalBotChatResult> {
+  const url = (opts.url || UBM_PERSONAL_BOT_URL).trim();
+  const messages = opts.messages.filter((message) => {
+    if (message.role === "tool") return !!message.content || message.content === "";
+    return !!message.content.trim() || (message.role === "assistant" && !!message.toolCalls?.length);
+  });
+  if (!messages.some((message) => message.role === "user" && message.content.trim())) throw new Error(PERSONAL_BOT_LIVE_BAD);
+  const fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+  const timeoutMs = opts.timeoutMs ?? 45_000;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (opts.signal?.aborted) controller.abort();
+  else opts.signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let res: Response;
+    try {
+      res = await fetchImpl(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          userId: opts.userId,
+          messages,
+          ...(opts.tools ? { tools: opts.tools.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) } : {}),
+          ...(opts.connectorStatus ? { connectorStatus: opts.connectorStatus } : {}),
+        }),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new Error(PERSONAL_BOT_LIVE_ERROR);
+    }
+    if (res.status >= 500) throw new Error(PERSONAL_BOT_SERVER_ERROR);
+    if (!res.ok) throw new Error(PERSONAL_BOT_LIVE_BAD);
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(PERSONAL_BOT_LIVE_BAD);
+    }
+    return parsePersonalBotChatResponse(data);
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
+/** Proxy tool loop. Company tools run in `execute`, never on the proxy. */
+export async function runPersonalBotTools(opts: PersonalBotRunInput & {
+  post(input: {
+    userId: number;
+    messages: PersonalBotWireMessage[];
+    tools: readonly PersonalBotToolSchema[];
+    connectorStatus: readonly PersonalBotConnectorStatus[];
+    signal?: AbortSignal;
+  }): Promise<PersonalBotChatResult>;
+  maxSteps?: number;
+}): Promise<{ reply: string; added: PersonalBotWireMessage[] }> {
+  const maxSteps = opts.maxSteps ?? PERSONAL_BOT_TOOL_STEPS;
+  const messages = [...opts.messages];
+  const added: PersonalBotWireMessage[] = [];
+  for (let step = 0; step < maxSteps; step++) {
+    const result = await opts.post({
+      userId: opts.userId,
+      messages,
+      tools: opts.tools,
+      connectorStatus: opts.connectorStatus,
+      signal: opts.signal,
+    });
+    if (!result.toolCalls.length) {
+      const finalMessage: PersonalBotWireMessage = { role: "assistant", content: result.reply };
+      added.push(finalMessage);
+      return { reply: result.reply, added };
+    }
+    const callMessage: PersonalBotWireMessage = { role: "assistant", content: result.reply, toolCalls: result.toolCalls };
+    messages.push(callMessage);
+    added.push(callMessage);
+    for (const call of result.toolCalls) {
+      let content: string;
+      try {
+        content = await opts.execute(call);
+      } catch {
+        content = JSON.stringify({ ok: false, code: "session", message: "회사 세션에서 가져오지 못했습니다." });
+      }
+      const toolMessage: PersonalBotWireMessage = { role: "tool", toolCallId: call.id, name: call.name, content };
+      messages.push(toolMessage);
+      added.push(toolMessage);
+    }
+  }
+  throw new Error(PERSONAL_BOT_TOOL_ERROR);
+}
+
 /** Offline assistant line. Marked [스텁]; does not call a model. */
 export function stubBotReply(userText: string): string {
   const text = userText.replace(/\s+/g, " ").trim();
@@ -263,5 +463,9 @@ export function createPersonalBotClient(env: PersonalBotEnv = personalBotEnvFrom
   return {
     mode: "live",
     reply: (input) => requestPersonalBotReply({ ...input, url, fetchImpl }),
+    run: (input) => runPersonalBotTools({
+      ...input,
+      post: (body) => requestPersonalBotChat({ ...body, url, fetchImpl, signal: body.signal }),
+    }),
   };
 }
