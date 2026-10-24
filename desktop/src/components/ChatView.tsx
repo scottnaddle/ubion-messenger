@@ -849,9 +849,6 @@ export function ChatView({
           <Icon name="more" size={18} />
         </button>
       </header>
-      {room.isSelf && (
-        <div className="banner info">{t("이 방은 유비온 봇과 대화하는 나와의 대화입니다.")}</div>
-      )}
       {notice && isNoticeVisible(notice, noticeStatus) && (
         <div className="banner info" style={{ justifyContent: "flex-start", gap: 8 }}>
           <span aria-hidden>📢</span>

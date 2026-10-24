@@ -312,33 +312,10 @@ export function App() {
     api().call<Person[]>("org:users").then(setOrgUsers).catch(() => setOrgUsers([]));
   }, [paletteOpen, orgUsers.length]);
 
-  const botTarget = useMemo(() => resolvePersonalBot(rooms, botUserSeq), [rooms, botUserSeq]);
-  const openPersonalBot = useCallback(async () => {
-    const target = resolvePersonalBot(rooms, botUserSeq);
-    if (target.kind === "room") {
-      setView("chats");
-      setActiveKey(target.roomKey);
-      return;
-    }
-    if (target.kind === "direct") {
-      try {
-        const room = await api().call<{ key: string }>("rooms:openDirect", target.userId);
-        setView("chats");
-        setActiveKey(room.key);
-        return;
-      } catch (e) {
-        const self = rooms.find((r) => r.isSelf);
-        if (self) {
-          setView("chats");
-          setActiveKey(self.key);
-          return;
-        }
-        toast((e as Error).message || t("내 봇을 열지 못했습니다"));
-      }
-    }
-    setView("assistant");
-  }, [rooms, botUserSeq, toast, t]);
-  const assistantActive = view === "assistant" || (view === "chats" && botTarget.kind === "room" && activeKey === botTarget.roomKey);
+  const openPersonalBot = useCallback(() => {
+    if (resolvePersonalBot(rooms, botUserSeq).kind === "local") setView("assistant");
+  }, [rooms, botUserSeq]);
+  const assistantActive = view === "assistant";
 
   const paletteItems: PaletteItem[] = [
     { id: "action:bot", kind: "action", label: t("내 봇"), icon: "bot", keywords: "비서 ubm-bot assistant" },

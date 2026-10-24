@@ -122,7 +122,7 @@ export function Home({ onLocal, onOpenBot }: { onLocal?: (v: "mail" | "approval"
       <div className="home-grid">
         <section className="home-card">
           <header><h3>{t("내 봇")}</h3></header>
-          <p className="muted small">{t("유비온 비서와 1:1로 대화합니다.")}</p>
+          <p className="muted small">{t("이 기기에만 저장되는 별도 대화입니다.")}</p>
           <button className="primary" type="button" onClick={() => onOpenBot?.()}>{t("내 봇과 대화")}</button>
         </section>
         <Card title={t("전사게시판 최근글")} webUrl="/app/board" state={w.posts}>

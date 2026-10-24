@@ -1,9 +1,8 @@
 /**
- * Where "내 봇" opens. Prefer an existing 유비온봇 1:1, then openDirect when the bot userSeq
- * is known, then the memo-to-self room (the existing command channel), then a local stub chat.
+ * Where "내 봇" opens. 1.1 alpha always uses the local PersonalBotChat
+ * (`ubm.personal-bot.v1:*`). It does not open the 유비온봇 DM or the 나 room.
+ * Group autonomy and /요약 still use those rooms on their own.
  */
-import { BOT_NAMES } from "./bot-room";
-
 export type PersonalBotRoom = {
   key: string;
   kind?: string | null;
@@ -12,27 +11,12 @@ export type PersonalBotRoom = {
   peerUserId?: number;
 };
 
-export type PersonalBotTarget =
-  | { kind: "room"; roomKey: string; via: "bot-dm" | "self" }
-  | { kind: "direct"; userId: number }
-  | { kind: "local" };
+export type PersonalBotTarget = { kind: "local" };
 
-function isBotName(name?: string | null): boolean {
-  const trimmed = (name ?? "").trim();
-  return (BOT_NAMES as readonly string[]).includes(trimmed);
-}
-
-export function resolvePersonalBot(rooms: readonly PersonalBotRoom[], botUserSeq?: number): PersonalBotTarget {
-  const seq = typeof botUserSeq === "number" && Number.isSafeInteger(botUserSeq) && botUserSeq > 0 ? botUserSeq : 0;
-  const botDm = rooms.find((room) =>
-    room.kind === "buddy" && !room.isSelf && (
-      (seq > 0 && room.peerUserId === seq) || isBotName(room.name)
-    ),
-  );
-  if (botDm) return { kind: "room", roomKey: botDm.key, via: "bot-dm" };
-  if (seq > 0) return { kind: "direct", userId: seq };
-  const self = rooms.find((room) => room.isSelf && room.key);
-  if (self) return { kind: "room", roomKey: self.key, via: "self" };
+export function resolvePersonalBot(
+  _rooms?: readonly PersonalBotRoom[],
+  _botUserSeq?: number,
+): PersonalBotTarget {
   return { kind: "local" };
 }
 

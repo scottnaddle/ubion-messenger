@@ -23,8 +23,8 @@ function loadTurns(userId: number): Turn[] {
 }
 
 /**
- * Alpha personal assistant when no 유비온봇 1:1 and no self room can be opened.
- * Replies stay on this device.
+ * Local personal assistant. Separate from the 유비온봇 DM and the 나 room.
+ * Replies stay on this device under ubm.personal-bot.v1:*.
  */
 export function PersonalBotChat({ userId }: { userId: number }) {
   const t = useT();
