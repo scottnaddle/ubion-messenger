@@ -21,6 +21,7 @@ describe("bot room settings client", () => {
     expect(url).toBe("https://bot.ubion.global/bot/rooms/room%3A27673/settings");
     expect(init.headers["X-UBM-Session"]).toBe("ubm-token-value");
     expect(init.headers["X-UBM-User-Seq"]).toBe("42");
+    expect(init.headers["X-UBM-Tenant"]).toBeUndefined();
     expect(init.headers["X-Daou-Session"]).toBeUndefined();
     expect(init.headers.Cookie).toBeUndefined();
     expect(init.method).toBe("GET");

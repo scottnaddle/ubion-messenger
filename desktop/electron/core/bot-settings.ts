@@ -1,8 +1,11 @@
 /**
  * UBION bot per-room autonomy settings.
  * Talks to bot.ubion.global with the UBION server token supplied by the caller (never DaouOffice cookies).
- * Auth is sent only in X-UBM-User-Seq + X-UBM-Session; headers are never logged or included in errors.
+ * Auth is sent only in X-UBM-User-Seq + X-UBM-Session. X-UBM-Tenant is added only when getTenantHost
+ * returns a host. Headers are never logged or included in errors.
  */
+
+import { resolveTenantHeader, ubmRequestHeaders } from "./tenant";
 
 export type BotSettingsState = {
   roomId: string;
@@ -32,6 +35,8 @@ export type BotSettingsOptions = {
   baseUrl?: string;
   getUserSeq: () => number;
   getSessionHeader: () => Promise<string>;
+  /** Daou server host for a future multi-tenant bot. Empty omits X-UBM-Tenant. */
+  getTenantHost?: () => string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 };
@@ -54,6 +59,7 @@ export function createBotSettingsClient({
   baseUrl = "https://bot.ubion.global",
   getUserSeq,
   getSessionHeader,
+  getTenantHost,
   fetch: fetchImpl,
   timeoutMs = 8000,
 }: BotSettingsOptions) {
@@ -85,11 +91,7 @@ export function createBotSettingsClient({
         const doFetch = fetchImpl ?? globalThis.fetch;
         res = await doFetch(`${root}/bot/rooms/${encodeURIComponent(roomId)}/settings`, {
           method,
-          headers: {
-            "Content-Type": "application/json",
-            "X-UBM-User-Seq": String(userSeq),
-            "X-UBM-Session": session,
-          },
+          headers: ubmRequestHeaders(userSeq, session, resolveTenantHeader(getTenantHost)),
           body: method === "PUT" ? JSON.stringify({ autonomy: !!autonomy }) : undefined,
           signal: controller.signal,
         });

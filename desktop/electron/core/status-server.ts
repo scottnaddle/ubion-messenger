@@ -6,14 +6,19 @@
  *   GET  {base}/v1/status/{userSeq}                 → 200 { "text": string }
  *   PUT  {base}/v1/status/{userSeq}  body {text}    → 200 { "text": string }
  * Authenticated by a UBION server token (X-UBM-Session, supplied by the caller — never DaouOffice cookies); the token is
- * never logged. A malformed/absent `text` is normalized to "".
+ * never logged. X-UBM-Tenant is sent only when getTenantHost returns a host.
+ * A malformed/absent `text` is normalized to "".
  */
+
+import { resolveTenantHeader, ubmRequestHeaders } from "./tenant";
 
 export type StatusServerOptions = {
   baseUrl?: string;
   /** The caller (never the looked-up target): X-UBM-User-Seq identifies who is making the request. */
   getUserSeq: () => number;
   getSessionHeader: () => Promise<string>;
+  /** Daou server host for a future multi-tenant bot. Empty omits X-UBM-Tenant. */
+  getTenantHost?: () => string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 };
@@ -28,6 +33,7 @@ export function createStatusClient({
   baseUrl = "https://bot.ubion.global",
   getUserSeq,
   getSessionHeader,
+  getTenantHost,
   fetch: fetchImpl,
   timeoutMs = 8000,
 }: StatusServerOptions) {
@@ -55,11 +61,7 @@ export function createStatusClient({
       const doFetch = fetchImpl ?? globalThis.fetch;
       res = await doFetch(`${root}/v1/status/${encodeURIComponent(String(userSeq))}`, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          "X-UBM-User-Seq": String(callerSeq),
-          "X-UBM-Session": cookie,
-        },
+        headers: ubmRequestHeaders(callerSeq, cookie, resolveTenantHeader(getTenantHost)),
         body: method === "PUT" ? JSON.stringify({ text: text ?? "" }) : undefined,
         signal: controller.signal,
       });

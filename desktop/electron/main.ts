@@ -107,6 +107,7 @@ import {
   type Settings,
 } from "./settings";
 import { flavorAppId, flavorLabel, flavorProfile, normalizeServerUrl } from "./core/flavor";
+import { botApiBaseUrl, botTenantHeader, coreFeaturesEnabled, hasCoreLicense } from "./core/subscription";
 
 const profile = flavorProfile();
 /** Korean UI title (다워 / UBION Messenger). OS app name stays profile.productName. */
@@ -281,10 +282,21 @@ let locked = false;
 const lockState = createLockState({ now: () => Date.now() });
 const updater = new Updater(() => win);
 
-const UBM_BASE_URL = () => {
-  if (!profile.enhancedServer) return "";
-  return (process.env.UBM_BOT_API_URL || profile.defaultBotApiUrl || "").replace(/\/$/, "");
-};
+/** ubion, or a future Core license. hasCoreLicense is false, so Dawer Free stays off. */
+const coreOn = () => coreFeaturesEnabled(profile.id, hasCoreLicense(settings.serverUrl));
+const UBM_BASE_URL = () =>
+  botApiBaseUrl({
+    flavor: profile.id,
+    license: hasCoreLicense(settings.serverUrl),
+    envUrl: process.env.UBM_BOT_API_URL,
+    defaultBotApiUrl: profile.defaultBotApiUrl,
+  });
+/**
+ * UBION's deployed bot is single-tenant and must not see X-UBM-Tenant.
+ * A licensed non-ubion build sends the Daou host; Free never reaches that path.
+ */
+const getBotTenantHost = (): string =>
+  botTenantHeader(profile.id, hasCoreLicense(settings.serverUrl), settings.serverUrl);
 const ubmTokenFile = () => path.join(app.getPath("userData"), "ubm-token.bin");
 
 /** OS-keychain-backed persistence for the UBION token; without safeStorage the token stays in memory only. */
@@ -356,6 +368,7 @@ const botSettings = createBotSettingsClient({
   baseUrl: UBM_BASE_URL(),
   getUserSeq: () => core.user?.id ?? 0,
   getSessionHeader: ubmServerProof,
+  getTenantHost: getBotTenantHost,
 });
 
 const statusClient = () => {
@@ -363,6 +376,7 @@ const statusClient = () => {
     baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
+    getTenantHost: getBotTenantHost,
   });
   return {
     get: (userSeq: number) => retryUbm(() => client.get(userSeq), isUbmAuthFailure),
@@ -375,6 +389,7 @@ const reactionsClient = () => {
     baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
+    getTenantHost: getBotTenantHost,
   });
   return {
     list: (roomSeq: number, messageIds: number[]) =>
@@ -389,6 +404,7 @@ const pollsClient = () => {
     baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
+    getTenantHost: getBotTenantHost,
   });
   return {
     create: (input: Parameters<typeof client.create>[0]) =>
@@ -1220,6 +1236,7 @@ function registerIpc() {
     productNameKo: profile.productNameKo,
     flex: profile.flex,
     unofficialNotice: profile.unofficialNotice,
+    core: coreOn(),
     encryption: (() => {
       try {
         return safeStorage.isEncryptionAvailable();
@@ -1375,12 +1392,12 @@ function registerIpc() {
   handle("rooms:pin", (key: string, pin: boolean) => core.setPin(key, pin));
   handle("rooms:setPush", (key: string, usePush: boolean) => core.setRoomPush(key, !!usePush));
   handle("bot:roomSettings:get", (roomKey: unknown) => {
-    if (!profile.enhancedServer) throw new Error("이 빌드에서는 봇 설정을 사용하지 않습니다");
+    if (!coreOn()) throw new Error("이 빌드에서는 봇 설정을 사용하지 않습니다");
     if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
     return botSettingsWithRetry.get(roomKey);
   });
   handle("bot:roomSettings:set", (roomKey: unknown, autonomy: unknown) => {
-    if (!profile.enhancedServer) throw new Error("이 빌드에서는 봇 설정을 사용하지 않습니다");
+    if (!coreOn()) throw new Error("이 빌드에서는 봇 설정을 사용하지 않습니다");
     if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
     if (typeof autonomy !== "boolean") throw new Error("자율활동 설정 값이 올바르지 않습니다");
     return botSettingsWithRetry.set(roomKey, autonomy);
@@ -1857,12 +1874,12 @@ function registerIpc() {
   // 상태 메시지 (XMPP free-text presence + server fallback), gated by UBM_STATUS_XMPP / UBM_STATUS_SERVER.
   handle("status:caps", () => {
     const caps = statusCaps(process.env);
-    return profile.enhancedServer ? caps : { ...caps, server: false };
+    return coreOn() ? caps : { ...caps, server: false };
   });
   handle("status:get", async () => {
     const me = core.user?.id;
     if (me == null) return { text: null as string | null };
-    if (profile.enhancedServer && statusServerEnabled(process.env) && !currentStatusText) {
+    if (coreOn() && statusServerEnabled(process.env) && !currentStatusText) {
       const r = await statusClient().get(me);
       if (r.ok && r.text) currentStatusText = r.text;
     }
@@ -1873,7 +1890,7 @@ function registerIpc() {
     if (me == null) throw new Error("로그인이 필요합니다");
     const value = normalizeStatusText(text);
     if (statusXmppEnabled(process.env)) core.setStatusMessage(value || "");
-    if (profile.enhancedServer && statusServerEnabled(process.env)) {
+    if (coreOn() && statusServerEnabled(process.env)) {
       const r = await statusClient().put(me, value);
       if (!r.ok) throw new Error(r.message);
     }
@@ -1882,8 +1899,8 @@ function registerIpc() {
   });
   handle("status:presenceStatus", () => core.allStatusMessages());
   // 이모지 리액션: our server (bot.ubion.global) keyed by roomSeq:messageId. On by default; UBM_REACTIONS=0 disables.
-  const REACTIONS_ON = profile.enhancedServer && reactionsEnabled(process.env);
-  handle("reactions:caps", () => ({ enabled: REACTIONS_ON }));
+  const reactionsOn = () => coreOn() && reactionsEnabled(process.env);
+  handle("reactions:caps", () => ({ enabled: reactionsOn() }));
   // Diagnostics (no tokens/codes: only channel, room, status text): userData/ubm-reactions.log, capped ~256 KB.
   const reactionsLog = (line: string) => {
     try {
@@ -1896,7 +1913,7 @@ function registerIpc() {
     try { return await fn(...a); } catch (e) { reactionsLog(`${ch} error: ${errMsg(e)}`); throw e; }
   });
   handleR("reactions:list", async (roomSeq: unknown, ids: unknown) => {
-    if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
+    if (!reactionsOn()) throw new Error(REACTIONS_DISABLED_TEXT);
     if (core.user == null) { reactionsLog("list fail: no core.user"); throw new Error("로그인이 필요합니다"); }
     const seq = normalizeRoomSeq(roomSeq);
     const r = await reactionsClient().list(seq, normalizeMessageIds(ids));
@@ -1904,7 +1921,7 @@ function registerIpc() {
     return r.data;
   });
   handleR("reactions:toggle", async (roomSeq: unknown, messageId: unknown, emoji: unknown) => {
-    if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
+    if (!reactionsOn()) throw new Error(REACTIONS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) { reactionsLog("toggle fail: no core.user"); throw new Error("로그인이 필요합니다"); }
     const seq = normalizeRoomSeq(roomSeq);
@@ -1918,13 +1935,13 @@ function registerIpc() {
     return r.data;
   });
   // 투표: our server (bot.ubion.global / UBM_BOT_API_URL); bot posts the poll + results. Behind UBM_POLLS=1.
-  const POLLS_ON = profile.enhancedServer && pollsEnabled(process.env);
+  const pollsOn = () => coreOn() && pollsEnabled(process.env);
   handle("polls:caps", () => {
     const caps = pollsCaps(process.env);
-    return profile.enhancedServer ? caps : { ...caps, enabled: false };
+    return coreOn() ? caps : { ...caps, enabled: false };
   });
   handle("polls:create", async (input: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const parsed = normalizePollInput(input);
@@ -1934,14 +1951,14 @@ function registerIpc() {
     return r.data;
   });
   handle("polls:get", async (id: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     if (core.user == null) throw new Error("로그인이 필요합니다");
     const r = await pollsClient().get(normalizePollId(id));
     if (!r.ok) throw new Error(r.message);
     return r.data;
   });
   handle("polls:vote", async (id: unknown, optionIndex: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const r = await pollsClient().vote(normalizePollId(id), normalizeOptionIndex(optionIndex));
@@ -1949,7 +1966,7 @@ function registerIpc() {
     return r.data;
   });
   handle("polls:close", async (id: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const r = await pollsClient().close(normalizePollId(id));
@@ -1987,13 +2004,13 @@ function registerIpc() {
   });
   // 유비온봇 대화 요약 / 안 읽은 메시지 요약: posts a /요약 command to the 나 room (bot room).
   // New message-sending path → self-only guard. Behind UBM_BOT_SUMMARY=1 (needs server deploy).
-  const BOT_SUMMARY_ON = profile.enhancedServer && botSummaryEnabled(process.env);
+  const botSummaryOn = () => coreOn() && botSummaryEnabled(process.env);
   handle("bot:summary:caps", () => {
     const caps = botSummaryCaps(process.env);
-    return profile.enhancedServer ? caps : { ...caps, enabled: false };
+    return coreOn() ? caps : { ...caps, enabled: false };
   });
   handle("bot:summary:request", async (target: unknown, mode: unknown, recentN?: unknown) => {
-    if (!BOT_SUMMARY_ON) throw new Error(BOT_SUMMARY_DISABLED_TEXT);
+    if (!botSummaryOn()) throw new Error(BOT_SUMMARY_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const selfRoom = core.getRooms().find((r) => r.isSelf) ?? null;

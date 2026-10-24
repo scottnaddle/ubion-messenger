@@ -58,7 +58,7 @@ One codebase, two products. `UBM_FLAVOR` is read when electron-vite starts and b
 | Dev appId | `global.ubion.messenger.dev` (unpackaged, or `UBM_APP_CHANNEL=dev`) | `global.ubion.dawer.dev` |
 | Server | `https://coco.ubion.co.kr` | blank — type the tenant URL on the login screen |
 | flex.team / `@ubion.co.kr` | on | off |
-| Reactions, polls, status server, 유비온봇 | current flags | off (no `bot.ubion.global`) |
+| Reactions, polls, status server, 유비온봇 | on when the flavor is ubion (same env flags as before) | off. `hasCoreLicense()` is always false, so Free does not call a bot |
 | Updates | `ubion-messenger-releases` | none |
 | Settings folder | `UBION Messenger` | `Dawer` (does not share the company profile) |
 
@@ -71,6 +71,32 @@ npm run dist:dawer          # Dawer installers, not published
 ```
 
 다워 shows a one-line notice: **비공식 클라이언트**. It is not the official DaouOffice app and does not use DaouOffice branding. Icons are still the shared set until a Dawer icon is drawn.
+
+## Multi-tenant bot (skeleton only)
+
+There is **no bot server in this repository**. The desktop client calls an external service. UBION uses `https://bot.ubion.global` (override `UBM_BOT_API_URL`). That deployment is one Ubion tenant and does not receive `X-UBM-Tenant`. Dawer Free does not call it: `UBM_BOT_API_URL` is ignored unless a future license says otherwise.
+
+The runtime gate is `coreFeaturesEnabled` in `electron/core/subscription.ts`:
+
+```ts
+flavor === "ubion" || hasCoreLicense(serverUrl, key)
+```
+
+`hasCoreLicense` always returns false. A parsed subscription key is not a purchase. Payments are not implemented. Turning Core on for 다워 means replacing that function with a real verifier, then pointing the client at a multi-tenant bot URL. Do not reuse `bot.ubion.global` as the Dawer default.
+
+**Where the server work lands.** Add it to the external bot service (or a new service), not to Electron. Port the key helpers in `electron/core/tenant.ts` and use them as the primary key before any `roomSeq` lookup:
+
+| Record | Key | Example |
+|---|---|---|
+| Reactions, polls | `host+roomSeq` | `tenant.example+27673` |
+| Status text (its own table) | `host+userSeq` | `tenant.example+42` |
+| Bot room settings | `host+room:<seq>` | `tenant.example+room:27673` |
+
+`host` is the Daou server host from the login URL (`https://tenant.example:8443/x` → `tenant.example:8443`). Two companies that both have room 27673 stay apart. Status uses the same `host+number` shape in a different table so user 42 is not room 42.
+
+**Auth boundary.** DaouOffice cookies never leave the tenant. The bot keeps the existing ubt1 DM challenge (`X-UBM-User-Seq` + `X-UBM-Session`). A future multi-tenant request may add `X-UBM-Tenant: <host>`. The client sends that header only when the flavor is not ubion and Core is on. No live Daou bot account is required for this skeleton.
+
+Subscription key shape (stub, not verified): `{ v: 1, tenantHost, tier: "core", keyId }`. `keyId` is opaque. It must match `tenantHost(serverUrl)` before a future verifier would even look at it, and this build still returns false after a match.
 
 ## 자동 업데이트 / 릴리스 (v1.0.3+)
 

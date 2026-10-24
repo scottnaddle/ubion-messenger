@@ -33,7 +33,11 @@ export type FlavorProfile = {
   flexEmailDomain: string | null;
   /** Our bot host. Empty on generic so the client does not call bot.ubion.global. */
   defaultBotApiUrl: string;
-  /** Reactions, polls, status server, 유비온봇 — off until a multi-tenant bot exists. */
+  /**
+   * Flavor default for reactions, polls, status server, and 유비온봇.
+   * The runtime gate is `coreFeaturesEnabled` (`flavor === "ubion" || hasCoreLicense`).
+   * `hasCoreLicense` is false until a verifier exists, so generic stays off.
+   */
   enhancedServer: boolean;
   /** GitHub update feed. Generic has none yet. */
   updates: boolean;
