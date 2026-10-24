@@ -22,6 +22,7 @@ import { noticeStoreKey } from "../electron/core/room-notice";
 import { isBotAuthDm } from "./lib/markers";
 import { THEME_STYLE_ID } from "../electron/core/theme";
 import { navForDigit, type NavView } from "./nav";
+import type { ApprovalOpenTarget, MailOpenTarget } from "./lib/home-open";
 import {
   applyBotStatus, BOT_STATUS_TTL_MS, clearBotStatusForMessage, expireBotStatuses, type BotStatusMap,
 } from "./lib/bot-status";
@@ -51,6 +52,8 @@ export function App() {
   const [statusMessages, setStatusMessages] = useState<Record<number, string>>({});
   const [botStatuses, setBotStatuses] = useState<BotStatusMap>({});
   const [view, setView] = useState<NavView | "approval">("chats");
+  const [mailFocus, setMailFocus] = useState<MailOpenTarget | null>(null);
+  const [approvalFocus, setApprovalFocus] = useState<ApprovalOpenTarget | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState<{ keyword: string } | null>(null);
@@ -67,11 +70,25 @@ export function App() {
   /** Capacitor: phone-first IA — chats / mail / approval / people (+ settings modal). No home/flex/menu. */
   const mobileUi = isMobileUi();
   const compact = useIsCompact();
+  /** Rail, menu, palette, and shortcuts open a screen without a dashboard item. */
+  const showView = useCallback((v: NavView | "approval") => {
+    if (v === "mail") setMailFocus(null);
+    if (v === "approval") setApprovalFocus(null);
+    setView(v);
+  }, []);
+  const openDashboardMail = useCallback((target: MailOpenTarget) => {
+    setMailFocus(target);
+    setView("mail");
+  }, []);
+  const openDashboardApproval = useCallback((target: ApprovalOpenTarget) => {
+    setApprovalFocus(target);
+    setView("approval");
+  }, []);
   useEffect(() => {
     if (!mobileUi) return;
     const ok = view === "chats" || view === "people" || view === "mail" || view === "approval";
-    if (!ok) setView("chats");
-  }, [mobileUi, view]);
+    if (!ok) showView("chats");
+  }, [mobileUi, view, showView]);
 
   const toast = useCallback((text: string, kind: Toast["kind"] = "error", action?: ToastAction) => {
     const id = Date.now() + Math.random();
@@ -213,7 +230,7 @@ export function App() {
         window.dispatchEvent(new CustomEvent("ubion:event", { detail: { type, payload } }));
       }),
       api().onOpenRoom((key) => {
-        setView("chats");
+        showView("chats");
         setActiveKey(key);
       }),
       api().onOpenSettings(() => setShowSettings(true)),
@@ -231,7 +248,7 @@ export function App() {
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
     };
-  }, []);
+  }, [showView]);
 
   useEffect(() => {
     if (user) api().call("org:presence").then(setPresence).catch(() => undefined);
@@ -297,21 +314,21 @@ export function App() {
         case "palette": setPaletteOpen((v) => !v); break;
         case "settings": setShowSettings(true); break;
         case "globalSearch": setGlobalSearch({ keyword: "" }); break;
-        case "roomSearch": setView("chats"); document.getElementById("room-filter")?.focus(); break;
-        case "people": setView("people"); break;
+        case "roomSearch": showView("chats"); document.getElementById("room-filter")?.focus(); break;
+        case "people": showView("people"); break;
         case "nextUnread": nextUnread(); break;
         case "prevRoom": stepRoom(-1); break;
         case "nextRoom": stepRoom(1); break;
         case "shortcutsHelp": setShowShortcuts((v) => !v); break;
         default: {
           const v = navForDigit(action.slice(4));
-          if (v) setView(v);
+          if (v) showView(v);
         }
       }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [rooms]);
+  }, [rooms, showView]);
 
   // command palette people: fetch the org once, lazily, the first time it opens
   useEffect(() => {
@@ -346,18 +363,18 @@ export function App() {
 
   const pickPalette = (item: PaletteItem) => {
     if (item.kind === "room" && item.roomKey) {
-      setView("chats");
+      showView("chats");
       setActiveKey(item.roomKey);
     } else if (item.kind === "person" && item.userId != null) {
       api().call<{ key: string }>("rooms:openDirect", item.userId)
-        .then((room) => { setView("chats"); setActiveKey(room.key); })
+        .then((room) => { showView("chats"); setActiveKey(room.key); })
         .catch((e) => toast(e.message));
     } else if (item.id === "action:settings") {
       setShowSettings(true);
     } else if (item.id === "action:globalSearch") {
       setGlobalSearch({ keyword: "" });
     } else if (item.view) {
-      setView(item.view as NavView | "approval");
+      showView(item.view as NavView | "approval");
     }
   };
 
@@ -403,52 +420,53 @@ export function App() {
     <div className={`app${compact ? " compact" : ""}${compactChat ? " compact-chat" : ""}`}>
       <nav className="rail">
         <div className="rail-drag" />
-        {!mobileUi && <div className="logo-mark" title="UBION Messenger">U</div>}
+        {/* Phone portrait is `.compact` and keeps the bottom tab bar. iPad (and desktop) get the mark; short landscape hides it in mobile.css. */}
+        {!compact && <div className="logo-mark" title="UBION Messenger">U</div>}
         {!mobileUi && (
-          <RailButton id="home" active={view === "home"} onClick={() => setView("home")}>
+          <RailButton id="home" active={view === "home"} onClick={() => showView("home")}>
             <Icon name="home" size={23} />
             {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
           </RailButton>
         )}
-        <RailButton id="chats" active={view === "chats"} onClick={() => setView("chats")}>
+        <RailButton id="chats" active={view === "chats"} onClick={() => showView("chats")}>
           <Icon name="chat" size={mobileUi ? 22 : 23} />
           {mobileUi && <span className="rail-label">{t("대화")}</span>}
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
         </RailButton>
         {mobileUi ? (
-          <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
+          <RailButton id="mail" active={view === "mail"} onClick={() => showView("mail")}>
             <Icon name="mail" size={22} />
             <span className="rail-label">{t("메일")}</span>
             {portalBadge.mail > 0 && <span className="rail-badge">{portalBadge.mail > 99 ? "99+" : portalBadge.mail}</span>}
           </RailButton>
         ) : (
           <>
-            <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
+            <RailButton id="mail" active={view === "mail"} onClick={() => showView("mail")}>
               <Icon name="mail" size={23} />
             </RailButton>
-            <RailButton id="flex" active={view === "flex"} onClick={() => setView("flex")}>
+            <RailButton id="flex" active={view === "flex"} onClick={() => showView("flex")}>
               <Icon name="flex" size={23} />
               {flexPending != null && flexPending > 0 && <span className="rail-badge">{flexPending > 99 ? "99+" : flexPending}</span>}
             </RailButton>
           </>
         )}
         {mobileUi ? (
-          <RailButton id="approval" active={view === "approval"} onClick={() => setView("approval")}>
+          <RailButton id="approval" active={view === "approval"} onClick={() => showView("approval")}>
             <Icon name="approval" size={22} />
             <span className="rail-label">{t("결재")}</span>
             {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
           </RailButton>
         ) : null}
-        <RailButton id="people" active={view === "people"} onClick={() => setView("people")}>
+        <RailButton id="people" active={view === "people"} onClick={() => showView("people")}>
           <Icon name="people" size={mobileUi ? 22 : 23} />
           {mobileUi && <span className="rail-label">{t("사람들")}</span>}
         </RailButton>
         {!mobileUi && (
           <>
-            <RailButton id="menu" active={view === "menu"} onClick={() => setView("menu")}>
+            <RailButton id="menu" active={view === "menu"} onClick={() => showView("menu")}>
               <Icon name="grid" size={23} />
             </RailButton>
-            <RailButton id="approval" active={view === "approval"} onClick={() => setView("approval")}>
+            <RailButton id="approval" active={view === "approval"} onClick={() => showView("approval")}>
               <Icon name="approval" size={23} />
               {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
             </RailButton>
@@ -478,17 +496,17 @@ export function App() {
         )}
         <div className="panes">
           {view === "mail" ? (
-            <Mail />
+            <Mail initial={mailFocus} />
           ) : view === "approval" ? (
-            <Approval />
+            <Approval initial={approvalFocus} />
           ) : view === "flex" ? (
             <Flex />
           ) : (
             <>
               {view === "home" ? (
-                <Home onLocal={setView} />
+                <Home onLocal={showView} onOpenMail={openDashboardMail} onOpenApproval={openDashboardApproval} />
               ) : view === "menu" ? (
-                <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} toast={toast} onOpenSaved={() => setSavedOpen(true)} />
+                <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={showView} toast={toast} onOpenSaved={() => setSavedOpen(true)} />
               ) : view === "chats" ? (
                 compactChat ? null : (
                   <Sidebar
@@ -508,7 +526,7 @@ export function App() {
                   toast={toast}
                   onOpenRoom={(k) => {
                     setActiveKey(k);
-                    setView("chats");
+                    showView("chats");
                   }}
                 />
               )}
@@ -560,7 +578,7 @@ export function App() {
           rooms={rooms}
           initialKeyword={globalSearch.keyword}
           onOpenRoom={(k) => {
-            setView("chats");
+            showView("chats");
             setActiveKey(k);
           }}
           onClose={() => setGlobalSearch(null)}
@@ -574,7 +592,7 @@ export function App() {
         <SavedMessages
           toast={toast}
           onOpenRoom={(k) => {
-            setView("chats");
+            showView("chats");
             setActiveKey(k);
           }}
           onClose={() => setSavedOpen(false)}

@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 
-/** iPhone-class widths: single-pane layout. iPad (incl. most split-view widths) stays two-pane. */
+/** iPhone-class widths: single-pane layout. iPad (incl. most split-view widths) stays two-pane.
+ *  iPhone landscape is often wider than 767px; the iPad rail (wider, larger icons, top safe area)
+ *  is gated in mobile.css on `(min-width: 768px) and (min-height: 600px)` so a short landscape
+ *  phone keeps the 72px rail. */
 export const COMPACT_QUERY = "(max-width: 767px)";
 
 /** True only in the Capacitor build (main.tsx adds the class); desktop layout never changes. */

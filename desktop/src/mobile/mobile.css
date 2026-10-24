@@ -1,7 +1,8 @@
 /*
  * Capacitor (iOS/iPad/Android) layout. Imported only by src/mobile/entry.ts; every rule is scoped to
  * html.ubm-mobile so it can never leak into the Electron renderer.
- *   wide   (≥768px, iPad incl. split view): rail + room list + chat side by side
+ *   wide    (≥768px): side rail + room list + chat. iPhone landscape lands here too.
+ *   tablet  (≥768px and ≥600px tall): iPad rail — wider, larger icons, top safe area.
  *   compact (<768px, iPhone): single pane, bottom tab bar, full-screen chat with ← 목록
  */
 
@@ -117,9 +118,53 @@ html.ubm-mobile .composer .icon-btn[title="화면 캡쳐"],
 html.ubm-mobile .composer .icon-btn[title="예약 전송"] { display: none; }
 html.ubm-mobile .composer textarea { min-width: 0; }
 
-/* mock bridge (?mock=1) reports darwin: drop the macOS traffic-light padding */
+/* mock bridge (?mock=1) reports darwin: drop the macOS traffic-light padding.
+   The tablet block below replaces this on iPad. The phone tab bar tightens it further. */
 html.ubm-mobile[data-platform="darwin"] .rail { padding-top: 10px; }
 html.ubm-mobile .app.compact .rail { padding-top: 4px; }
+
+/* iPhone landscape is wide (≥768) but short. Keep the 72px rail; a tablet-sized
+   column of 64px targets does not fit under ~430px of height. */
+@media (max-height: 599px) {
+  html.ubm-mobile .rail .logo-mark { display: none; }
+}
+
+/* ---------- tablet (iPad portrait and landscape) ----------
+   Desktop rail is 72px / 50px targets / 23px icons with ~38px of top chrome on macOS.
+   On iPad that column is a hard tap: Chat is the first control, 10px from the top,
+   and the status-bar inset was never applied (headers use it; the rail did not).
+   Scale the rail up and start it below the unsafe area. Phone rules stay on
+   `.app.compact` (higher specificity) and on short wide viewports. */
+@media (min-width: 768px) and (min-height: 600px) {
+  html.ubm-mobile .rail,
+  html.ubm-mobile[data-platform="darwin"] .rail {
+    width: 96px;
+    gap: 10px;
+    padding-top: max(36px, calc(16px + env(safe-area-inset-top)));
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  html.ubm-mobile .rail .logo-mark {
+    width: 42px;
+    height: 42px;
+    border-radius: 13px;
+    margin-bottom: 12px;
+    font-size: 20px;
+  }
+  html.ubm-mobile .rail-btn {
+    width: 64px;
+    height: 64px;
+    border-radius: 18px;
+  }
+  html.ubm-mobile .rail-btn svg {
+    width: 28px;
+    height: 28px;
+  }
+  /* Room list: desktop is a fixed 320px. The wide clamp (~260px on iPad portrait)
+     made the left column narrower than the desktop messenger. */
+  html.ubm-mobile .sidebar {
+    width: clamp(320px, 34vw, 380px);
+  }
+}
 
 /* ---------- phone-first tab bar labels ---------- */
 html.ubm-mobile .app.compact .rail-btn {
