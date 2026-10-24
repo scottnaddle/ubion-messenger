@@ -422,6 +422,10 @@ export function App() {
         <RailButton id="mail" active={view === "mail"} onClick={() => showView("mail")}>
           <Icon name="mail" size={23} />
         </RailButton>
+        <RailButton id="approval" active={view === "approval"} onClick={() => showView("approval")}>
+          <Icon name="approval" size={23} />
+          {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
+        </RailButton>
         <RailButton id="flex" active={view === "flex"} onClick={() => showView("flex")}>
           <Icon name="flex" size={23} />
           {flexPending != null && flexPending > 0 && <span className="rail-badge">{flexPending > 99 ? "99+" : flexPending}</span>}
@@ -431,10 +435,6 @@ export function App() {
         </RailButton>
         <RailButton id="menu" active={view === "menu"} onClick={() => showView("menu")}>
           <Icon name="grid" size={23} />
-        </RailButton>
-        <RailButton id="approval" active={view === "approval"} onClick={() => showView("approval")}>
-          <Icon name="approval" size={23} />
-          {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
         </RailButton>
         <div className="rail-spacer" />
         <RailButton id="settings" onClick={() => setShowSettings(true)}>

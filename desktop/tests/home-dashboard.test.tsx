@@ -261,7 +261,7 @@ describe("Approval opened from the dashboard", () => {
     expect(approvalDoc).toHaveBeenCalledWith(1);
   });
 
-  it("without a target still opens the first document in 결재 대기", async () => {
+  it("without a target shows the approval landing panel instead of the first document", async () => {
     const approvalDoc = vi.fn(async (id: number | string) => detail(Number(id)));
     const approvalList = vi.fn(async (box: string) => ({
       items: box === "todo" ? [approvalItem(7, "대기첫건")] : [],
@@ -271,6 +271,12 @@ describe("Approval opened from the dashboard", () => {
     await act(async () => { root.render(<Approval />); });
     await flush();
     expect(approvalList).toHaveBeenCalledWith("todo", 0, "");
+    expect(approvalDoc).not.toHaveBeenCalled();
+    expect(document.querySelector(".approval-title")).toBeNull();
+    expect(document.querySelector(".mail-overview")?.textContent).toContain("문서를 선택하면 여기에서 바로 결재할 수 있습니다.");
+    expect(document.querySelector(".mail-overview")?.textContent).toContain("대기첫건");
+    await act(async () => { clickButton("대기첫건"); });
+    await flush();
     expect(approvalDoc).toHaveBeenCalledWith(7);
     expect(document.querySelector(".approval-title h3")?.textContent).toBe("doc-7");
   });

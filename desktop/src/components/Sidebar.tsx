@@ -2,9 +2,10 @@ import { useMemo, useState } from "react";
 import { api, type Presence, type Room } from "../api";
 import { roomTimeLabel } from "../lib/format";
 import { roomMatchesFilter } from "../../electron/core/messages";
+import { isCompanyBotRoom, pinCompanyBotRooms } from "../lib/bot-room";
 import { isBotAuthDm } from "../lib/markers";
 import type { Toast } from "../App";
-import { Avatar, Icon } from "./ui";
+import { Icon, RoomAvatar } from "./ui";
 import { useT } from "../lib/i18n";
 
 /** Bot auth markers are internal; never surface them as a room-list preview. */
@@ -31,10 +32,11 @@ export function Sidebar({
 
   const shown = useMemo(() => {
     const k = q.trim().toLowerCase();
-    return rooms.filter((r) => {
+    const filtered = rooms.filter((r) => {
       if (!roomMatchesFilter(r, filter)) return false;
       return !k || r.name.toLowerCase().includes(k) || roomPreview(r, botUserSeq).toLowerCase().includes(k);
     });
+    return pinCompanyBotRooms(filtered, botUserSeq);
   }, [rooms, q, filter, botUserSeq]);
 
   return (
@@ -79,7 +81,7 @@ export function Sidebar({
         {shown.map((r) => (
           <button
             key={r.key}
-            className={`room ${r.key === activeKey ? "active" : ""} ${r.unread ? "has-unread" : ""}`}
+            className={`room ${r.key === activeKey ? "active" : ""} ${r.unread ? "has-unread" : ""} ${isCompanyBotRoom(r, botUserSeq) ? "bot-pinned" : ""}`}
             onClick={() => onOpen(r.key)}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -87,7 +89,7 @@ export function Sidebar({
               setMenu({ x: e.clientX, y: e.clientY, room: r });
             }}
           >
-            <Avatar name={r.name} src={r.avatar} size={40} presence={r.peerUserId ? presence[r.peerUserId] || "offline" : undefined} />
+            <RoomAvatar room={r} size={40} presence={r.peerUserId ? presence[r.peerUserId] || "offline" : undefined} />
             <div className="room-body">
               <div className="room-top">
                 <span className="room-name">
