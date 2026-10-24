@@ -161,6 +161,7 @@ const dict: Record<string, string> = {
   "승인 대기 확인 중/불가": "Pending approvals: checking/unavailable",
   "승인 대기 {n}건": "{n} pending approvals",
   "뒤로": "Back",
+  "목록": "List",
   "앞으로": "Forward",
   "외부 브라우저로 열기": "Open in External Browser",
   "한 번에 최대 {n}명까지 전달할 수 있습니다": "You can forward to up to {n} people at a time",

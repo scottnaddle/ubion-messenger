@@ -28,6 +28,7 @@ import {
 import { isTypingTarget, matchShortcut } from "./lib/shortcuts";
 import type { PaletteItem } from "./lib/palette";
 import { CommandPalette } from "./components/CommandPalette";
+import { isMobileUi, useIsCompact } from "./lib/compact";
 import { ShortcutsHelp } from "./components/ShortcutsHelp";
 
 export type ToastAction = { label: string; run: () => void };
@@ -63,6 +64,12 @@ export function App() {
   const [flexPending, setFlexPending] = useState<number | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeKey;
+  /** Capacitor build: portal views (home/mail/flex/apps/approval) are not ported; phones get a single pane. */
+  const mobileUi = isMobileUi();
+  const compact = useIsCompact();
+  useEffect(() => {
+    if (mobileUi && view !== "chats" && view !== "people") setView("chats");
+  }, [mobileUi, view]);
 
   const toast = useCallback((text: string, kind: Toast["kind"] = "error", action?: ToastAction) => {
     const id = Date.now() + Math.random();
@@ -388,37 +395,48 @@ export function App() {
     );
 
   const offline = !netOnline || conn === "reconnecting" || conn === "offline";
+  const compactChat = compact && view === "chats" && !!activeRoom;
 
   return (
-    <div className="app">
+    <div className={`app${compact ? " compact" : ""}${compactChat ? " compact-chat" : ""}`}>
       <nav className="rail">
         <div className="rail-drag" />
         <div className="logo-mark" title="UBION Messenger">U</div>
-        <RailButton id="home" active={view === "home"} onClick={() => setView("home")}>
-          <Icon name="home" size={23} />
-          {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
-        </RailButton>
+        {!mobileUi && (
+          <RailButton id="home" active={view === "home"} onClick={() => setView("home")}>
+            <Icon name="home" size={23} />
+            {homeBadge > 0 && <span className="rail-badge">{homeBadge > 99 ? "99+" : homeBadge}</span>}
+          </RailButton>
+        )}
         <RailButton id="chats" active={view === "chats"} onClick={() => setView("chats")}>
           <Icon name="chat" size={23} />
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
         </RailButton>
-        <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
-          <Icon name="mail" size={23} />
-        </RailButton>
-        <RailButton id="flex" active={view === "flex"} onClick={() => setView("flex")}>
-          <Icon name="flex" size={23} />
-          {flexPending != null && flexPending > 0 && <span className="rail-badge">{flexPending > 99 ? "99+" : flexPending}</span>}
-        </RailButton>
+        {!mobileUi && (
+          <>
+            <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
+              <Icon name="mail" size={23} />
+            </RailButton>
+            <RailButton id="flex" active={view === "flex"} onClick={() => setView("flex")}>
+              <Icon name="flex" size={23} />
+              {flexPending != null && flexPending > 0 && <span className="rail-badge">{flexPending > 99 ? "99+" : flexPending}</span>}
+            </RailButton>
+          </>
+        )}
         <RailButton id="people" active={view === "people"} onClick={() => setView("people")}>
           <Icon name="people" size={23} />
         </RailButton>
-        <RailButton id="menu" active={view === "menu"} onClick={() => setView("menu")}>
-          <Icon name="grid" size={23} />
-        </RailButton>
-        <RailButton id="approval" active={view === "approval"} onClick={() => setView("approval")}>
-          <Icon name="approval" size={23} />
-          {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
-        </RailButton>
+        {!mobileUi && (
+          <>
+            <RailButton id="menu" active={view === "menu"} onClick={() => setView("menu")}>
+              <Icon name="grid" size={23} />
+            </RailButton>
+            <RailButton id="approval" active={view === "approval"} onClick={() => setView("approval")}>
+              <Icon name="approval" size={23} />
+              {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
+            </RailButton>
+          </>
+        )}
         <div className="rail-spacer" />
         <RailButton id="settings" onClick={() => setShowSettings(true)}>
           <Icon name="gear" size={23} />
@@ -452,15 +470,17 @@ export function App() {
               ) : view === "menu" ? (
                 <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} toast={toast} onOpenSaved={() => setSavedOpen(true)} />
               ) : view === "chats" ? (
-                <Sidebar
-                  rooms={rooms}
-                  activeKey={activeKey}
-                  presence={presence}
-                  onOpen={setActiveKey}
-                  toast={toast}
-                  botUserSeq={botUserSeq}
-                  onGlobalSearch={(keyword) => setGlobalSearch({ keyword: keyword || "" })}
-                />
+                compactChat ? null : (
+                  <Sidebar
+                    rooms={rooms}
+                    activeKey={activeKey}
+                    presence={presence}
+                    onOpen={setActiveKey}
+                    toast={toast}
+                    botUserSeq={botUserSeq}
+                    onGlobalSearch={(keyword) => setGlobalSearch({ keyword: keyword || "" })}
+                  />
+                )
               ) : (
                 <People
                   presence={presence}
@@ -472,7 +492,7 @@ export function App() {
                   }}
                 />
               )}
-              {view === "home" || view === "menu" ? null : activeRoom ? (
+              {view === "home" || view === "menu" || (compact && !compactChat) ? null : activeRoom ? (
                 <ChatView
                   key={activeRoom.key}
                   room={activeRoom}
@@ -483,6 +503,7 @@ export function App() {
                   botStatus={botStatuses[activeRoom.key]}
                   botUserSeq={botUserSeq}
                   toast={toast}
+                  onBack={compact ? () => setActiveKey(null) : undefined}
                 />
               ) : (
                 <div className="empty-chat">

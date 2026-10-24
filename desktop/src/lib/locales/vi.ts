@@ -160,6 +160,7 @@ const dict: Record<string, string> = {
   "승인 대기 확인 중/불가": "Đang kiểm tra/không thể kiểm tra yêu cầu chờ duyệt",
   "승인 대기 {n}건": "{n} yêu cầu chờ duyệt",
   "뒤로": "Quay lại",
+  "목록": "Danh sách",
   "앞으로": "Tiến tới",
   "외부 브라우저로 열기": "Mở bằng trình duyệt ngoài",
   "한 번에 최대 {n}명까지 전달할 수 있습니다": "Mỗi lần chỉ có thể chuyển tiếp tối đa {n} người",

@@ -81,10 +81,12 @@ function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
 }
 
 export function ChatView({
-  room, me, focused, presence, statusMessage, botStatus, botUserSeq, toast,
+  room, me, focused, presence, statusMessage, botStatus, botUserSeq, toast, onBack,
 }: {
   room: Room; me: SessionUser; focused: boolean; presence?: Presence; statusMessage?: string;
   botStatus?: BotStatusEntry; botUserSeq?: number; toast: ToastFn;
+  /** Compact (phone) layout only: back to the room list. */
+  onBack?: () => void;
 }) {
   const t = useT();
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
@@ -793,6 +795,11 @@ export function ChatView({
       onDrop={canSend ? onDrop : undefined}
     >
       <header className="chat-head">
+        {onBack && (
+          <button type="button" className="chat-back" onClick={onBack} aria-label={t("뒤로")}>
+            ← {t("목록")}
+          </button>
+        )}
         <Avatar name={room.name} src={room.avatar} size={34} presence={room.peerUserId ? presence || "offline" : undefined} />
         <div className="chat-title">
           <div className="name">{room.name}</div>
