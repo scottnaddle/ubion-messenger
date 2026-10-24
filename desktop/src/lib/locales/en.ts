@@ -187,7 +187,7 @@ const dict: Record<string, string> = {
   "홈": "Home",
   "마지막 {time}": "Last updated {time}",
   "flex 승인 대기": "flex Pending Approvals",
-  "항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.": "Click an item to open it in the portal window (can be changed to an external browser in Settings). Opening it may mark it as read.",
+  "메일·결재 항목은 앱에서 열리고, 다른 항목은 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.": "Mail and approval items open in the app. Other items open in the portal window (can be changed to an external browser in Settings). Opening an item may mark it as read.",
   "전사게시판 최근글": "Company Board: Recent Posts",
   "최근 글이 없습니다": "No recent posts",
   "휴가·근무 승인 요청 보기": "View leave/work approval requests",

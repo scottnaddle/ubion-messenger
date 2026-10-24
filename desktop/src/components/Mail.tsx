@@ -9,6 +9,7 @@ import { mailOverview, type MailListItem, type MailListPage, type MailMessage } 
 import { MailCompose } from "./MailCompose";
 import { buildDraft, type ComposeMode, type MailDraft } from "../../electron/core/mail-compose";
 import { mailUrl, type MailFolder, type MailFolders } from "../../electron/core/portal";
+import type { MailOpenTarget } from "../lib/home-open";
 
 const open = (url: string) => void api().portal.open(url).catch(() => undefined);
 const openExternal = (url: string) => void api().call("app:openExternal", url).catch(() => undefined);
@@ -119,11 +120,11 @@ function Overview({ page, inboxUnread, folders, onSender, onPick, onWrite }: {
   );
 }
 
-export function Mail() {
+export function Mail({ initial = null }: { initial?: MailOpenTarget | null }) {
   const t = useT();
   const [folders, setFolders] = useState<MailFolders | null>(null);
   const [folderErr, setFolderErr] = useState("");
-  const [folder, setFolder] = useState("Inbox");
+  const [folder, setFolder] = useState(() => initial?.folder || "Inbox");
   const [kw, setKw] = useState("");
   const [query, setQuery] = useState("");
   const [list, setList] = useState<MailListPage | null>(null);
@@ -137,6 +138,8 @@ export function Mail() {
   const [showImages, setShowImages] = useState(false);
   const listReq = useRef(0);
   const msgReq = useRef(0);
+  /** uids already opened this visit, so a list refresh doesn't paint them unread again. */
+  const readKeys = useRef(new Set<string>());
 
   const loadFolders = useCallback(async () => {
     setFolderErr("");
@@ -151,7 +154,15 @@ export function Mail() {
       const r = await api().portal.mailList(folder, page, query);
       if (req !== listReq.current) return;
       setList(r);
-      setItems((prev) => (page === 1 ? r.items : [...prev, ...r.items.filter((m) => !prev.some((p) => p.uid === m.uid))]));
+      setItems((prev) => {
+        const merged = page === 1 ? r.items : [...prev, ...r.items.filter((m) => !prev.some((p) => p.uid === m.uid))];
+        if (!readKeys.current.size) return merged;
+        return merged.map((m) => (
+          !m.seen && (readKeys.current.has(`${m.folder}/${m.uid}`) || readKeys.current.has(`${folder}/${m.uid}`))
+            ? { ...m, seen: true }
+            : m
+        ));
+      });
     } catch (e) {
       if (req === listReq.current) setListErr((e as Error).message);
     } finally {
@@ -177,6 +188,8 @@ export function Mail() {
       const r = await api().portal.mailRead(m.folder, m.uid);
       if (req !== msgReq.current) return;
       setMsg(r);
+      readKeys.current.add(`${m.folder}/${m.uid}`);
+      readKeys.current.add(`${folder}/${m.uid}`);
       if (!m.seen) {
         setItems((prev) => prev.map((x) => (x.uid === m.uid && x.folder === m.folder ? { ...x, seen: true } : x)));
         setFolders((fs) => fs && ({
@@ -192,6 +205,32 @@ export function Mail() {
       if (req === msgReq.current) setMsgLoading(false);
     }
   };
+
+  const openedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initial) return;
+    const key = `${initial.folder}/${initial.uid}`;
+    if (openedKey.current === key) return;
+    openedKey.current = key;
+    if (initial.folder !== folder) {
+      setFolder(initial.folder);
+      setKw("");
+      setQuery("");
+    }
+    void openMsg({
+      uid: initial.uid,
+      folder: initial.folder,
+      subject: "",
+      from: { name: "", address: "" },
+      preview: "",
+      seen: initial.seen,
+      hasAttach: false,
+      flagged: false,
+      answered: false,
+      important: false,
+      size: "",
+    });
+  }, [initial]);
 
   const [compose, setCompose] = useState<MailDraft | null>(null);
   const [toast, setToast] = useState("");

@@ -7,6 +7,7 @@ import {
   APPROVAL_BOXES, APPROVAL_BOX_LABELS,
   type ApprovalActivity, type ApprovalBox, type ApprovalDocumentDetail, type ApprovalList, type ApprovalListItem,
 } from "../../electron/core/portal";
+import { approvalDocId, type ApprovalOpenTarget } from "../lib/home-open";
 
 const open = (url: string) => void api().portal.open(url).catch(() => undefined);
 const docUrl = (id: number) => `/app/approval/document/${id}`;
@@ -67,9 +68,33 @@ function FlowGroup({ name, activities }: { name: string; activities: ApprovalAct
 export const canAct = (d: ApprovalDocumentDetail) =>
   ["isApprovalWaitingUser", "isAgreementWaitingUser", "isCheckWaitingUser", "isInspectionWaitingUser", "isApprovalDeputy", "isAgreementDeputy"].some((k) => d.actionCheck?.[k]);
 
-export function Approval() {
+function pinnedItem(pin: ApprovalOpenTarget): ApprovalListItem {
+  return {
+    id: pin.id,
+    documentId: pin.documentId,
+    formName: "",
+    title: "",
+    attachCount: 0,
+    commentCount: 0,
+    drafterName: "",
+    drafterDeptName: "",
+    drafterPositionName: "",
+    emergency: false,
+    currentActivityUsers: [],
+    url: `/app/approval/document/${approvalDocId(pin)}`,
+  };
+}
+
+export function Approval({ initial = null }: { initial?: ApprovalOpenTarget | null }) {
   const t = useT();
-  const [box, setBox] = useState<ApprovalBox>("todo");
+  const [box, setBox] = useState<ApprovalBox>(initial?.box ?? "todo");
+  /** Dashboard target kept selected even when it isn't on the loaded page. Cleared once the user picks a box, page, or row. */
+  const pinned = useRef<ApprovalOpenTarget | null>(initial);
+  const seenInitial = useRef<ApprovalOpenTarget | null>(initial);
+  if (initial !== seenInitial.current) {
+    seenInitial.current = initial;
+    pinned.current = initial;
+  }
   const [page, setPage] = useState(0);
   const [kw, setKw] = useState("");
   const [query, setQuery] = useState("");
@@ -120,14 +145,15 @@ export function Approval() {
     void loadList();
   }, [loadList]);
 
-  const openDoc = useCallback(async (item: ApprovalListItem) => {
+  const openDoc = useCallback(async (item: ApprovalListItem, source: "user" | "auto" = "auto") => {
+    if (source === "user") pinned.current = null;
     const n = ++detailReq.current;
     setSel(item);
     setDetail(null);
     setDetailError("");
     setDetailLoading(true);
     try {
-      const d = await api().portal.approvalDoc(item.documentId ?? item.id);
+      const d = await api().portal.approvalDoc(approvalDocId(item));
       if (n === detailReq.current) setDetail(d);
     } catch (e) {
       if (n === detailReq.current) setDetailError((e as Error).message);
@@ -137,7 +163,28 @@ export function Approval() {
   }, []);
 
   useEffect(() => {
+    if (!initial) return;
+    setBox(initial.box);
+    setPage(0);
+    setKw("");
+    setQuery("");
+    void openDoc(pinnedItem(initial));
+  }, [initial, openDoc]);
+
+  useEffect(() => {
     if (!list) return;
+    const pin = pinned.current;
+    if (pin && pin.box === box) {
+      const want = approvalDocId(pin);
+      const match = list.items.find((i) => approvalDocId(i) === want);
+      if (match) {
+        if (!sel || approvalDocId(sel) !== approvalDocId(match)) void openDoc(match);
+        return;
+      }
+      if (sel && (approvalDocId(sel) === want || sel.id === pin.id)) return;
+      void openDoc(pinnedItem(pin));
+      return;
+    }
     const same = sel && list.items.some((i) => (i.documentId ?? i.id) === (sel.documentId ?? sel.id));
     if (same) return;
     const first = list.items[0];
@@ -149,9 +196,10 @@ export function Approval() {
       setDetailError("");
       setDetailLoading(false);
     }
-  }, [list, sel, openDoc]);
+  }, [list, sel, openDoc, box]);
 
   const chooseBox = (b: ApprovalBox) => {
+    pinned.current = null;
     if (b === box && page === 0) {
       // Same box clicked again: deps don't change, so reload explicitly instead of blanking the list.
       void loadList();
@@ -167,8 +215,14 @@ export function Approval() {
 
   const search = (e: React.FormEvent) => {
     e.preventDefault();
+    pinned.current = null;
     setPage(0);
     setQuery(kw.trim());
+  };
+
+  const turnPage = (dir: number) => {
+    pinned.current = null;
+    setPage((p) => Math.max(0, p + dir));
   };
 
   const retryDetail = () => {
@@ -254,7 +308,7 @@ export function Approval() {
             const id = d.documentId ?? d.id;
             const on = sel != null && (sel.documentId ?? sel.id) === id;
             return (
-              <button key={id} className={`approval-item ${on ? "active" : ""}`} onClick={() => void openDoc(d)}>
+              <button key={id} className={`approval-item ${on ? "active" : ""}`} onClick={() => void openDoc(d, "user")}>
                 <div className="approval-item-top">
                   <span className="ellipsis">{d.title || t("(제목 없음)")}</span>
                   {d.emergency && <span className="approval-emergency">{t("긴급")}</span>}
@@ -273,9 +327,9 @@ export function Approval() {
           })}
         </div>
         <div className="approval-pager">
-          <button className="link" disabled={page <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>{t("◀ 이전")}</button>
+          <button className="link" disabled={page <= 0} onClick={() => turnPage(-1)}>{t("◀ 이전")}</button>
           <span className="muted small">{currentPage + 1} / {totalPage}</span>
-          <button className="link" disabled={page + 1 >= totalPage} onClick={() => setPage((p) => p + 1)}>{t("다음 ▶")}</button>
+          <button className="link" disabled={page + 1 >= totalPage} onClick={() => turnPage(1)}>{t("다음 ▶")}</button>
         </div>
       </section>
 
