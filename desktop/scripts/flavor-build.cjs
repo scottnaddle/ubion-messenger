@@ -36,6 +36,17 @@ function buildConfig(env = process.env) {
     shortcutName: p.productName,
   };
   cfg.dmg = { ...cfg.dmg, artifactName: `${prefix}-\${version}-\${arch}.\${ext}` };
+  const iconDir = p.iconDir ? `resources/${p.iconDir}` : "resources";
+  cfg.mac = { ...cfg.mac, icon: `${iconDir}/icon.icns` };
+  cfg.win = { ...cfg.win, icon: `${iconDir}/icon.ico` };
+  cfg.linux = { ...cfg.linux, icon: `${iconDir}/icon-1024.png` };
+  cfg.extraResources = [
+    {
+      from: iconDir,
+      to: iconDir,
+      filter: ["*.png", "*.ico", "*.icns"],
+    },
+  ];
   delete cfg.publish;
   cfg.extraMetadata = {
     description: "다워 (Dawer) — 비공식 클라이언트",

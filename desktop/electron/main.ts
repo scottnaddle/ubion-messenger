@@ -106,7 +106,7 @@ import {
   saveSettings,
   type Settings,
 } from "./settings";
-import { flavorAppId, flavorLabel, flavorProfile, normalizeServerUrl } from "./core/flavor";
+import { flavorAppId, flavorIconName, flavorLabel, flavorProfile, normalizeServerUrl } from "./core/flavor";
 import { botApiBaseUrl, botTenantHeader, coreFeaturesEnabled, hasCoreLicense } from "./core/subscription";
 
 const profile = flavorProfile();
@@ -580,7 +580,9 @@ function applyLanguage() {
 }
 
 function createTray() {
-  const img = nativeImage.createFromPath(resPath(process.platform === "darwin" ? "trayTemplate.png" : "tray.png"));
+  const img = nativeImage.createFromPath(
+    resPath(flavorIconName(profile, process.platform === "darwin" ? "trayTemplate.png" : "tray.png")),
+  );
   if (process.platform === "darwin") img.setTemplateImage(true);
   tray = new Tray(img);
   tray.setToolTip(APP_NAME);
@@ -1098,7 +1100,7 @@ function createWindow() {
     minHeight: 520,
     title: APP_NAME,
     show: false,
-    icon: resPath("icon.png"),
+    icon: resPath(flavorIconName(profile, "icon.png")),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#16181d" : "#ffffff",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     autoHideMenuBar: true,
@@ -2130,7 +2132,7 @@ app.on("window-all-closed", () => {
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = settings.theme;
-  if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath("icon-mac.png")));
+  if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath(flavorIconName(profile, "icon-mac.png"))));
   applyMainLanguage(settings.language, process.env);
   buildAppMenu();
   lockRecord = loadLockRecord();

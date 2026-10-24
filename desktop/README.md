@@ -61,6 +61,7 @@ One codebase, two products. `UBM_FLAVOR` is read when electron-vite starts and b
 | Reactions, polls, status server, 유비온봇 | on when the flavor is ubion (same env flags as before) | off. `hasCoreLicense()` is always false, so Free does not call a bot |
 | Updates | `ubion-messenger-releases` | none |
 | Settings folder | `UBION Messenger` | `Dawer` (does not share the company profile) |
+| App icon | blue UB monogram, `resources/icon.*` | warm 다 mark, `resources/dawer/` |
 
 ```bash
 cd desktop
@@ -70,7 +71,19 @@ npm run dist                # ubion installers
 npm run dist:dawer          # Dawer installers, not published
 ```
 
-다워 shows a one-line notice: **비공식 클라이언트**. It is not the official DaouOffice app and does not use DaouOffice branding. Icons are still the shared set until a Dawer icon is drawn.
+다워 shows a one-line notice: **비공식 클라이언트**. It is not the official DaouOffice app and does not use DaouOffice branding.
+
+### Dawer icon
+
+Dawer builds use `resources/dawer/` for the installer (icns, ico, Linux png), the window icon, the macOS dock icon, and the tray. UBION Messenger keeps `resources/icon.*` and the blue monogram. The two sets are different files, so a side-by-side install does not share a tray or shortcut image.
+
+The mark is the syllable **다** in cream `#FFF7F2` on a rounded square. The background runs from coral `#FF8F6B` (top-left) to warm red `#E24B4B` (bottom-right), the same colors as the in-app 다워 logo. It is not the UBION “U”, and it is not a DaouOffice or LG U+ asset. The menu-bar template is the syllable alone, in black, so macOS can tint it.
+
+Regenerate the rasters (Pillow, plus a Hangul font such as `fonts-wqy-microhei`):
+
+```bash
+python3 desktop/scripts/render-dawer-icons.py
+```
 
 ## Multi-tenant bot (skeleton only)
 

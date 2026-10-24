@@ -1,8 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DaouClient } from "../electron/core/daou-client";
 import {
-  flavorAppId, flavorDefaults, flavorLabel, flavorProfile, normalizeFlavor, normalizeServerUrl, resolveFlavor, SERVER_URL_ERROR,
+  flavorAppId, flavorDefaults, flavorIconName, flavorLabel, flavorProfile, normalizeFlavor, normalizeServerUrl, resolveFlavor, SERVER_URL_ERROR,
 } from "../electron/core/flavor";
 import { navOrder } from "../src/nav";
 import { railShortcut } from "../src/rail-tooltip";
@@ -14,8 +16,11 @@ const { buildConfig } = require("../scripts/flavor-build.cjs") as {
     productName: string;
     publish?: { repo?: string }[];
     extraMetadata?: { author?: string };
+    extraResources?: { from: string; to: string }[];
     nsis: { shortcutName: string };
-    mac: { artifactName: string };
+    mac: { artifactName: string; icon: string };
+    win: { icon: string };
+    linux: { icon: string };
   };
 };
 
@@ -54,10 +59,14 @@ describe("UBM_FLAVOR", () => {
       expect(p.updates).toBe(false);
       expect(p.unofficialNotice).toBe("비공식 클라이언트");
       expect(p.userDataDir).toBe("Dawer");
+      expect(p.iconDir).toBe("dawer");
+      expect(flavorIconName(p, "icon.png")).toBe("dawer/icon.png");
     }
     expect(flavorLabel(flavorProfile("generic"), "ko")).toBe("다워");
     expect(flavorLabel(flavorProfile("generic"), "en")).toBe("Dawer");
     expect(flavorLabel(flavorProfile("ubion"), "ko")).toBe("UBION Messenger");
+    expect(flavorProfile("ubion").iconDir).toBe("");
+    expect(flavorIconName(flavorProfile("ubion"), "icon.png")).toBe("icon.png");
     expect(flavorAppId(flavorProfile("ubion"), false)).toBe("global.ubion.messenger");
     expect(flavorAppId(flavorProfile("ubion"), true)).toBe("global.ubion.messenger.dev");
     expect(flavorDefaults(flavorProfile("generic"))).toEqual({ serverUrl: "", flexAutoLogin: false, autoUpdate: false });
@@ -90,6 +99,10 @@ describe("electron-builder flavor", () => {
     expect(cfg.nsis.shortcutName).toBe("UBION Messenger");
     expect(cfg.mac.artifactName).toBe("UBION-Messenger-${version}-${arch}-mac.${ext}");
     expect(cfg.publish?.[0]?.repo).toBe("ubion-messenger-releases");
+    expect(cfg.mac.icon).toBe("resources/icon.icns");
+    expect(cfg.win.icon).toBe("resources/icon.ico");
+    expect(cfg.linux.icon).toBe("resources/icon-1024.png");
+    expect(cfg.extraResources?.[0]?.from).toBe("resources");
   });
 
   it("ships Dawer under its own app id and does not publish to the ubion feed", () => {
@@ -100,6 +113,28 @@ describe("electron-builder flavor", () => {
     expect(cfg.mac.artifactName).toBe("Dawer-${version}-${arch}-mac.${ext}");
     expect(cfg.publish).toBeUndefined();
     expect(cfg.extraMetadata?.author).toBe("Dawer");
+    expect(cfg.mac.icon).toBe("resources/dawer/icon.icns");
+    expect(cfg.win.icon).toBe("resources/dawer/icon.ico");
+    expect(cfg.linux.icon).toBe("resources/dawer/icon-1024.png");
+    expect(cfg.extraResources?.[0]).toEqual({
+      from: "resources/dawer",
+      to: "resources/dawer",
+      filter: ["*.png", "*.ico", "*.icns"],
+    });
+    const dawer = path.join(__dirname, "../resources/dawer");
+    const png = (name: string) => {
+      const buf = fs.readFileSync(path.join(dawer, name));
+      expect(buf.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+      return { buf, w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+    };
+    expect(png("icon.png")).toMatchObject({ w: 512, h: 512 });
+    expect(png("icon-1024.png")).toMatchObject({ w: 1024, h: 1024 });
+    expect(png("icon-mac.png")).toMatchObject({ w: 1024, h: 1024 });
+    expect(png("tray.png")).toMatchObject({ w: 16, h: 16 });
+    expect(png("trayTemplate.png")).toMatchObject({ w: 16, h: 16 });
+    expect(fs.readFileSync(path.join(dawer, "icon.ico")).subarray(0, 4).toString("hex")).toBe("00000100");
+    expect(fs.readFileSync(path.join(dawer, "icon.icns")).subarray(0, 4).toString()).toBe("icns");
+    expect(Buffer.compare(png("icon.png").buf, fs.readFileSync(path.join(__dirname, "../resources/icon.png")))).not.toBe(0);
     expect(buildConfig({ UBM_FLAVOR: "dawer", UBM_APP_CHANNEL: "dev" }).appId).toBe("global.ubion.dawer.dev");
     expect(buildConfig({ UBM_APP_CHANNEL: "dev" }).appId).toBe("global.ubion.messenger.dev");
   });

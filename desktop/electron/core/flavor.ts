@@ -44,6 +44,8 @@ export type FlavorProfile = {
   /** One-line Korean disclaimer. Empty on the company flavor. */
   unofficialNotice: string;
   artifactPrefix: string;
+  /** Directory under resources/. Empty keeps the UBION icon set at the resources root. */
+  iconDir: string;
 };
 
 const PROFILES = profilesJson as Record<Flavor, FlavorProfile>;
@@ -93,6 +95,12 @@ export function flavorLabel(profile: FlavorProfile, lang: string): string {
 
 export function flavorAppId(profile: FlavorProfile, dev: boolean): string {
   return dev ? profile.appIdDev : profile.appId;
+}
+
+/** Icon file relative to resources/. UBION stays at the root; Dawer is resources/dawer/. */
+export function flavorIconName(profile: FlavorProfile, file: string): string {
+  const dir = profile.iconDir.trim().replace(/^\/+|\/+$/g, "");
+  return dir ? `${dir}/${file}` : file;
 }
 
 export function flavorDefaults(profile: FlavorProfile = flavorProfile()): {

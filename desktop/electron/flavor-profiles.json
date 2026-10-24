@@ -16,7 +16,8 @@
     "enhancedServer": true,
     "updates": true,
     "unofficialNotice": "",
-    "artifactPrefix": "UBION-Messenger"
+    "artifactPrefix": "UBION-Messenger",
+    "iconDir": ""
   },
   "generic": {
     "id": "generic",
@@ -35,6 +36,7 @@
     "enhancedServer": false,
     "updates": false,
     "unofficialNotice": "비공식 클라이언트",
-    "artifactPrefix": "Dawer"
+    "artifactPrefix": "Dawer",
+    "iconDir": "dawer"
   }
 }
