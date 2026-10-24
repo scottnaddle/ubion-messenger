@@ -1,7 +1,8 @@
 /**
  * 내 봇 connector registry. Company tools run in the desktop against the logged-in
- * DaouOffice session. Google connectors stay "connect later" until an OAuth token
- * is stored and an executor is plugged in. Nothing here talks to MiniMax.
+ * DaouOffice session. Google connectors become ready when a secure link is connected
+ * (or when tests store oauthToken on prefs). Real refresh tokens are not stored here.
+ * Nothing here talks to MiniMax.
  */
 
 export type ConnectorAvailability = "session" | "connect-later";
@@ -28,6 +29,9 @@ export type ConnectorDef = {
 };
 
 export type ConnectorPrefs = Record<string, { enabled?: boolean; oauthToken?: string }>;
+
+/** True when that connector's token lives in the desktop safe store, not in prefs. */
+export type ConnectorLinkMap = Readonly<Record<string, boolean>>;
 
 export type ResolvedConnector = ConnectorDef & { state: ConnectorState };
 
@@ -172,14 +176,22 @@ export function saveConnectorPrefs(storage: Pick<Storage, "setItem">, userId: nu
   }
 }
 
-export function connectorState(def: ConnectorDef, pref: { enabled?: boolean; oauthToken?: string } | undefined): ConnectorState {
+export function connectorState(
+  def: ConnectorDef,
+  pref: { enabled?: boolean; oauthToken?: string } | undefined,
+  linked = false,
+): ConnectorState {
   if (pref?.enabled === false) return "off";
-  if (def.availability === "connect-later" && !pref?.oauthToken) return "connect-later";
+  if (def.availability === "connect-later" && !pref?.oauthToken && !linked) return "connect-later";
   return "ready";
 }
 
-export function resolveConnectors(prefs: ConnectorPrefs = {}, catalog: readonly ConnectorDef[] = CONNECTORS): ResolvedConnector[] {
-  return catalog.map((def) => ({ ...def, state: connectorState(def, prefs[def.id]) }));
+export function resolveConnectors(
+  prefs: ConnectorPrefs = {},
+  catalog: readonly ConnectorDef[] = CONNECTORS,
+  links: ConnectorLinkMap = {},
+): ResolvedConnector[] {
+  return catalog.map((def) => ({ ...def, state: connectorState(def, prefs[def.id], links[def.id] === true) }));
 }
 
 /** Schemas the proxy may offer the model. Writes stay gated and are not advertised. */

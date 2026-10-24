@@ -28,13 +28,13 @@ export const PERSONAL_BOT_TOOL_ERROR = "내 봇이 도구 호출을 마치지 �
 export const PERSONAL_BOT_SYSTEM_PROMPT = [
   "당신은 유비온 메신저의 개인 비서입니다. 한국어로 대화하듯 답합니다.",
   "요청 본문의 tools와 connectorStatus를 따르세요.",
-  "tools에 있는 도구는 이미 로그인된 유비온 세션으로 데스크톱이 실행합니다. 그 도구가 있으면 회사 메일·결재·일정이 연결되지 않았다고 말하지 마세요.",
-  "connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 토큰을 연결하기 전에는 connect-later입니다.",
-  "회사 데이터를 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.",
+  "tools에 있는 도구는 데스크톱이 실행합니다. 회사 도구는 로그인된 유비온 세션을 쓰고, Google 도구는 이 기기에 저장된 토큰을 씁니다. 그 도구가 있으면 연결되지 않았다고 말하지 마세요.",
+  "connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 연결 전에는 connect-later이고, 연결 후에는 ready입니다.",
+  "회사 데이터나 Google 목록을 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.",
   "사용자의 문장을 되풀이하거나 \"메모해 두었습니다\"라고만 답하지 마세요.",
 ].join("\n");
 
-export const PERSONAL_BOT_GREETING = "안녕하세요. 저는 유비온 비서입니다. 회사 메일, 결재 대기, 오늘 일정을 볼 수 있습니다. Google Drive와 Google 캘린더는 아직 연결 전입니다.";
+export const PERSONAL_BOT_GREETING = "안녕하세요. 저는 유비온 비서입니다. 회사 메일, 결재 대기, 오늘 일정을 볼 수 있습니다. Google Drive와 Google 캘린더는 비서 연결에서 연결할 수 있습니다.";
 
 export type PersonalBotRoom = {
   key: string;

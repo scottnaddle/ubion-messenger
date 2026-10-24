@@ -95,6 +95,15 @@ import {
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import { guessMime } from "./core/mime";
 import { buildMediaResponse } from "./core/media-response";
+import { GoogleConnectorHost } from "./core/google-session";
+import {
+  emptyTokenFile,
+  isGoogleConnectorId,
+  parseTokenFile,
+  resolveGoogleClientConfig,
+  type GoogleConnectorId,
+  type GoogleTokenFile,
+} from "./core/google-oauth";
 import {
   accountKey, isWebLoginNavAllowed, isWebLoginSuccessUrl, markWebAccount, planLogin, unmarkWebAccount,
   webLoginUrl, WEB_LOGIN_MESSAGE,
@@ -280,6 +289,61 @@ const updater = new Updater(() => win);
 
 const UBM_BASE_URL = () => process.env.UBM_BOT_API_URL || "https://bot.ubion.global";
 const ubmTokenFile = () => path.join(app.getPath("userData"), "ubm-token.bin");
+const googleTokenFile = () => path.join(app.getPath("userData"), "google-connectors.bin");
+const googleOAuthFile = () => process.env.UBM_GOOGLE_OAUTH_FILE || path.join(app.getPath("userData"), "google-oauth.json");
+
+function readGoogleClientConfig() {
+  let fileText: string | null = null;
+  try {
+    fileText = fs.readFileSync(googleOAuthFile(), "utf8");
+  } catch {
+    fileText = null;
+  }
+  return resolveGoogleClientConfig({
+    envClientId: process.env.UBM_GOOGLE_CLIENT_ID,
+    envClientSecret: process.env.UBM_GOOGLE_CLIENT_SECRET,
+    fileText,
+  });
+}
+
+function readGoogleTokens(): GoogleTokenFile {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return emptyTokenFile();
+    return parseTokenFile(safeStorage.decryptString(fs.readFileSync(googleTokenFile())));
+  } catch {
+    return emptyTokenFile();
+  }
+}
+
+function writeGoogleTokens(file: GoogleTokenFile): void {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("이 기기에서 토큰을 안전하게 저장할 수 없습니다.");
+  const target = googleTokenFile();
+  fs.writeFileSync(target, safeStorage.encryptString(JSON.stringify(file)), { mode: 0o600 });
+  try {
+    fs.chmodSync(target, 0o600);
+  } catch {
+    /* best effort */
+  }
+}
+
+const googleHost = new GoogleConnectorHost({
+  config: readGoogleClientConfig,
+  read: readGoogleTokens,
+  write: writeGoogleTokens,
+  openBrowser: (url) => shell.openExternal(url),
+  fetchImpl: (url, init) => fetch(url, init),
+});
+
+function googleUser(userId: unknown): number {
+  const n = Number(userId);
+  if (!Number.isSafeInteger(n) || n <= 0) throw new Error("사용자를 확인하지 못했습니다.");
+  return n;
+}
+
+function googleId(id: unknown): GoogleConnectorId {
+  if (!isGoogleConnectorId(id)) throw new Error("알 수 없는 Google 연결입니다.");
+  return id;
+}
 
 /** OS-keychain-backed persistence for the UBION token; without safeStorage the token stays in memory only. */
 const ubmTokenStore = {
@@ -2007,6 +2071,11 @@ function registerIpc() {
   });
   handle("portal:approvalCounts", () => core.portal.approvalCounts());
   handle("portal:calendarToday", () => core.portal.todayEvents());
+  handle("google:status", (userId: unknown) => googleHost.status(googleUser(userId)));
+  handle("google:connect", (userId: unknown, id: unknown) => googleHost.connect(googleUser(userId), googleId(id)));
+  handle("google:disconnect", (userId: unknown, id: unknown) => googleHost.disconnect(googleUser(userId), googleId(id)));
+  handle("google:driveList", (userId: unknown, args: unknown) => googleHost.driveList(googleUser(userId), (args && typeof args === "object" ? args : {}) as { query?: unknown; limit?: unknown }));
+  handle("google:calendarToday", (userId: unknown) => googleHost.calendarToday(googleUser(userId)));
   handle("portal:mailUpload", (name: unknown, data: unknown, mime: unknown) => core.portal.mailUpload(name, data, mime));
   handle("portal:mailCaps", () => core.portal.mailCaps());
   handle("portal:mailDelete", (folder: unknown, uids: unknown) => core.portal.mailDelete(folder, uids));

@@ -53,6 +53,9 @@ describe("PersonalBotChat", () => {
     await act(async () => { gear!.click(); });
     expect(host.textContent).toContain("회사 메일");
     expect(host.textContent).toContain("나중에 연결");
+    const connect = [...host.querySelectorAll("button")].find((button) => button.textContent === "연결");
+    await act(async () => { connect!.click(); });
+    expect(host.textContent).toContain("Google 연결은 앱에서만 사용할 수 있습니다.");
     await act(async () => { gear!.click(); });
 
     const ta = host.querySelector("textarea")!;

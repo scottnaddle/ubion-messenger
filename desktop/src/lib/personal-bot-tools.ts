@@ -129,7 +129,12 @@ export async function executePersonalBotTool(call: PersonalBotToolCall, ctx: Too
       return pack(await runUbion(call.name, call.arguments, ctx.ubion));
     }
     return fail("not-plugged", `${found.connector.label} 실행기가 아직 연결되지 않았습니다.`);
-  } catch {
+  } catch (e) {
+    if (extra) {
+      const message = e instanceof Error ? e.message : "";
+      const safe = message && !/ya29\.|refresh_token|Bearer /i.test(message) ? message.slice(0, 180) : "도구를 실행하지 못했습니다.";
+      return fail("tool", safe);
+    }
     return fail("session", "회사 세션에서 가져오지 못했습니다.");
   }
 }

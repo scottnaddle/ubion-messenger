@@ -416,6 +416,20 @@ export function installMockIfNeeded() {
       }),
       flexPending: async () => ({ count: 3, at: Date.now() }),
     },
+    google: {
+      status: async () => ({
+        connectors: [
+          { id: "google-drive" as const, connected: false },
+          { id: "google-calendar" as const, connected: false },
+        ],
+      }),
+      connect: async () => {
+        throw new Error("Google 클라이언트 ID가 없습니다. google-oauth.json 또는 UBM_GOOGLE_CLIENT_ID를 설정하세요.");
+      },
+      disconnect: async () => ({ connected: false as const }),
+      driveList: async () => ({ ok: false as const, code: "connect-later", message: "Google Drive는 아직 연결 전입니다." }),
+      calendarToday: async () => ({ ok: false as const, code: "connect-later", message: "Google Calendar는 아직 연결 전입니다." }),
+    },
     pathForFile: () => "",
     platform: new URLSearchParams(location.search).get("platform") || "darwin",
   };

@@ -144,6 +144,15 @@ const api = {
       call<{ ok: true }>("portal:approvalAction", kind, id, comment),
     flexPending: (force?: boolean) => call<{ count: number | null; at: number; error?: string }>("portal:flexPending", force),
   },
+  google: {
+    status: (userId: number) => call<{ connectors: { id: "google-drive" | "google-calendar"; connected: boolean; account?: string }[] }>("google:status", userId),
+    connect: (userId: number, id: "google-drive" | "google-calendar") => call<{ connected: true; account?: string }>("google:connect", userId, id),
+    disconnect: (userId: number, id: "google-drive" | "google-calendar") => call<{ connected: false }>("google:disconnect", userId, id),
+    driveList: (userId: number, args?: { query?: string; limit?: number }) =>
+      call<{ ok: true; files: { id: string; name: string; mimeType: string; modifiedTime?: string }[] } | { ok: false; code: string; message: string }>("google:driveList", userId, args),
+    calendarToday: (userId: number) =>
+      call<{ ok: true; items: { summary: string; start: string; end: string; allDay: boolean; location: string }[] } | { ok: false; code: string; message: string }>("google:calendarToday", userId),
+  },
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   platform: process.platform,
 };

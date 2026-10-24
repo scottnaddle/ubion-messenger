@@ -4,11 +4,13 @@ import { isSendEnter } from "../lib/composer";
 import { timeLabel } from "../lib/format";
 import { Avatar, Icon } from "./ui";
 import {
+  CONNECTORS,
   connectorStatusList,
   advertisedTools,
   loadConnectorPrefs,
   resolveConnectors,
   saveConnectorPrefs,
+  type ConnectorLinkMap,
   type ConnectorPrefs,
 } from "../lib/connectors";
 import { executePersonalBotTool, ubionFromBridge } from "../lib/personal-bot-tools";
@@ -39,6 +41,33 @@ function connectorStateLabel(t: (key: string) => string, state: "ready" | "off" 
   if (state === "ready") return t("사용 중");
   if (state === "off") return t("꺼짐");
   return t("나중에 연결");
+}
+
+type GoogleLink = { connected: boolean; account?: string };
+type GoogleConnectorId = "google-drive" | "google-calendar";
+
+function linkFlags(links: Record<string, GoogleLink>): ConnectorLinkMap {
+  const flags: Record<string, boolean> = {};
+  for (const [id, link] of Object.entries(links)) {
+    if (link.connected) flags[id] = true;
+  }
+  return flags;
+}
+
+function googleBridge() {
+  return typeof window === "undefined" ? undefined : window.ubion?.google;
+}
+
+function googleExecutors(userId: number): Record<string, (args: Record<string, unknown>) => Promise<unknown>> {
+  const google = googleBridge();
+  if (!google) return {};
+  return {
+    google_drive_list: (args: Record<string, unknown>) => google.driveList(userId, {
+      query: typeof args.query === "string" ? args.query : undefined,
+      limit: typeof args.limit === "number" ? args.limit : undefined,
+    }),
+    google_calendar_today: () => google.calendarToday(userId),
+  };
 }
 
 function wireTurn(message: PersonalBotWireMessage, id: string): PersonalBotTurn {
@@ -75,6 +104,9 @@ export function PersonalBotChat({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [prefs, setPrefs] = useState<ConnectorPrefs>(() => loadConnectorPrefs(store, userId));
+  const [links, setLinks] = useState<Record<string, GoogleLink>>({});
+  const [busyId, setBusyId] = useState("");
+  const [connectError, setConnectError] = useState("");
   const [connectOpen, setConnectOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -87,10 +119,22 @@ export function PersonalBotChat({
     abortRef.current?.abort();
     setTurns(loadPersonalBotTurns(store, userId));
     setPrefs(loadConnectorPrefs(store, userId));
+    setLinks({});
+    setBusyId("");
+    setConnectError("");
     setDraft("");
     setSending(false);
     setError("");
     setConnectOpen(false);
+    let cancel = false;
+    const google = googleBridge();
+    if (google) {
+      void google.status(userId).then((status) => {
+        if (cancel) return;
+        setLinks(Object.fromEntries(status.connectors.map((item) => [item.id, { connected: item.connected, account: item.account }])));
+      }).catch(() => { /* stay connect-later until the next attempt */ });
+    }
+    return () => { cancel = true; };
   }, [store, userId]);
 
   useEffect(() => {
@@ -123,7 +167,7 @@ export function PersonalBotChat({
     setTurns(next);
     const ac = new AbortController();
     abortRef.current = ac;
-    const resolved = resolveConnectors(prefs);
+    const resolved = resolveConnectors(prefs, CONNECTORS, linkFlags(links));
     const pending = client.run
       ? client.run({
         userId,
@@ -134,6 +178,7 @@ export function PersonalBotChat({
         execute: (call) => executePersonalBotTool(call, {
           resolved,
           ubion: ubionFromBridge(typeof window === "undefined" ? null : window.ubion),
+          extra: googleExecutors(userId),
         }),
       }).then((out) => out.added)
       : client.reply({ userId, messages: toPersonalBotWire(next), signal: ac.signal }).then((reply) => [
@@ -153,6 +198,36 @@ export function PersonalBotChat({
     });
   };
 
+  const applyStatus = (status: { connectors: { id: string; connected: boolean; account?: string }[] }) => {
+    setLinks(Object.fromEntries(status.connectors.map((item) => [item.id, { connected: item.connected, account: item.account }])));
+  };
+
+  const connectGoogle = (id: GoogleConnectorId) => {
+    const google = googleBridge();
+    if (!google) {
+      setConnectError(t("Google 연결은 앱에서만 사용할 수 있습니다."));
+      return;
+    }
+    if (busyId) return;
+    setBusyId(id);
+    setConnectError("");
+    void google.connect(userId, id).then(() => google.status(userId)).then(applyStatus).catch((e: unknown) => {
+      const message = e instanceof Error && e.message ? e.message : t("Google 연결에 실패했습니다.");
+      setConnectError(message);
+    }).finally(() => setBusyId((current) => (current === id ? "" : current)));
+  };
+
+  const disconnectGoogle = (id: GoogleConnectorId) => {
+    const google = googleBridge();
+    if (!google || busyId) return;
+    setBusyId(id);
+    setConnectError("");
+    void google.disconnect(userId, id).then(() => google.status(userId)).then(applyStatus).catch((e: unknown) => {
+      const message = e instanceof Error && e.message ? e.message : t("Google 연결에 실패했습니다.");
+      setConnectError(message);
+    }).finally(() => setBusyId((current) => (current === id ? "" : current)));
+  };
+
   return (
     <section className="chat personal-bot" aria-label={t("내 봇")}>
       <header className="chat-head">
@@ -167,22 +242,40 @@ export function PersonalBotChat({
       </header>
       {connectOpen && (
         <div className="bot-connectors" role="dialog" aria-label={t("비서 연결")}>
-          {resolveConnectors(prefs).map((connector) => (
-            <label key={connector.id} className="bot-conn">
-              <span>{connectorLabel(t, connector.id)}</span>
-              <span className="muted tiny">{connectorStateLabel(t, connector.state)}</span>
-              <input
-                type="checkbox"
-                checked={connector.state !== "off"}
-                onChange={() => {
-                  const enabled = connector.state === "off";
-                  const next = { ...prefs, [connector.id]: { ...prefs[connector.id], enabled } };
-                  setPrefs(next);
-                  saveConnectorPrefs(store, userId, next);
-                }}
-              />
-            </label>
-          ))}
+          {connectError && <div className="banner bad" role="alert">{connectError}</div>}
+          {resolveConnectors(prefs, CONNECTORS, linkFlags(links)).map((connector) => {
+            const linked = links[connector.id];
+            const googleId = connector.id === "google-drive" || connector.id === "google-calendar" ? connector.id : null;
+            const stateText = googleId && connector.state === "ready" ? t("연결됨") : connectorStateLabel(t, connector.state);
+            const account = googleId && linked?.account ? ` · ${linked.account}` : "";
+            return (
+              <div key={connector.id} className="bot-conn">
+                <span>{connectorLabel(t, connector.id)}</span>
+                <span className="muted tiny">{stateText}{account}</span>
+                {googleId && connector.state === "connect-later" && (
+                  <button type="button" className="bot-conn-btn" disabled={!!busyId} onClick={() => connectGoogle(googleId)}>
+                    {busyId === googleId ? t("연결 중") : t("연결")}
+                  </button>
+                )}
+                {googleId && linked?.connected && (
+                  <button type="button" className="bot-conn-btn" disabled={!!busyId} onClick={() => disconnectGoogle(googleId)}>
+                    {t("연결 해제")}
+                  </button>
+                )}
+                <input
+                  type="checkbox"
+                  aria-label={connectorLabel(t, connector.id)}
+                  checked={connector.state !== "off"}
+                  onChange={() => {
+                    const enabled = connector.state === "off";
+                    const next = { ...prefs, [connector.id]: { ...prefs[connector.id], enabled } };
+                    setPrefs(next);
+                    saveConnectorPrefs(store, userId, next);
+                  }}
+                />
+              </div>
+            );
+          })}
         </div>
       )}
       <div className="chat-body">

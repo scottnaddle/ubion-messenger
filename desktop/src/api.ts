@@ -195,6 +195,14 @@ export type Bridge = {
     approvalAction(kind: "approve" | "return", id: number | string, comment?: string): Promise<{ ok: true }>;
     flexPending(force?: boolean): Promise<{ count: number | null; at: number; error?: string }>;
   };
+  /** Google Drive / Calendar for 내 봇. Tokens stay in the main process. */
+  google: {
+    status(userId: number): Promise<{ connectors: { id: "google-drive" | "google-calendar"; connected: boolean; account?: string }[] }>;
+    connect(userId: number, id: "google-drive" | "google-calendar"): Promise<{ connected: true; account?: string }>;
+    disconnect(userId: number, id: "google-drive" | "google-calendar"): Promise<{ connected: false }>;
+    driveList(userId: number, args?: { query?: string; limit?: number }): Promise<{ ok: true; files: { id: string; name: string; mimeType: string; modifiedTime?: string }[] } | { ok: false; code: string; message: string }>;
+    calendarToday(userId: number): Promise<{ ok: true; items: { summary: string; start: string; end: string; allDay: boolean; location: string }[] } | { ok: false; code: string; message: string }>;
+  };
   pathForFile(f: File): string;
   platform: string;
 };

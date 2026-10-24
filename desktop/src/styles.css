@@ -507,6 +507,9 @@ input, textarea, select { font: inherit; color: inherit; }
 .bot-connectors { margin: 0 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); box-shadow: var(--shadow); padding: 6px 10px; }
 .bot-conn { display: flex; align-items: center; gap: 8px; padding: 6px 2px; font-size: .9em; }
 .bot-conn .tiny { margin-left: auto; }
+.bot-conn-btn { border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 8px; padding: 2px 8px; font-size: .85em; cursor: pointer; }
+.bot-conn-btn:disabled { opacity: .6; cursor: default; }
+.bot-connectors .banner { margin: 4px 0 6px; }
 .video-frame { min-width: 160px; min-height: 110px; background: #111; display: grid; place-items: center; }
 .play-ic { position: absolute; inset: 0; margin: auto; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; font-size: 18px; padding-left: 3px; }
 .dur { position: absolute; right: 6px; bottom: 6px; background: rgba(0,0,0,.65); color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 4px; }

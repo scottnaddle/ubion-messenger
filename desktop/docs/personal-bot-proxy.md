@@ -1,6 +1,6 @@
-# 내 봇 proxy contract (1.1.3)
+# 내 봇 proxy contract (1.1.4)
 
-Desktop build **1.1.3** calls this route on the Mac mini proxy. The app does not hold a MiniMax key. The proxy does **not** receive DaouOffice passwords, cookies, or session tokens. Company tools run in the desktop.
+Desktop build **1.1.4** calls this route on the Mac mini proxy. The app does not hold a MiniMax key. The proxy does **not** receive DaouOffice passwords, cookies, or session tokens, and it does not receive Google OAuth tokens. Company tools and Google tools both run in the desktop. Google setup is in `desktop/docs/google-connectors.md`.
 
 Room AI is unchanged: `POST /v1/room-ai/run`.
 
@@ -69,9 +69,9 @@ Use **MiniMax-M3.1-Flash**. Prepend this system prompt (the desktop does not sen
 ```
 당신은 유비온 메신저의 개인 비서입니다. 한국어로 대화하듯 답합니다.
 요청 본문의 tools와 connectorStatus를 따르세요.
-tools에 있는 도구는 이미 로그인된 유비온 세션으로 데스크톱이 실행합니다. 그 도구가 있으면 회사 메일·결재·일정이 연결되지 않았다고 말하지 마세요.
-connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 토큰을 연결하기 전에는 connect-later입니다.
-회사 데이터를 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.
+tools에 있는 도구는 데스크톱이 실행합니다. 회사 도구는 로그인된 유비온 세션을 쓰고, Google 도구는 이 기기에 저장된 토큰을 씁니다. 그 도구가 있으면 연결되지 않았다고 말하지 마세요.
+connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 연결 전에는 connect-later이고, 연결 후에는 ready입니다.
+회사 데이터나 Google 목록을 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.
 사용자의 문장을 되풀이하거나 "메모해 두었습니다"라고만 답하지 마세요.
 ```
 
@@ -82,9 +82,9 @@ Keep the MiniMax key on the proxy. Pass `tools` through to the model. If the mod
 ```python
 PERSONAL_BOT_SYSTEM = """당신은 유비온 메신저의 개인 비서입니다. 한국어로 대화하듯 답합니다.
 요청 본문의 tools와 connectorStatus를 따르세요.
-tools에 있는 도구는 이미 로그인된 유비온 세션으로 데스크톱이 실행합니다. 그 도구가 있으면 회사 메일·결재·일정이 연결되지 않았다고 말하지 마세요.
-connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 토큰을 연결하기 전에는 connect-later입니다.
-회사 데이터를 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.
+tools에 있는 도구는 데스크톱이 실행합니다. 회사 도구는 로그인된 유비온 세션을 쓰고, Google 도구는 이 기기에 저장된 토큰을 씁니다. 그 도구가 있으면 연결되지 않았다고 말하지 마세요.
+connectorStatus가 off 또는 connect-later인 서비스만 아직 쓸 수 없다고 말하세요. Google Drive와 Google Calendar는 연결 전에는 connect-later이고, 연결 후에는 ready입니다.
+회사 데이터나 Google 목록을 보려면 최종 답 대신 toolCalls를 반환하세요. 도구 결과를 지어내지 마세요. 메일 발송과 결재 승인/반려는 하지 않습니다.
 사용자의 문장을 되풀이하거나 "메모해 두었습니다"라고만 답하지 마세요."""
 
 @app.post("/v1/personal-bot/chat")
@@ -113,9 +113,9 @@ Defined in `desktop/src/lib/connectors.ts`. Per-user toggles: `ubm.personal-bot.
 | `ubion-mail` | ready | `ubion_mail_list` | Inbox list via the logged-in session. `ubion_mail_send` exists but is a gated write and is not advertised. |
 | `ubion-approval` | ready | `ubion_approval_list` | `todo` or `upcoming` only. No approve/reject. |
 | `ubion-calendar` | ready | `ubion_calendar_today` | Today's Daou calendar. |
-| `google-drive` | connect-later | `google_drive_list` once an OAuth token is stored | Toggle off sets `off`. |
-| `google-calendar` | connect-later | `google_calendar_today` once an OAuth token is stored | Same. |
+| `google-drive` | connect-later until **연결** | `google_drive_list` when the row is `ready` | Desktop PKCE. Toggle off sets `off`. |
+| `google-calendar` | connect-later until **연결** | `google_calendar_today` when the row is `ready` | Same. Read-only. |
 
-To plug a real Google or MCP executor later, store `oauthToken` on that connector's prefs (state becomes `ready`) and pass a function in `executePersonalBotTool`'s `extra` map under the tool name. The chat loop does not change. Until then the UI says **나중에 연결** and those tools are not sent to the model.
+Google refresh tokens stay in the desktop safe store (`google-connectors.bin`). They are not placed in `ubm.personal-bot.connectors.v1:<userId>` and they are not posted to this route. `executePersonalBotTool`'s `extra` map still runs `google_drive_list` and `google_calendar_today` on the desktop. See `desktop/docs/google-connectors.md` for the Cloud Console client id.
 
-Restart the proxy after updating `server.py`, then rebuild the Mac app at **1.1.3**.
+Restart the proxy after updating `server.py` if you have not picked up the tool loop yet, then rebuild the Mac app at **1.1.4**. The proxy does not need a Google client id.

@@ -74,6 +74,17 @@ describe("connector registry", () => {
     expect(google.code).toBe("connect-later");
   });
 
+  it("treats a secure link as ready without writing the token into prefs", async () => {
+    const resolved = resolveConnectors({}, undefined, { "google-calendar": true });
+    expect(connectorStatusList(resolved).find((item) => item.id === "google-calendar")?.state).toBe("ready");
+    expect(advertisedTools(resolved).map((tool) => tool.name)).toContain("google_calendar_today");
+    const store = memory();
+    saveConnectorPrefs(store, 7, { "google-calendar": { enabled: true } });
+    expect(store.getItem("ubm.personal-bot.connectors.v1:7")).not.toContain("refresh");
+    const off = resolveConnectors({ "google-calendar": { enabled: false } }, undefined, { "google-calendar": true });
+    expect(connectorStatusList(off).find((item) => item.id === "google-calendar")?.state).toBe("off");
+  });
+
   it("runs a plugged Google executor only after a token is stored", async () => {
     const prefs: ConnectorPrefs = { "google-drive": { enabled: true, oauthToken: "token" } };
     const resolved = resolveConnectors(prefs);
