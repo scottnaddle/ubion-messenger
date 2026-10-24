@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LOCAL_MENU, PortalService, STATIC_MENU, isAllowedPortalPath, menuTarget, parseMenu } from "../electron/core/portal";
+import { LOCAL_MENU, PortalService, STATIC_MENU, isAllowedPortalPath, localMenu, menuTarget, parseMenu, withoutUbionOnlyMenu } from "../electron/core/portal";
 import { menuBadge, menuIcon } from "../src/components/Menu";
 import * as F from "./fixtures/portal";
 
@@ -65,5 +65,16 @@ describe("PortalService.menu", () => {
     const r = await mk(false).svc.menu(BASE);
     expect(r.source).toBe("static");
     expect(r.items.slice(0, STATIC_MENU.length)).toEqual(STATIC_MENU);
+  });
+  it("generic flavor omits flex from the local menu and flex.team links", async () => {
+    vi.stubEnv("UBM_FLAVOR", "generic");
+    try {
+      expect(localMenu().some((m) => m.appName === "flex")).toBe(false);
+      const r = await mk(true).svc.menu(BASE);
+      expect(r.items.some((m) => m.appName === "flex" || m.url.includes("flex.team"))).toBe(false);
+      expect(withoutUbionOnlyMenu([{ id: "x", name: "flex", appName: "flex", url: "https://flex.team/home", custom: true, target: "portal" }], false)).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

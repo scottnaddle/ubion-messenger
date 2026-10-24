@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { autoUpdater } from "electron-updater";
+import { flavorProfile } from "./core/flavor";
 import { checkMacUpdate, RELEASES_PAGE, type UpdateInfo } from "./core/update-check";
 
 export type UpdateStatus =
@@ -54,12 +55,16 @@ export class Updater {
   schedule(enabled: boolean) {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    if (!enabled || !this.supported) return;
+    if (!flavorProfile().updates || !enabled || !this.supported) return;
     setTimeout(() => void this.check(), 15_000);
     this.timer = setInterval(() => void this.check(), FOUR_HOURS);
   }
 
   async check(): Promise<UpdateStatus> {
+    if (!flavorProfile().updates) {
+      this.set({ state: "error", current: app.getVersion(), message: "이 빌드에는 업데이트 서버가 없습니다" });
+      return this.status;
+    }
     if (!this.supported) {
       this.set({ state: "error", current: app.getVersion(), message: "개발 실행에서는 업데이트를 확인하지 않습니다" });
       return this.status;

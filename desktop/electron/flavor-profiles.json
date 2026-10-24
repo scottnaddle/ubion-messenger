@@ -1,0 +1,40 @@
+{
+  "ubion": {
+    "id": "ubion",
+    "productName": "UBION Messenger",
+    "productNameKo": "UBION Messenger",
+    "logoMark": "U",
+    "logoClass": "",
+    "appId": "global.ubion.messenger",
+    "appIdDev": "global.ubion.messenger.dev",
+    "userDataDir": "UBION Messenger",
+    "defaultServerUrl": "https://coco.ubion.co.kr",
+    "serverUrlFirstClass": false,
+    "flex": true,
+    "flexEmailDomain": "ubion.co.kr",
+    "defaultBotApiUrl": "https://bot.ubion.global",
+    "enhancedServer": true,
+    "updates": true,
+    "unofficialNotice": "",
+    "artifactPrefix": "UBION-Messenger"
+  },
+  "generic": {
+    "id": "generic",
+    "productName": "Dawer",
+    "productNameKo": "다워",
+    "logoMark": "다",
+    "logoClass": "dawer",
+    "appId": "global.ubion.dawer",
+    "appIdDev": "global.ubion.dawer.dev",
+    "userDataDir": "Dawer",
+    "defaultServerUrl": "",
+    "serverUrlFirstClass": true,
+    "flex": false,
+    "flexEmailDomain": null,
+    "defaultBotApiUrl": "",
+    "enhancedServer": false,
+    "updates": false,
+    "unofficialNotice": "비공식 클라이언트",
+    "artifactPrefix": "Dawer"
+  }
+}

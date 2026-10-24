@@ -21,7 +21,12 @@
     "core:live": "tsx scripts/live-smoke.ts",
     "shot": "electron-vite build && node scripts/shot.cjs",
     "smoke:bundle": "esbuild scripts/live-smoke.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist-smoke/live-smoke.cjs",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "dev:dawer": "UBM_FLAVOR=generic electron-vite dev",
+    "build:dawer": "UBM_FLAVOR=generic electron-vite build",
+    "dist:dawer": "UBM_FLAVOR=generic electron-vite build && UBM_FLAVOR=generic electron-builder --publish never",
+    "dist:dawer:win": "UBM_FLAVOR=generic electron-vite build && UBM_FLAVOR=generic electron-builder --win nsis --x64 --publish never",
+    "dist:dawer:mac": "UBM_FLAVOR=generic electron-vite build && UBM_FLAVOR=generic electron-builder --mac dmg zip --arm64 --x64 --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -45,95 +50,5 @@
     "typescript": "~5.7.2",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"
-  },
-  "build": {
-    "appId": "global.ubion.messenger",
-    "productName": "UBION Messenger",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "out/main/**",
-      "out/preload/**",
-      "out/renderer/**",
-      "package.json"
-    ],
-    "asar": true,
-    "mac": {
-      "category": "public.app-category.social-networking",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64",
-            "x64"
-          ]
-        }
-      ],
-      "identity": null,
-      "hardenedRuntime": false,
-      "icon": "resources/icon.icns",
-      "artifactName": "UBION-Messenger-${version}-${arch}-mac.${ext}",
-      "extendInfo": {
-        "NSUserNotificationAlertStyle": "alert"
-      }
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "resources/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "artifactName": "UBION-Messenger-${version}-Setup.${ext}",
-      "perMachine": false,
-      "createDesktopShortcut": true,
-      "shortcutName": "UBION Messenger"
-    },
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "scottnaddle",
-        "repo": "ubion-messenger-releases",
-        "releaseType": "release"
-      }
-    ],
-    "artifactName": "UBION-Messenger-${version}-${os}-${arch}.${ext}",
-    "extraResources": [
-      {
-        "from": "resources",
-        "to": "resources",
-        "filter": [
-          "*.png",
-          "*.ico",
-          "*.icns"
-        ]
-      }
-    ],
-    "dmg": {
-      "artifactName": "UBION-Messenger-${version}-${arch}.${ext}"
-    },
-    "linux": {
-      "target": [
-        "AppImage"
-      ],
-      "icon": "resources/icon-1024.png",
-      "category": "Network"
-    },
-    "compression": "normal"
   }
 }

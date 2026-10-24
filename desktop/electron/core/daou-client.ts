@@ -21,6 +21,7 @@ import {
 } from "./zoom";
 import { classify, diagLine, diagnose, isPendingRedirect, userMessage } from "./login-errors";
 import { fromElectronCookie, needsWebLogin, onSessionExpired, WEB_LOGIN_MESSAGE, type ElectronCookieIn } from "./web-login";
+import { flavorProfile } from "./flavor";
 
 type ReqInit = {
   method?: string;
@@ -79,8 +80,11 @@ export class DaouClient {
   /** Called once when a web session expires (401). */
   onAuthLost: (() => void) | null = null;
 
-  constructor(baseUrl = "https://coco.ubion.co.kr") {
-    this.baseUrl = baseUrl.replace(/\/$/, "");
+  constructor(baseUrl?: string) {
+    // Undefined → flavor default (coco for ubion, blank for generic).
+    // An explicit "" stays blank and is not rewritten to the company host.
+    const raw = baseUrl === undefined ? flavorProfile().defaultServerUrl : baseUrl;
+    this.baseUrl = String(raw ?? "").replace(/\/$/, "");
   }
 
   // ---------- auth ----------

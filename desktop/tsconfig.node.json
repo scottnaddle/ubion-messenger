@@ -8,9 +8,10 @@
     "types": ["node"],
     "strict": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     "outDir": "out",
     "declaration": true,
     "esModuleInterop": true
   },
-  "include": ["electron/**/*", "scripts/**/*", "src/lib/mention.ts", "src/lib/bot-status.ts", "src/lib/i18n-core.ts", "src/lib/global-search.ts", "src/lib/markers.ts", "src/lib/bot-summary.ts", "src/lib/locales/*.ts", "electron.vite.config.ts"]
+  "include": ["electron/**/*", "electron/flavor-profiles.json", "scripts/**/*", "src/lib/mention.ts", "src/lib/bot-status.ts", "src/lib/i18n-core.ts", "src/lib/global-search.ts", "src/lib/markers.ts", "src/lib/bot-summary.ts", "src/lib/locales/*.ts", "electron.vite.config.ts"]
 }

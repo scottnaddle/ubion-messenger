@@ -4,6 +4,7 @@ import http from "node:http";
 import https from "node:https";
 
 /** OpenGraph link preview, fetched in the main process. No cookies are ever sent. */
+import { flavorProfile } from "./flavor";
 import type { LinkPreview } from "./types";
 export type { LinkPreview };
 
@@ -104,7 +105,7 @@ function getOnce(url: URL, ip: string, opts: FetchOpts, accept = /text\/html|app
         method: "GET",
         // pin the validated IP (prevents DNS rebinding between check and connect)
         lookup: (_h: string, o: any, cb: any) => (o && o.all ? cb(null, [{ address: ip, family: net.isIPv6(ip) ? 6 : 4 }]) : cb(null, ip, net.isIPv6(ip) ? 6 : 4)),
-        headers: { "user-agent": "Mozilla/5.0 (UBION Messenger link preview)", accept: "text/html,application/xhtml+xml", "accept-language": "ko,en;q=0.8" },
+        headers: { "user-agent": `Mozilla/5.0 (${flavorProfile().productName} link preview)`, accept: "text/html,application/xhtml+xml", "accept-language": "ko,en;q=0.8" },
         timeout: timeoutMs,
       } as any,
       (res) => {

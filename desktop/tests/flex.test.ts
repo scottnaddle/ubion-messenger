@@ -24,6 +24,8 @@ describe("flex helpers", () => {
   it("builds company email from portal username", () => {
     expect(flexEmailFromUsername("cwdaddy")).toBe("cwdaddy@ubion.co.kr");
     expect(flexEmailFromUsername("a@b.com")).toBe("a@b.com");
+    expect(flexEmailFromUsername("cwdaddy", null)).toBe("");
+    expect(flexEmailFromUsername("a@b.com", null)).toBe("a@b.com");
   });
   it("detects the login page", () => {
     expect(isFlexLoginUrl("https://flex.team/auth/login")).toBe(true);

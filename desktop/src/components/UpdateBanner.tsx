@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type UpdateStatus } from "../api";
 import { useT } from "../lib/i18n";
+import { flavorProfile } from "../../electron/core/flavor";
 
 export function useUpdateStatus() {
   const [s, setS] = useState<UpdateStatus | null>(null);
@@ -32,7 +33,7 @@ export function UpdateBanner() {
   if (s.state === "downloaded" && mac)
     return (
       <div className="banner info">
-        {t("{version} 설치 파일을 열었습니다: 창에서 UBION Messenger를 응용 프로그램 폴더로 끌어 놓고 ‘대치’를 선택한 뒤, 이 앱을 종료하고 다시 실행하세요.", { version: s.version })}
+        {t("{version} 설치 파일을 열었습니다: 창에서 {app}를 응용 프로그램 폴더로 끌어 놓고 ‘대치’를 선택한 뒤, 이 앱을 종료하고 다시 실행하세요.", { version: s.version, app: flavorProfile().productName })}
         <button className="link" onClick={() => api().call("update:install")}>{t("설치 파일 다시 열기")}</button>
         <button className="link muted" onClick={() => setHidden(`${s.state}:${s.version}`)}>{t("닫기")}</button>
       </div>

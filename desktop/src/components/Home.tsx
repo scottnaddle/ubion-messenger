@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
 import { t as tr, useT } from "../lib/i18n";
+import { flavorProfile } from "../../electron/core/flavor";
 import type {
   ApprovalDoc, BoardPost, CalendarEvent, MailItem, PortalBadge, PortalNoti, PortalSummary, PortalWidgetId, PortalWidgetState,
 } from "../../electron/core/portal";
@@ -53,7 +54,7 @@ function Empty({ show, text }: { show: boolean; text: string }) {
   return show ? <div className="muted small home-empty">{text}</div> : null;
 }
 
-export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") => void }) {
+export function Home({ onLocal, showFlex = flavorProfile().flex }: { onLocal?: (v: "mail" | "approval" | "flex") => void; showFlex?: boolean }) {
   const t = useT();
   const [snap, setSnap] = useState<Snap | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,7 +63,7 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") 
 
   useEffect(() => {
     api().portal.get().then((s: Snap) => setSnap(s)).catch(() => undefined);
-    api().portal.flexPending().then((r) => setFlexCount(r.count)).catch(() => setFlexCount(null));
+    if (showFlex) api().portal.flexPending().then((r) => setFlexCount(r.count)).catch(() => setFlexCount(null));
     const h = (ev: Event) => {
       const { type, payload } = (ev as CustomEvent).detail;
       if (type === "portalSummary") setSnap((s) => (s ? { ...s, summary: payload } : s));
@@ -74,13 +75,13 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") 
     };
     window.addEventListener("ubion:event", h);
     return () => window.removeEventListener("ubion:event", h);
-  }, []);
+  }, [showFlex]);
 
   const refresh = async () => {
     setBusy(true);
     try {
       setSnap(await api().portal.refresh()); setAt(Date.now());
-      setFlexCount((await api().portal.flexPending(true)).count);
+      if (showFlex) setFlexCount((await api().portal.flexPending(true)).count);
     } catch { /* card errors shown */ }
     setBusy(false);
   };
@@ -114,9 +115,11 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") 
             {c.gadgetName || c.appName} {c.count}
           </button>
         ))}
-        <button className={`chip ${flexCount ? "on" : ""}`} title={t("flex 승인 대기")} onClick={openFlex}>
-          {t("flex 승인 대기")} {flexCount == null ? "-" : flexCount}
-        </button>
+        {showFlex && (
+          <button className={`chip ${flexCount ? "on" : ""}`} title={t("flex 승인 대기")} onClick={openFlex}>
+            {t("flex 승인 대기")} {flexCount == null ? "-" : flexCount}
+          </button>
+        )}
       </div>
       <p className="muted tiny home-hint">{t("항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.")}</p>
       <div className="home-grid">
@@ -128,12 +131,14 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") 
             </button></li>))}</ul>
           <Empty show={!!posts && !posts.items.length} text={t("최근 글이 없습니다")} />
         </Card>
-        <Card title={t("flex 승인 대기")} count={flexCount ?? undefined} webUrl="https://flex.team/home/todo/inbox" isStatic>
-          <ul><li><button onClick={openFlex}>
-            <span className="tag">flex</span> <span className="ellipsis">{t("휴가·근무 승인 요청 보기")}</span>
-            <span className="muted small"> · {flexCount == null ? t("건수 확인 중/불가") : t("{n}건", { n: flexCount })}</span>
-          </button></li></ul>
-        </Card>
+        {showFlex && (
+          <Card title={t("flex 승인 대기")} count={flexCount ?? undefined} webUrl="https://flex.team/home/todo/inbox" isStatic>
+            <ul><li><button onClick={openFlex}>
+              <span className="tag">flex</span> <span className="ellipsis">{t("휴가·근무 승인 요청 보기")}</span>
+              <span className="muted small"> · {flexCount == null ? t("건수 확인 중/불가") : t("{n}건", { n: flexCount })}</span>
+            </button></li></ul>
+          </Card>
+        )}
         <Card title={t("오늘 일정")} count={cal?.total} webUrl={`/app/calendar/daily/${new Date().toLocaleDateString("sv-SE")}`} state={w.calendar}>
           <ul>{cal?.items.map((e) => (
             <li key={`${e.calendarId}/${e.id}`}><button onClick={() => open(e.url)}>

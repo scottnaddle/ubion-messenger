@@ -26,25 +26,32 @@ export function railLabel(id: RailTipId, name?: string): string {
   return id === "profile" && name ? name : t(TIPS[id].label);
 }
 
-export function railShortcut(id: RailTipId, platform?: string | null): string {
+function tipKeys(id: RailTipId, order: readonly NavView[]): string[] {
+  const extra = TIPS[id].keys.filter((key) => !/^\d$/.test(key));
+  const idx = (order as readonly string[]).indexOf(id);
+  return idx >= 0 ? [String(idx + 1), ...extra] : extra;
+}
+
+export function railShortcut(id: RailTipId, platform?: string | null, order: readonly NavView[] = NAV_ORDER): string {
   const mod = isMacPlatform(platform) ? "⌘" : "Ctrl+";
-  return TIPS[id].keys.map((key) => mod + key).join("/");
+  return tipKeys(id, order).map((key) => mod + key).join("/");
 }
 
 export function railTipFor(
   id: RailTipId,
-  opts: { platform?: string | null; name?: string } = {},
+  opts: { platform?: string | null; name?: string; order?: readonly NavView[] } = {},
 ): { label: string; shortcut: string } {
   return {
     label: railLabel(id, opts.name),
-    shortcut: railShortcut(id, opts.platform),
+    shortcut: railShortcut(id, opts.platform, opts.order ?? NAV_ORDER),
   };
 }
 
 export function navRailTips(
-  opts: { platform?: string | null } = {},
+  opts: { platform?: string | null; order?: readonly NavView[] } = {},
 ): { id: NavView; label: string; shortcut: string }[] {
-  return NAV_ORDER.map((id) => ({ id, ...railTipFor(id, opts) }));
+  const order = opts.order ?? NAV_ORDER;
+  return order.map((id) => ({ id, ...railTipFor(id, { ...opts, order }) }));
 }
 
 export function nextShowDelay(

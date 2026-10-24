@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import type React from "react";
 import { createPortal } from "react-dom";
 import { nextShowDelay, railTipFor, type RailTipId } from "../rail-tooltip";
+import { navOrder } from "../nav";
+import { flavorProfile } from "../../electron/core/flavor";
 import { useT } from "../lib/i18n";
 
 type Point = { top: number; left: number };
@@ -102,7 +104,7 @@ export function useRailTooltip<T extends HTMLElement>(id: RailTipId, name?: stri
     return () => window.removeEventListener("keydown", onKey);
   }, [id]);
 
-  const { label, shortcut } = railTipFor(id, { platform: platform(), name });
+  const { label, shortcut } = railTipFor(id, { platform: platform(), name, order: navOrder(flavorProfile().flex) });
   const tipId = `rail-tip-${id}`;
   const keyId = `${tipId}-key`;
   const tooltip =

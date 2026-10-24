@@ -1,6 +1,7 @@
 import net from "node:net";
 import { EventEmitter } from "node:events";
 import { parseBotStatus, type ParsedBotStatus } from "../../src/lib/bot-status";
+import { flavorProfile } from "./flavor";
 import { parseStatusMessage, presenceStanza } from "./status-message";
 
 export { presenceStanza } from "./status-message";
@@ -327,7 +328,7 @@ export function handleOnlineStanza(s: string, ctx: { write: (x: string) => void;
       if (s.includes("urn:xmpp:ping")) ctx.write(`<iq type='result' id='${id}' to='${from}'/>`);
       else if (s.includes("jabber:iq:version"))
         ctx.write(
-          `<iq type='result' id='${id}' to='${from}'><query xmlns='jabber:iq:version'><name>UBION Messenger</name><version>1.0</version></query></iq>`
+          `<iq type='result' id='${id}' to='${from}'><query xmlns='jabber:iq:version'><name>${flavorProfile().productName.replace(/[<&>]/g, "")}</name><version>1.0</version></query></iq>`
         );
       else
         ctx.write(

@@ -1,6 +1,8 @@
 import { createPortal } from "react-dom";
 import { Icon } from "./ui";
 import { useT } from "../lib/i18n";
+import { navOrder } from "../nav";
+import { flavorProfile } from "../../electron/core/flavor";
 
 /** ⌘/Ctrl+/ shortcuts help overlay. */
 export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
@@ -11,7 +13,7 @@ export function ShortcutsHelp({ onClose }: { onClose: () => void }) {
     { keys: "⌘/Ctrl+Shift+F", label: t("전체 대화 검색") },
     { keys: "⌘/Ctrl+Shift+A", label: t("다음 안 읽은 대화") },
     { keys: "⌘/Ctrl+N", label: t("조직도") },
-    { keys: "⌘/Ctrl+1..6", label: t("탭 이동") },
+    { keys: `⌘/Ctrl+1..${navOrder(flavorProfile().flex).length}`, label: t("탭 이동") },
     { keys: "Alt+↑/↓", label: t("이전/다음 대화") },
     { keys: "⌘/Ctrl+,", label: t("설정") },
     { keys: "Esc", label: t("닫기") },

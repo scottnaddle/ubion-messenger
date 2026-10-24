@@ -46,6 +46,32 @@ UBION_USER=<id> UBION_PW="$(security find-generic-password -a <id> -s daou-coco 
   first launch via right-click → Open, or `xattr -dr com.apple.quarantine "/Applications/UBION Messenger.app"`)
 - CI: `.github/workflows/build.yml` builds both on push/tag and uploads artifacts.
 
+## Flavors (UBION Messenger / 다워)
+
+One codebase, two products. `UBM_FLAVOR` is read when electron-vite starts and baked into the bundle. Default is **ubion**, so `npm run dev` / `npm run dist` stay UBION Messenger.
+
+| | ubion (default) | generic (다워 / Dawer) |
+|---|---|---|
+| Flag | unset, `ubion` | `generic` or `dawer` |
+| UI name | UBION Messenger | 다워 (Korean) · Dawer (other languages, installer) |
+| appId | `global.ubion.messenger` | `global.ubion.dawer` |
+| Dev appId | `global.ubion.messenger.dev` (unpackaged, or `UBM_APP_CHANNEL=dev`) | `global.ubion.dawer.dev` |
+| Server | `https://coco.ubion.co.kr` | blank — type the tenant URL on the login screen |
+| flex.team / `@ubion.co.kr` | on | off |
+| Reactions, polls, status server, 유비온봇 | current flags | off (no `bot.ubion.global`) |
+| Updates | `ubion-messenger-releases` | none |
+| Settings folder | `UBION Messenger` | `Dawer` (does not share the company profile) |
+
+```bash
+cd desktop
+npm run dev                 # UBION Messenger
+npm run dev:dawer           # 다워  (UBM_FLAVOR=generic)
+npm run dist                # ubion installers
+npm run dist:dawer          # Dawer installers, not published
+```
+
+다워 shows a one-line notice: **비공식 클라이언트**. It is not the official DaouOffice app and does not use DaouOffice branding. Icons are still the shared set until a Dawer icon is drawn.
+
 ## 자동 업데이트 / 릴리스 (v1.0.3+)
 
 - 배포 저장소(공개, 설치 파일만): https://github.com/scottnaddle/ubion-messenger-releases

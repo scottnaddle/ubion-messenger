@@ -29,12 +29,17 @@ export function isFlexLoginUrl(url: string): boolean {
   }
 }
 
-/** Build the company email Scott uses for flex (portal username + @ubion.co.kr). */
-export function flexEmailFromUsername(username: string): string {
+/**
+ * Build the flex login email. Default domain is Ubion's (portal id + @ubion.co.kr).
+ * Pass null on the generic flavor so a bare username is never rewritten to @ubion.co.kr.
+ */
+export function flexEmailFromUsername(username: string, domain: string | null = "ubion.co.kr"): string {
   const u = username.trim();
   if (!u) return "";
   if (u.includes("@")) return u;
-  return `${u}@ubion.co.kr`;
+  const host = (domain || "").trim().replace(/^@/, "");
+  if (!host) return "";
+  return `${u}@${host}`;
 }
 
 /**
