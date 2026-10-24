@@ -186,6 +186,8 @@ html.ubm-mobile .app:not(.compact) .rail-btn .rail-label { display: none; }
 }
 
 /* Phone-first: no mutating mail/approval actions (list+detail only) */
+html.ubm-mobile .approval-body { font-size: 15px; line-height: 1.6; }
+html.ubm-mobile .approval-body img { max-width: 100% !important; height: auto !important; }
 html.ubm-mobile .approval-actions,
 html.ubm-mobile .mail-write,
 html.ubm-mobile .compose-discard,

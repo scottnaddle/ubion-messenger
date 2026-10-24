@@ -434,10 +434,11 @@ input, textarea, select { font: inherit; color: inherit; }
 .flow-status { font-size: .82em; font-weight: 600; }
 .flow-comment { margin-top: 4px; font-size: .82em; color: var(--muted); white-space: pre-wrap; word-break: break-word; }
 .approval-body-wrap { padding: 14px 0; border-bottom: 1px solid var(--line); }
-.approval-body { word-break: break-word; overflow-x: auto; }
+.approval-body { min-width: 0; max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; word-break: break-word; font-size: 14px; line-height: 1.55; }
 .approval-body table { border-collapse: collapse; max-width: 100%; }
-.approval-body td, .approval-body th { border: 1px solid var(--line); padding: 4px 6px; }
-.approval-body img { max-width: 100%; height: auto; }
+.approval-body td, .approval-body th { border: 1px solid var(--line); padding: 4px 6px; max-width: 100%; overflow-wrap: anywhere; }
+.approval-body img { max-width: 100% !important; height: auto !important; }
+.approval-body pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .approval-attaches, .approval-comments { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .approval-attaches h4, .approval-comments h4 { margin: 0 0 8px; font-size: .95em; }
 .approval-attach { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 8px; border-radius: 8px; color: var(--fg); }

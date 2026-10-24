@@ -3,7 +3,7 @@ import { api } from "../api";
 import { Avatar, Icon } from "./ui";
 import { tk, useT } from "../lib/i18n";
 import { isMobileUi, useIsCompact } from "../lib/compact";
-import { sanitizeHtml } from "../lib/sanitize";
+import { sanitizeApprovalHtml } from "../lib/sanitize";
 import {
   APPROVAL_BOXES, APPROVAL_BOX_LABELS,
   type ApprovalActivity, type ApprovalBox, type ApprovalDocumentDetail, type ApprovalList, type ApprovalListItem,
@@ -333,7 +333,7 @@ export function Approval() {
               {!detail.apprFlow.activityGroups.length && <div className="muted small">{t("결재선 정보가 없습니다")}</div>}
             </section>
             <div className="approval-body-wrap">
-              <div className="approval-body" dangerouslySetInnerHTML={{ __html: sanitizeHtml(detail.document.bodyHtml) }} />
+              <div className="approval-body" dangerouslySetInnerHTML={{ __html: sanitizeApprovalHtml(detail.document.bodyHtml) }} />
             </div>
             <section className="approval-attaches">
               <h4>{t("첨부파일")} {detail.document.attaches.length ? `(${detail.document.attaches.length})` : ""}</h4>

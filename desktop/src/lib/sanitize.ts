@@ -55,6 +55,47 @@ function unwrap(el: Element) {
   parent.removeChild(el);
 }
 
+/** Absolute CSS widths (800px, 21cm, …) force a document wider than a phone or narrow pane. */
+function isFixedWidth(value: string): boolean {
+  const s = String(value || "").trim().toLowerCase();
+  if (!s) return false;
+  const m = /^(\d*\.?\d+)\s*(px|pt|pc|cm|mm|in|q)?$/.exec(s);
+  return !!m && Number(m[1]) > 0;
+}
+
+/**
+ * Approval bodies are portal-authored forms with legacy fixed widths (`<table width="800">`,
+ * `style="width:720px"`, cell `white-space:nowrap`). Run the normal allowlist first, then drop just
+ * those layout constraints so the same HTML reflows in a narrow pane. Images keep their declared
+ * size; CSS clamps them to the available width.
+ */
+export function sanitizeApprovalHtml(html: string): string {
+  const clean = sanitizeHtml(html);
+  if (!clean || typeof DOMParser === "undefined") return clean;
+  const doc = new DOMParser().parseFromString(clean, "text/html");
+  const body = doc.body;
+  if (!body) return clean;
+  for (const el of Array.from(body.querySelectorAll("*"))) {
+    const tag = el.tagName.toLowerCase();
+    if (tag !== "img") {
+      const w = el.getAttribute("width");
+      if (w != null && isFixedWidth(w)) el.removeAttribute("width");
+    }
+    const style = (el as HTMLElement).style;
+    if (!style?.length) continue;
+    for (let i = style.length - 1; i >= 0; i--) {
+      const prop = style.item(i);
+      const value = style.getPropertyValue(prop);
+      if (prop === "min-width" || (prop === "width" && tag !== "img" && isFixedWidth(value)) || (prop === "white-space" && /nowrap/i.test(value))) {
+        style.removeProperty(prop);
+      }
+    }
+    if (style.length) el.setAttribute("style", style.cssText);
+    else el.removeAttribute("style");
+  }
+  return body.innerHTML;
+}
+
 export type MailSanitizeResult = { html: string; blockedImages: number };
 
 /**
