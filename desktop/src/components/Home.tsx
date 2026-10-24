@@ -53,7 +53,7 @@ function Empty({ show, text }: { show: boolean; text: string }) {
   return show ? <div className="muted small home-empty">{text}</div> : null;
 }
 
-export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") => void }) {
+export function Home({ onLocal, onOpenBot }: { onLocal?: (v: "mail" | "approval" | "flex") => void; onOpenBot?: () => void }) {
   const t = useT();
   const [snap, setSnap] = useState<Snap | null>(null);
   const [busy, setBusy] = useState(false);
@@ -120,6 +120,11 @@ export function Home({ onLocal }: { onLocal?: (v: "mail" | "approval" | "flex") 
       </div>
       <p className="muted tiny home-hint">{t("항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.")}</p>
       <div className="home-grid">
+        <section className="home-card">
+          <header><h3>{t("내 봇")}</h3></header>
+          <p className="muted small">{t("이 기기에만 저장되는 별도 대화입니다.")}</p>
+          <button className="primary" type="button" onClick={() => onOpenBot?.()}>{t("내 봇과 대화")}</button>
+        </section>
         <Card title={t("전사게시판 최근글")} webUrl="/app/board" state={w.posts}>
           <ul>{posts?.items.map((p) => (
             <li key={p.id}><button onClick={() => open(p.url)}>

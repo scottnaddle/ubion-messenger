@@ -134,6 +134,7 @@ const api = {
     approvalList: (box: import("./core/portal").ApprovalBox, page: number, keyword = "") =>
       call<import("./core/portal").ApprovalList>("portal:approvalList", box, page, keyword),
     approvalCounts: () => call<{ todo: number; upcoming: number }>("portal:approvalCounts"),
+    calendarToday: () => call<import("./core/portal").PortalList<import("./core/portal").CalendarEvent>>("portal:calendarToday"),
     approvalDoc: (id: number | string) => call<import("./core/portal").ApprovalDocumentDetail>("portal:approvalDoc", id),
     mailUpload: (name: string, data: ArrayBuffer, mime?: string) => call<import("./core/mail-attach").UploadedAttach>("portal:mailUpload", name, data, mime),
     mailCaps: () => call<{ delete: boolean }>("portal:mailCaps"),
@@ -142,6 +143,24 @@ const api = {
     approvalAction: (kind: "approve" | "return", id: number | string, comment = "") =>
       call<{ ok: true }>("portal:approvalAction", kind, id, comment),
     flexPending: (force?: boolean) => call<{ count: number | null; at: number; error?: string }>("portal:flexPending", force),
+  },
+  personalBotSettings: {
+    open: (userId: number) => call<void>("personalBot:openSettings", userId),
+    changed: (userId: number, snapshot: import("../src/lib/personal-bot-settings").BotSettingsSnapshot) =>
+      call<void>("personalBot:settingsChanged", userId, snapshot),
+    onChanged: (cb: (payload: { userId: number } & import("../src/lib/personal-bot-settings").BotSettingsSnapshot) => void) =>
+      sub("personal-bot:settings", cb),
+  },
+  google: {
+    status: (userId: number) => call<{ connectors: { id: "google-drive" | "google-calendar"; connected: boolean; account?: string }[] }>("google:status", userId),
+    connect: (userId: number, id: "google-drive" | "google-calendar") => call<{ connected: true; account?: string }>("google:connect", userId, id),
+    disconnect: (userId: number, id: "google-drive" | "google-calendar") => call<{ connected: false }>("google:disconnect", userId, id),
+    driveList: (userId: number, args?: { query?: string; mime?: string; folderId?: string; limit?: number }) =>
+      call<{ ok: true; files: { id: string; name: string; mimeType: string; modifiedTime?: string; folder?: string }[]; note?: string } | { ok: false; code: string; message: string }>("google:driveList", userId, args),
+    driveRead: (userId: number, args: { fileId?: unknown; maxChars?: unknown }) =>
+      call<{ ok: true; name: string; mimeType: string; text: string; truncated?: true; note?: string } | { ok: false; code: string; message: string; name?: string; mimeType?: string }>("google:driveRead", userId, args),
+    calendarToday: (userId: number) =>
+      call<{ ok: true; items: { summary: string; start: string; end: string; allDay: boolean; location: string }[] } | { ok: false; code: string; message: string }>("google:calendarToday", userId),
   },
   pathForFile: (f: File) => webUtils.getPathForFile(f),
   platform: process.platform,

@@ -378,6 +378,10 @@ export function installMockIfNeeded() {
         page: { page: 0, offset: 20, total: 1, totalPage: 1, lastPage: true },
       }),
       approvalCounts: async () => ({ todo: 1, upcoming: 0 }),
+      calendarToday: async () => ({
+        total: 1,
+        items: [{ id: "e1", calendarId: 1, calendarName: "내 캘린더", summary: "주간회의", location: "3층", allDay: false, start: isoNow, end: isoNow, type: "normal", url: "/app/calendar/1/event/e1" }],
+      }),
       mailUpload: async (name: string, data: ArrayBuffer) => {
         await new Promise((r) => setTimeout(r, 1500));
         if (name.includes("실패")) throw new Error("첨부 업로드 실패 (mock)");
@@ -411,6 +415,21 @@ export function installMockIfNeeded() {
         comments: [{ id: "1", author: "김하늘", content: "확인했습니다", createdAt: isoNow }],
       }),
       flexPending: async () => ({ count: 3, at: Date.now() }),
+    },
+    google: {
+      status: async () => ({
+        connectors: [
+          { id: "google-drive" as const, connected: false },
+          { id: "google-calendar" as const, connected: false },
+        ],
+      }),
+      connect: async () => {
+        throw new Error("Google 클라이언트 ID가 없습니다. google-oauth.json 또는 UBM_GOOGLE_CLIENT_ID를 설정하세요.");
+      },
+      disconnect: async () => ({ connected: false as const }),
+      driveList: async () => ({ ok: false as const, code: "connect-later", message: "Google Drive는 아직 연결 전입니다." }),
+      driveRead: async () => ({ ok: false as const, code: "connect-later", message: "Google Drive는 아직 연결 전입니다." }),
+      calendarToday: async () => ({ ok: false as const, code: "connect-later", message: "Google Calendar는 아직 연결 전입니다." }),
     },
     pathForFile: () => "",
     platform: new URLSearchParams(location.search).get("platform") || "darwin",

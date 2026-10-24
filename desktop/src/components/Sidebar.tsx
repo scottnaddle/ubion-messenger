@@ -14,7 +14,7 @@ const roomPreview = (room: Room, botUserSeq?: number): string =>
     : room.preview;
 
 export function Sidebar({
-  rooms, activeKey, presence, onOpen, toast, onGlobalSearch, botUserSeq,
+  rooms, activeKey, presence, onOpen, toast, onGlobalSearch, botUserSeq, onOpenBot, botActive,
 }: {
   rooms: Room[]; activeKey: string | null; presence: Record<number, Presence>;
   onOpen: (k: string) => void; toast: (t: string, k?: Toast["kind"]) => void;
@@ -22,6 +22,8 @@ export function Sidebar({
   botUserSeq?: number;
   /** 통합 검색 (all rooms, server + local cache). */
   onGlobalSearch?: (keyword?: string) => void;
+  onOpenBot?: () => void;
+  botActive?: boolean;
 }) {
   const t = useT();
   const [q, setQ] = useState("");
@@ -75,6 +77,19 @@ export function Sidebar({
           </button>
         ))}
       </div>
+      {onOpenBot && (
+        <button type="button" className={`room bot-entry ${botActive ? "active" : ""}`} onClick={onOpenBot}>
+          <Avatar name={t("내 봇")} size={40} />
+          <div className="room-body">
+            <div className="room-top">
+              <span className="room-name">{t("내 봇")} <span className="tag">{t("비서")}</span></span>
+            </div>
+            <div className="room-bottom">
+              <span className="room-preview">{t("내 봇과 대화")}</span>
+            </div>
+          </div>
+        </button>
+      )}
       <div className="room-list">
         {shown.map((r) => (
           <button

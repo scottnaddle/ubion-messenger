@@ -19,6 +19,7 @@ import type { Poll, PollCaps, PollInput } from "../electron/core/polls";
 import type { EditCaps, ReplyTarget } from "../electron/core/edit-reply";
 import type { BotSummaryCaps } from "../electron/core/bot-summary";
 import type { SummaryMode } from "./lib/bot-summary";
+import type { BotSettingsSnapshot } from "./lib/personal-bot-settings";
 import type { Language } from "./lib/i18n-core";
 import type { GlobalSearchCaps, GlobalSearchProgress, GlobalSearchQuery, GlobalSearchResult } from "./lib/global-search";
 export type { ChatMessage, Department, Person, Presence, Room, SessionUser, ConnState, BotSettingsResult };
@@ -186,6 +187,7 @@ export type Bridge = {
     mailRead(folder: string, uid: number): Promise<MailMessage>;
     approvalList(box: ApprovalBox, page: number, keyword?: string): Promise<ApprovalList>;
     approvalCounts(): Promise<{ todo: number; upcoming: number }>;
+    calendarToday(): Promise<import("../electron/core/portal").PortalList<import("../electron/core/portal").CalendarEvent>>;
     approvalDoc(id: number | string): Promise<ApprovalDocumentDetail>;
     mailUpload(name: string, data: ArrayBuffer, mime?: string): Promise<import("../electron/core/mail-attach").UploadedAttach>;
     mailCaps(): Promise<{ delete: boolean }>;
@@ -193,6 +195,24 @@ export type Bridge = {
     mailSend(draft: import("../electron/core/mail-compose").MailDraft): Promise<{ ok: true }>;
     approvalAction(kind: "approve" | "return", id: number | string, comment?: string): Promise<{ ok: true }>;
     flexPending(force?: boolean): Promise<{ count: number | null; at: number; error?: string }>;
+  };
+  /**
+   * 내 봇 settings window. Present in Electron. Browser preview omits it and the
+   * gear falls back to the in-app panel.
+   */
+  personalBotSettings?: {
+    open(userId: number): Promise<void>;
+    changed(userId: number, snapshot: BotSettingsSnapshot): Promise<void>;
+    onChanged(cb: (payload: { userId: number } & BotSettingsSnapshot) => void): () => void;
+  };
+  /** Google Drive / Calendar for 내 봇. Tokens stay in the main process. */
+  google: {
+    status(userId: number): Promise<{ connectors: { id: "google-drive" | "google-calendar"; connected: boolean; account?: string }[] }>;
+    connect(userId: number, id: "google-drive" | "google-calendar"): Promise<{ connected: true; account?: string }>;
+    disconnect(userId: number, id: "google-drive" | "google-calendar"): Promise<{ connected: false }>;
+    driveList(userId: number, args?: { query?: string; mime?: string; folderId?: string; limit?: number }): Promise<{ ok: true; files: { id: string; name: string; mimeType: string; modifiedTime?: string; folder?: string }[]; note?: string } | { ok: false; code: string; message: string }>;
+    driveRead(userId: number, args: { fileId?: unknown; maxChars?: unknown }): Promise<{ ok: true; name: string; mimeType: string; text: string; truncated?: true; note?: string } | { ok: false; code: string; message: string; name?: string; mimeType?: string }>;
+    calendarToday(userId: number): Promise<{ ok: true; items: { summary: string; start: string; end: string; allDay: boolean; location: string }[] } | { ok: false; code: string; message: string }>;
   };
   pathForFile(f: File): string;
   platform: string;

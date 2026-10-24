@@ -43,6 +43,8 @@ import { LinkPreview } from "./LinkPreview";
 import { ReactionBar, ReactionPopup, type ReactionPickerState } from "./Reactions";
 import { REACTION_EMOJI, REACTION_ROOM_FORBIDDEN } from "../../electron/core/reactions";
 import { PollCard, PollCreateModal } from "./PollCard";
+import { RoomAiPanel } from "./RoomAiPanel";
+import type { RoomAiTodo } from "../lib/room-ai";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
 import { tk, useT } from "../lib/i18n";
@@ -81,10 +83,10 @@ function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
 }
 
 export function ChatView({
-  room, me, focused, presence, statusMessage, botStatus, botUserSeq, toast,
+  room, me, focused, presence, statusMessage, botStatus, botUserSeq, toast, onOpenBot,
 }: {
   room: Room; me: SessionUser; focused: boolean; presence?: Presence; statusMessage?: string;
-  botStatus?: BotStatusEntry; botUserSeq?: number; toast: ToastFn;
+  botStatus?: BotStatusEntry; botUserSeq?: number; toast: ToastFn; onOpenBot?: () => void;
 }) {
   const t = useT();
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
@@ -119,6 +121,7 @@ export function ChatView({
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [pollsOn, setPollsOn] = useState(false);
   const [pollOpen, setPollOpen] = useState(false);
+  const [jumpIds, setJumpIds] = useState<number[]>([]);
   const [replyTarget, setReplyTarget] = useState<{ messageId: number; senderName: string; text: string } | null>(null);
   const [editTarget, setEditTarget] = useState<ChatMessage | null>(null);
   const [editText, setEditText] = useState("");
@@ -761,6 +764,29 @@ export function ChatView({
       setSummaryBusy(false);
     }
   };
+  const jumpKey = jumpIds.join(",");
+  useEffect(() => {
+    if (!jumpKey) return;
+    const timer = window.setTimeout(() => setJumpIds([]), 4000);
+    return () => window.clearTimeout(timer);
+  }, [jumpKey]);
+  const jumpToTodo = (todo: RoomAiTodo) => {
+    const present: number[] = [];
+    for (const id of todo.sourceMessageIds ?? []) {
+      const hit = msgs.find((m) => m.messageId != null && String(m.messageId) === String(id));
+      if (hit?.messageId != null && !present.includes(hit.messageId)) present.push(hit.messageId);
+    }
+    if (!present.length) {
+      toast(t("연결된 메시지가 현재 불러온 대화에 없습니다"));
+      return;
+    }
+    stickBottom.current = false;
+    setJumpIds(present);
+    const first = present[0];
+    requestAnimationFrame(() => {
+      listRef.current?.querySelector(`[data-message-id="${first}"]`)?.scrollIntoView({ block: "center" });
+    });
+  };
   const lastMine = [...msgs].reverse().find((m) => m.sendUserSeq === me.id && !m.pending && !m.failed);
   const visibleMsgs = useMemo(
     () => msgs.filter((m) => !isBotAuthDm({
@@ -885,6 +911,7 @@ export function ChatView({
                     onReactionBlocked={explainReactionBlocked}
                     onOpenPicker={(mode) => setPicker(mode && m.messageId != null ? { messageId: m.messageId, mode } : null)}
                     pollsOn={pollsOn}
+                    highlighted={m.messageId != null && jumpIds.includes(m.messageId)}
                   />
                 </Fragment>
               );
@@ -912,6 +939,15 @@ export function ChatView({
             onMode={(mode) => setPicker((p) => (p ? { ...p, mode } : p))}
             onPick={(emoji) => { toggleReaction(picker.messageId, emoji); setPicker(null); }} />
         )}
+        <RoomAiPanel
+          roomKey={room.key}
+          userId={me.id}
+          messages={msgs}
+          focused={focused}
+          historyLoading={loading}
+          onJump={jumpToTodo}
+          onOpenBot={onOpenBot}
+        />
         {searchOpen && <SearchPanel room={room} onClose={() => setSearchOpen(false)} />}
       </div>
       {uploading > 0 && <div className="upload-bar">{t("파일 {n}개 업로드 중…", { n: uploading })}</div>}
@@ -1293,7 +1329,7 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
-  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, reactionBlocked, pickerMode, onOpenPicker, onReactionBlocked, pollsOn,
+  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, reactionBlocked, pickerMode, onOpenPicker, onReactionBlocked, pollsOn, highlighted,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
@@ -1302,7 +1338,7 @@ function MessageRow({
   reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
   reactionNames: ReadonlyMap<number, string>; showReactions: boolean; reactionBlocked: string | null;
   pickerMode: "palette" | "full" | null; onOpenPicker: (mode: "palette" | "full" | null) => void; onReactionBlocked: () => void;
-  pollsOn: boolean;
+  pollsOn: boolean; highlighted?: boolean;
 }) {
   const t = useT();
   const deleted = isDeletedMessage(m);
@@ -1328,7 +1364,10 @@ function MessageRow({
   const a = m.attach ?? (m.messageType === "SENDFILE" && m.message ? { cryptId: "", name: m.message }
     : m.messageType === "DELETEDFILE" ? { cryptId: "", name: m.message || t("삭제된 파일"), expired: true } : undefined);
   return (
-    <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
+    <div
+      className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""} ${highlighted ? "msg-jump" : ""}`}
+      data-message-id={m.messageId ?? undefined}
+    >
       {menu && hasMenu && (
         <MessageMenu x={menu.x} y={menu.y} reaction={reaction} onEdit={onEdit} onReply={onReply} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
       )}

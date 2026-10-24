@@ -84,6 +84,7 @@ import {
 } from "./core/zoom";
 import { isMentioningMe } from "../src/lib/mention";
 import { isBotAuthDm } from "../src/lib/markers";
+import { readSettingsSnapshot, rendererUrlWithBotSettings, botSettingsQuery } from "../src/lib/personal-bot-settings";
 import { createBotSettingsClient } from "./core/bot-settings";
 import { createUbmAuth, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
 import { applyMainLanguage, filterLanguagePatch, i18nCaps, tm } from "./core/i18n-main";
@@ -94,6 +95,17 @@ import {
 } from "./lock-store";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import { guessMime } from "./core/mime";
+import { buildMediaResponse, parseMediaRequest } from "./core/media-response";
+import { GoogleConnectorHost } from "./core/google-session";
+import {
+  appendGoogleOAuthDebugLog,
+  emptyTokenFile,
+  isGoogleConnectorId,
+  parseTokenFile,
+  resolveGoogleClientConfig,
+  type GoogleConnectorId,
+  type GoogleTokenFile,
+} from "./core/google-oauth";
 import {
   accountKey, isWebLoginNavAllowed, isWebLoginSuccessUrl, markWebAccount, planLogin, unmarkWebAccount,
   webLoginUrl, WEB_LOGIN_MESSAGE,
@@ -279,6 +291,62 @@ const updater = new Updater(() => win);
 
 const UBM_BASE_URL = () => process.env.UBM_BOT_API_URL || "https://bot.ubion.global";
 const ubmTokenFile = () => path.join(app.getPath("userData"), "ubm-token.bin");
+const googleTokenFile = () => path.join(app.getPath("userData"), "google-connectors.bin");
+const googleOAuthFile = () => process.env.UBM_GOOGLE_OAUTH_FILE || path.join(app.getPath("userData"), "google-oauth.json");
+
+function readGoogleClientConfig() {
+  let fileText: string | null = null;
+  try {
+    fileText = fs.readFileSync(googleOAuthFile(), "utf8");
+  } catch {
+    fileText = null;
+  }
+  return resolveGoogleClientConfig({
+    envClientId: process.env.UBM_GOOGLE_CLIENT_ID,
+    envClientSecret: process.env.UBM_GOOGLE_CLIENT_SECRET,
+    fileText,
+  });
+}
+
+function readGoogleTokens(): GoogleTokenFile {
+  try {
+    if (!safeStorage.isEncryptionAvailable()) return emptyTokenFile();
+    return parseTokenFile(safeStorage.decryptString(fs.readFileSync(googleTokenFile())));
+  } catch {
+    return emptyTokenFile();
+  }
+}
+
+function writeGoogleTokens(file: GoogleTokenFile): void {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("이 기기에서 토큰을 안전하게 저장할 수 없습니다.");
+  const target = googleTokenFile();
+  fs.writeFileSync(target, safeStorage.encryptString(JSON.stringify(file)), { mode: 0o600 });
+  try {
+    fs.chmodSync(target, 0o600);
+  } catch {
+    /* best effort */
+  }
+}
+
+const googleHost = new GoogleConnectorHost({
+  config: readGoogleClientConfig,
+  read: readGoogleTokens,
+  write: writeGoogleTokens,
+  openBrowser: (url) => shell.openExternal(url),
+  fetchImpl: (url, init) => fetch(url, init),
+  debugLog: (code) => appendGoogleOAuthDebugLog(path.join(app.getPath("userData"), "google-oauth-debug.log"), code),
+});
+
+function googleUser(userId: unknown): number {
+  const n = Number(userId);
+  if (!Number.isSafeInteger(n) || n <= 0) throw new Error("사용자를 확인하지 못했습니다.");
+  return n;
+}
+
+function googleId(id: unknown): GoogleConnectorId {
+  if (!isGoogleConnectorId(id)) throw new Error("알 수 없는 Google 연결입니다.");
+  return id;
+}
 
 /** OS-keychain-backed persistence for the UBION token; without safeStorage the token stays in memory only. */
 const ubmTokenStore = {
@@ -880,6 +948,8 @@ async function openPortalWindow(url: string) {
 /** Feature flag: server doc viewer only when UBM_DOC_VIEWER_URL is set (the official viewer URL is still unknown). */
 const DOC_VIEWER_SERVER = docViewerServerEnabled(process.env);
 let docViewerWin: BrowserWindow | null = null;
+let personalBotSettingsWin: BrowserWindow | null = null;
+let personalBotSettingsUserId = 0;
 const previewTempDir = () => path.join(app.getPath("temp"), "ubion-preview");
 
 /**
@@ -1062,6 +1132,72 @@ function maybeNotify(m: MessengerEventMap["message"]) {
   n.show();
   if (process.platform === "darwin" && !win?.isFocused()) app.dock?.bounce("informational");
   else if (!win?.isFocused()) win?.flashFrame(true);
+}
+
+function personalBotSettingsTarget(userId: number): { url: string } | { file: string; query: Record<string, string> } {
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL;
+  if (rendererUrl) return { url: rendererUrlWithBotSettings(rendererUrl, userId) };
+  return { file: path.join(__dirname, "../renderer/index.html"), query: botSettingsQuery(userId) };
+}
+
+async function loadPersonalBotSettings(target: BrowserWindow, userId: number) {
+  personalBotSettingsUserId = userId;
+  const dest = personalBotSettingsTarget(userId);
+  if ("url" in dest) await target.loadURL(dest.url);
+  else await target.loadFile(dest.file, { query: dest.query });
+}
+
+/** Gear in 내 봇 opens this child window. Closing it focuses the chat again. */
+function openPersonalBotSettings(userId: number) {
+  const existing = personalBotSettingsWin;
+  if (existing && !existing.isDestroyed()) {
+    if (personalBotSettingsUserId !== userId) void loadPersonalBotSettings(existing, userId).catch(() => undefined);
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const parent = win && !win.isDestroyed() ? win : undefined;
+  const w = new BrowserWindow({
+    width: 880,
+    height: 640,
+    minWidth: 720,
+    minHeight: 480,
+    title: "내 봇 설정",
+    parent,
+    autoHideMenuBar: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#16181d" : "#ffffff",
+    icon: resPath("icon.png"),
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/index.js"),
+      contextIsolation: true,
+      sandbox: false,
+      nodeIntegration: false,
+      spellcheck: false,
+    },
+  });
+  personalBotSettingsWin = w;
+  const guardNav = (e: Electron.Event, url: string) => {
+    const allowed = (url.startsWith("http://localhost") || url.startsWith("file:")) && url.includes("botSettings=1");
+    if (allowed) return;
+    e.preventDefault();
+    if (/^https?:/.test(url) && !url.startsWith("http://localhost")) shell.openExternal(url);
+  };
+  w.on("page-title-updated", (e) => {
+    e.preventDefault();
+    if (!w.isDestroyed()) w.setTitle("내 봇 설정");
+  });
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  w.webContents.on("will-navigate", guardNav);
+  w.webContents.on("will-redirect", guardNav);
+  w.on("closed", () => {
+    if (personalBotSettingsWin === w) personalBotSettingsWin = null;
+    if (win && !win.isDestroyed()) win.focus();
+  });
+  void loadPersonalBotSettings(w, userId).catch(() => undefined);
 }
 
 // ---------- window ----------
@@ -1300,6 +1436,7 @@ function registerIpc() {
   });
   handle("auth:logout", async () => {
     searchCache?.flush();
+    if (personalBotSettingsWin && !personalBotSettingsWin.isDestroyed()) personalBotSettingsWin.close();
     await core.logout("user");
     await ubmAuth.logout();
     mediaCache.clear();
@@ -1687,9 +1824,7 @@ function registerIpc() {
         return { mode };
       }
       const p = core.client.fileUrlPath(cryptId, mid);
-      const hit = mediaCache.get(p);
-      const { data, contentType } = hit || (await core.client.fetchBinary(p));
-      if (!hit) mediaCache.set(p, { data, contentType });
+      const { data } = await loadCachedMedia(p);
       const dir = previewTempDir();
       fs.mkdirSync(dir, { recursive: true });
       const target = path.join(dir, previewTempName(name, mid, ext));
@@ -2005,6 +2140,22 @@ function registerIpc() {
     return core.portal.approvalList(a.box, a.page, a.keyword);
   });
   handle("portal:approvalCounts", () => core.portal.approvalCounts());
+  handle("portal:calendarToday", () => core.portal.todayEvents());
+  handle("personalBot:openSettings", (userId: unknown) => {
+    openPersonalBotSettings(googleUser(userId));
+  });
+  handle("personalBot:settingsChanged", (userId: unknown, snapshot: unknown) => {
+    const id = googleUser(userId);
+    const snap = readSettingsSnapshot(snapshot);
+    if (!snap) return;
+    send("personal-bot:settings", { userId: id, ...snap });
+  });
+  handle("google:status", (userId: unknown) => googleHost.status(googleUser(userId)));
+  handle("google:connect", (userId: unknown, id: unknown) => googleHost.connect(googleUser(userId), googleId(id)));
+  handle("google:disconnect", (userId: unknown, id: unknown) => googleHost.disconnect(googleUser(userId), googleId(id)));
+  handle("google:driveList", (userId: unknown, args: unknown) => googleHost.driveList(googleUser(userId), (args && typeof args === "object" ? args : {}) as { query?: unknown; limit?: unknown; mime?: unknown; folderId?: unknown }));
+  handle("google:driveRead", (userId: unknown, args: unknown) => googleHost.driveRead(googleUser(userId), (args && typeof args === "object" ? args : {}) as { fileId?: unknown; maxChars?: unknown }));
+  handle("google:calendarToday", (userId: unknown) => googleHost.calendarToday(googleUser(userId)));
   handle("portal:mailUpload", (name: unknown, data: unknown, mime: unknown) => core.portal.mailUpload(name, data, mime));
   handle("portal:mailCaps", () => core.portal.mailCaps());
   handle("portal:mailDelete", (folder: unknown, uids: unknown) => core.portal.mailDelete(folder, uids));
@@ -2034,18 +2185,35 @@ function uniquePath(p: string) {
 // ---------- media protocol: authenticated thumbnails/avatars/images ----------
 const linkCache = new PreviewCache();
 const ogImageCache = new PreviewCache(100);
-const mediaCache = new MediaCache(64 * 1024 * 1024, 4 * 1024 * 1024);
+// One chat video can be larger than a thumbnail. Chromium issues several Range
+// requests against the same URL; keep the whole file so those share one download.
+const mediaCache = new MediaCache(64 * 1024 * 1024, 64 * 1024 * 1024);
+const inflightMedia = new Map<string, Promise<{ data: Buffer; contentType: string }>>();
+function loadCachedMedia(p: string): Promise<{ data: Buffer; contentType: string }> {
+  const hit = mediaCache.get(p);
+  if (hit) return Promise.resolve(hit);
+  let pending = inflightMedia.get(p);
+  if (!pending) {
+    pending = core.client.fetchBinary(p).then((got) => {
+      mediaCache.set(p, got);
+      return got;
+    }).finally(() => { inflightMedia.delete(p); });
+    inflightMedia.set(p, pending);
+  }
+  return pending;
+}
 function registerMediaProtocol() {
   protocol.handle("ubion-media", async (req) => {
     try {
-      const u = new URL(req.url);
-      let p = decodeURIComponent(u.pathname.replace(/^\/+/, "/")) + u.search;
+      const parsed = parseMediaRequest(req.url);
+      let p = parsed.path;
       if (p.startsWith("/api/chat/files/") && !/[?&]userSeq=/.test(p) && core.user)
         p += (p.includes("?") ? "&" : "?") + `userSeq=${core.user.id}`;
-      const hit = mediaCache.get(p);
-      const { data, contentType } = hit || (await core.client.fetchBinary(p));
-      if (!hit) mediaCache.set(p, { data, contentType });
-      return new Response(new Uint8Array(data), { headers: { "content-type": contentType, "cache-control": "max-age=86400" } });
+      const { data, contentType } = await loadCachedMedia(p);
+      const built = buildMediaResponse(data, contentType, req.headers.get("range"), parsed.ext);
+      // Copy into a plain Uint8Array. A Node Buffer can be a view into a larger pool,
+      // and Chromium then rejects the media response as a length mismatch.
+      return new Response(new Uint8Array(built.body), { status: built.status, headers: built.headers });
     } catch {
       return new Response("", { status: 404 });
     }

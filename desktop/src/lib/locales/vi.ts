@@ -530,6 +530,9 @@ const dict: Record<string, string> = {
   "상태 메시지를 입력하세요": "Nhập trạng thái",
   "상태 메시지가 저장되었습니다": "Đã lưu trạng thái",
   "상태 메시지를 저장하지 못했습니다: {error}": "Không thể lưu trạng thái: {error}",
+  "내 봇": "Bot của tôi",
+  "비서": "Trợ lý",
+  "내 봇과 대화": "Trò chuyện với bot của tôi",
 };
 
 export default dict;
