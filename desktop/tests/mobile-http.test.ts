@@ -76,3 +76,29 @@ describe("createNativeFetch (mocked CapacitorHttp)", () => {
     await expect(f("https://example.test/x", { method: "GET", headers: {}, redirect: "manual", signal: ac.signal })).rejects.toThrow("aborted");
   });
 });
+
+describe("asBrowserFetch", () => {
+  it("adapts HttpFetch into a Response with .text() for ubm-auth/reactions callers", async () => {
+    const { asBrowserFetch } = await import("../src/platform/http");
+    const http = vi.fn(async () => ({
+      status: 200,
+      headers: { get: () => null, getSetCookie: () => [] },
+      arrayBuffer: async () => new TextEncoder().encode('{"ok":true}').buffer,
+    }));
+    const fetch = asBrowserFetch(http as never);
+    const res = await fetch("https://bot.ubion.global/v1/reactions?roomSeq=1&ids=2", {
+      method: "GET",
+      headers: { "X-UBM-User-Seq": "7", "X-UBM-Session": "ubt1.x" },
+    });
+    expect(http).toHaveBeenCalledWith(
+      "https://bot.ubion.global/v1/reactions?roomSeq=1&ids=2",
+      expect.objectContaining({
+        method: "GET",
+        redirect: "manual",
+        headers: { "X-UBM-User-Seq": "7", "X-UBM-Session": "ubt1.x" },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('{"ok":true}');
+  });
+});

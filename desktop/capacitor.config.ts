@@ -9,7 +9,7 @@ const config: CapacitorConfig = {
     CapacitorHttp: { enabled: false },
     CapacitorCookies: { enabled: true },
   },
-  ios: { contentInset: "automatic" },
+  ios: { contentInset: "never" },
 };
 
 export default config;

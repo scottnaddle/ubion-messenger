@@ -135,6 +135,32 @@ export function createWebFetch(): HttpFetch {
   return (url, init) => globalThis.fetch(url, init as RequestInit);
 }
 
+/** Adapt HttpFetch (CapacitorHttp) to a globalThis.fetch-compatible function for browser-shaped callers. */
+export function asBrowserFetch(http: HttpFetch): typeof globalThis.fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const headers: Record<string, string> = {};
+    const h = init?.headers;
+    if (h instanceof Headers) h.forEach((v, k) => { headers[k] = v; });
+    else if (Array.isArray(h)) for (const [k, v] of h) headers[k] = v;
+    else if (h) for (const [k, v] of Object.entries(h)) if (v != null) headers[k] = String(v);
+    const body = init?.body == null ? undefined
+      : typeof init.body === "string" || init.body instanceof Uint8Array ? init.body
+      : init.body instanceof ArrayBuffer ? new Uint8Array(init.body)
+      : String(init.body);
+    const res = await http(url, {
+      method: (init?.method || "GET").toUpperCase(),
+      headers,
+      body: body as string | Uint8Array | undefined,
+      redirect: "manual",
+      signal: init?.signal ?? undefined,
+    });
+    const buf = await res.arrayBuffer();
+    const nullBody = res.status === 204 || res.status === 205 || res.status === 304;
+    return new Response(nullBody ? null : buf, { status: res.status });
+  }) as typeof globalThis.fetch;
+}
+
 /** Native CapacitorHttp on iOS/Android, plain fetch on the web. */
 export function platformFetch(): HttpFetch {
   return Capacitor.isNativePlatform() ? createNativeFetch() : createWebFetch();

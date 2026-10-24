@@ -49,9 +49,9 @@ html.ubm-mobile .composer { padding-bottom: calc(14px + env(safe-area-inset-bott
 html.ubm-mobile .rail { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
 html.ubm-mobile .toasts { bottom: calc(18px + env(safe-area-inset-bottom)); max-width: calc(100vw - 24px); }
 
-/* no hover on touch: show what desktop reveals on hover, drop sticky hover tints */
+/* no hover on touch: hide desktop hover affordances; use long-press context menu for reactions */
 @media (hover: none) {
-  html.ubm-mobile .reaction-add { opacity: 1; }
+  html.ubm-mobile .reaction-add { display: none; }
   html.ubm-mobile .rail-btn:hover:not(.on) { background: transparent; }
 }
 

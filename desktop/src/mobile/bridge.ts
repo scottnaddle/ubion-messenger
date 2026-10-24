@@ -11,7 +11,7 @@ import { WEB_LOGIN_MESSAGE } from "../../electron/core/web-login";
 import { computeManualUntil } from "../../electron/core/dnd";
 import { MobileCore, type CoreEvent } from "./core";
 import { applySettingsPatch, loadMobileSettings, saveMobileSettings } from "./settings";
-import { platformFetch, type HttpFetch } from "../platform/http";
+import { asBrowserFetch, platformFetch, type HttpFetch } from "../platform/http";
 import { platformStorage, type KvStore } from "../platform/storage";
 import { setBadge } from "../platform/notify";
 import { createMobileServices } from "./services";
@@ -59,8 +59,9 @@ export type MobileBridge = { bridge: Bridge; core: MobileCore; dispose(): void }
 
 export function createMobileBridge(opts: MobileBridgeOptions = {}): MobileBridge {
   const storage = opts.storage ?? platformStorage();
-  const core = opts.core ?? new MobileCore({ fetch: opts.fetch ?? platformFetch(), pollMs: opts.pollMs });
-  const services = createMobileServices(core, storage);
+  const http = opts.fetch ?? platformFetch();
+  const core = opts.core ?? new MobileCore({ fetch: http, pollMs: opts.pollMs });
+  const services = createMobileServices(core, storage, asBrowserFetch(http));
   const platform = opts.platform ?? Capacitor.getPlatform();
   const version = opts.version ?? String(import.meta.env?.VITE_APP_VERSION ?? "dev");
   const doc = opts.doc ?? (typeof document !== "undefined" ? document : undefined);
