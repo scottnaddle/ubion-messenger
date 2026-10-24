@@ -14,6 +14,7 @@ import { applySettingsPatch, loadMobileSettings, saveMobileSettings } from "./se
 import { platformFetch, type HttpFetch } from "../platform/http";
 import { platformStorage, type KvStore } from "../platform/storage";
 import { setBadge } from "../platform/notify";
+import { createMobileServices } from "./services";
 
 export const UNSUPPORTED = "모바일 앱에서는 아직 지원하지 않는 기능입니다";
 const SERVER_UNREACHABLE = "서버에 연결할 수 없습니다. 네트워크(사내망/VPN)를 확인하세요.";
@@ -59,6 +60,7 @@ export type MobileBridge = { bridge: Bridge; core: MobileCore; dispose(): void }
 export function createMobileBridge(opts: MobileBridgeOptions = {}): MobileBridge {
   const storage = opts.storage ?? platformStorage();
   const core = opts.core ?? new MobileCore({ fetch: opts.fetch ?? platformFetch(), pollMs: opts.pollMs });
+  const services = createMobileServices(core, storage);
   const platform = opts.platform ?? Capacitor.getPlatform();
   const version = opts.version ?? String(import.meta.env?.VITE_APP_VERSION ?? "dev");
   const doc = opts.doc ?? (typeof document !== "undefined" ? document : undefined);
@@ -109,7 +111,7 @@ export function createMobileBridge(opts: MobileBridgeOptions = {}): MobileBridge
     "settings:pickDownloadDir": () => null,
 
     "auth:state": () => ({ user: core.user, conn: core.conn }),
-    "auth:botUserSeq": () => 0,
+    "auth:botUserSeq": () => services.ubmAuth.botUserSeq(),
     "auth:login": async (o: { serverUrl?: string; username?: string; password?: string; rememberMe?: boolean; autoLogin?: boolean }) => {
       const s = await loadSettings();
       const username = String(o?.username ?? "").trim();
@@ -122,6 +124,9 @@ export function createMobileBridge(opts: MobileBridgeOptions = {}): MobileBridge
       try {
         const user = await core.login({ serverUrl, username, password });
         await persist({ ...s, serverUrl, username, rememberMe, autoLogin: rememberMe && !!o?.autoLogin, hasSavedPassword: false });
+        void services.portalBadge().then((b) => {
+          for (const cb of [...eventSubs]) cb({ type: "portalBadge", payload: b });
+        }).catch(() => undefined);
         return user;
       } catch (e) {
         if (e instanceof HttpError && e.webLogin) {
@@ -132,10 +137,12 @@ export function createMobileBridge(opts: MobileBridgeOptions = {}): MobileBridge
       }
     },
     "auth:logout": async () => {
+      await services.onLogout().catch(() => undefined);
       await core.logout("user");
       const s = await loadSettings();
       await persist({ ...s, autoLogin: false });
     },
+    "media:url": async (src: string) => services.mediaUrl(String(src ?? "")),
     "lock:status": () => ({ enabled: false, locked: false, timeoutMin: 0 }),
     "lock:unlock": () => ({ ok: true }),
 
@@ -254,7 +261,11 @@ export function createMobileBridge(opts: MobileBridgeOptions = {}): MobileBridge
       set: unsupported,
       presenceStatus: async () => ({}),
     },
-    reactions: { caps: async () => ({ enabled: false }), list: async () => ({}), toggle: unsupported },
+    reactions: {
+      caps: async () => services.reactionsCaps(),
+      list: (roomSeq, ids) => services.reactionsList(roomSeq, ids),
+      toggle: (roomSeq, messageId, emoji) => services.reactionsToggle(roomSeq, messageId, emoji),
+    },
     polls: { caps: async () => ({ enabled: false, selfOnly: false }), create: unsupported, get: unsupported, vote: unsupported, close: unsupported },
     edit: { caps: async () => ({ enabled: false, selfOnly: false }), edit: unsupported, reply: unsupported },
     botSummary: { caps: async () => ({ enabled: false, selfOnly: false }), request: unsupported },
@@ -268,16 +279,23 @@ export function createMobileBridge(opts: MobileBridgeOptions = {}): MobileBridge
     onUpdate: () => () => undefined,
     portal: {
       get: async () => null,
-      refresh: async () => null,
+      refresh: async () => {
+        // Refresh rail badges (approval todo + today's mail) for the phone tab bar.
+        try {
+          const b = await services.portalBadge();
+          for (const cb of [...eventSubs]) cb({ type: "portalBadge", payload: b });
+        } catch { /* best effort */ }
+        return null;
+      },
       open: async (url: string) => void call("app:openExternal", url),
       setActive: async () => undefined,
       menu: async () => ({ items: [], source: "static" as const }),
-      mailFolders: unsupported,
-      mailList: unsupported,
-      mailRead: unsupported,
-      approvalList: unsupported,
-      approvalCounts: async () => ({ todo: 0, upcoming: 0 }),
-      approvalDoc: unsupported,
+      mailFolders: () => services.portal.mailFolders(),
+      mailList: (folder, page, keyword) => services.portal.mailList(folder, page ?? 1, keyword ?? ""),
+      mailRead: (folder, uid) => services.portal.mailRead(folder, uid),
+      approvalList: (box, page, keyword) => services.portal.approvalList(box, page ?? 0, keyword ?? ""),
+      approvalCounts: () => services.portal.approvalCounts(),
+      approvalDoc: (id) => services.portal.approvalDoc(id),
       mailUpload: unsupported,
       mailCaps: async () => ({ delete: false }),
       mailDelete: unsupported,

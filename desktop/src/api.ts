@@ -204,15 +204,17 @@ declare global {
 
 export const api = () => window.ubion;
 
-/** Server-relative image path → authenticated custom protocol URL served by main process. */
+/** Server-relative image path → authenticated URL (Electron: ubion-media://; mobile: resolved by Avatar via bridge). */
 export function media(p?: string | null): string {
   if (!p) return "";
-  if (p.startsWith("data:") || p.startsWith("ubion-media:")) return p;
+  if (p.startsWith("data:") || p.startsWith("blob:") || p.startsWith("ubion-media:")) return p;
   let path = p;
   try {
     if (/^https?:\/\//.test(p)) { const u = new URL(p); path = u.pathname + u.search; }
   } catch { /* keep */ }
   if (!path.startsWith("/")) path = "/" + path;
+  // Capacitor has no custom protocol — Avatar resolves via media:url; return a stable key.
+  if (typeof __UBM_MOBILE__ !== "undefined" && __UBM_MOBILE__) return path;
   return "ubion-media://h" + path;
 }
 

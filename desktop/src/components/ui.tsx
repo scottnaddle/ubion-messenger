@@ -1,12 +1,29 @@
 import type React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Presence } from "../api";
-import { media } from "../api";
+import { api, media } from "../api";
 import { hue, initials } from "../lib/format";
 
 export function Avatar({ name, src, size = 36, presence }: { name: string; src?: string; size?: number; presence?: Presence }) {
   const [broken, setBroken] = useState(false);
-  const url = src && !broken ? media(src) : "";
+  const [resolved, setResolved] = useState("");
+  const raw = src && !broken ? media(src) : "";
+  const mobilePath = typeof __UBM_MOBILE__ !== "undefined" && __UBM_MOBILE__ && raw && !raw.startsWith("data:") && !raw.startsWith("blob:") && !raw.startsWith("ubion-media:");
+  useEffect(() => {
+    if (!mobilePath) {
+      setResolved("");
+      return;
+    }
+    let cancelled = false;
+    setResolved("");
+    api().call<string>("media:url", raw).then((u) => {
+      if (!cancelled) setResolved(u || "");
+    }).catch(() => {
+      if (!cancelled) setResolved("");
+    });
+    return () => { cancelled = true; };
+  }, [mobilePath, raw]);
+  const url = mobilePath ? (broken ? "" : resolved) : (broken ? "" : raw);
   return (
     <span className="avatar" style={{ width: size, height: size, fontSize: size * 0.4, background: url ? undefined : `hsl(${hue(name)} 55% 52%)` }}>
       {url ? <img src={url} alt="" onError={() => setBroken(true)} draggable={false} /> : initials(name)}

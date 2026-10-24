@@ -9,10 +9,27 @@
  * Secrets (token, code, verifier) are never included in errors or logs.
  */
 
-import { createHash, randomBytes } from "node:crypto";
 import { AUTH_MARKER_RE, isAuthMarkerText } from "../../src/lib/markers";
 
 export { AUTH_MARKER_RE, isAuthMarkerText };
+
+function b64url(bytes: Uint8Array): string {
+  // Buffer in Node/Electron; btoa fallback for Capacitor renderer.
+  if (typeof Buffer !== "undefined") return Buffer.from(bytes).toString("base64url");
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+/** PKCE S256 pair via Web Crypto (Node 19+/Electron and Capacitor). */
+export async function makePkceS256(): Promise<{ verifier: string; codeChallenge: string }> {
+  const bytes = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(bytes);
+  const verifier = b64url(bytes);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return { verifier, codeChallenge: b64url(new Uint8Array(digest)) };
+}
+
 
 export const UBM_AUTH_BACKOFF_MS = 60_000;
 export const UBM_AUTH_BACKOFF_MAX_MS = 30 * 60_000;
@@ -54,6 +71,8 @@ export type UbmAuthOptions = {
   pollMs?: number;
   waitMs?: number;
   store?: UbmTokenStore;
+  /** Override PKCE generation (defaults to Web Crypto S256). */
+  makePkce?: () => Promise<{ verifier: string; codeChallenge: string }>;
 };
 
 export type UbmAuth = {
@@ -161,6 +180,7 @@ export function createUbmAuth({
   pollMs = DEFAULT_POLL_MS,
   waitMs = DEFAULT_WAIT_MS,
   store,
+  makePkce = makePkceS256,
 }: UbmAuthOptions): UbmAuth {
   const root = String(baseUrl).replace(/\/+$/, "");
   const pollEvery = Math.max(1, Math.floor(pollMs));
@@ -247,8 +267,7 @@ export function createUbmAuth({
   }
 
   async function requestChallenge(userSeq: number) {
-    const verifier = randomBytes(32).toString("base64url");
-    const codeChallenge = createHash("sha256").update(verifier).digest("base64url");
+    const { verifier, codeChallenge } = await makePkce();
     const doFetch = fetchImpl ?? globalThis.fetch;
 
     let res: Response;

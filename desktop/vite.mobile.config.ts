@@ -21,6 +21,8 @@ export default defineConfig({
       // npm `buffer` package instead of Vite's empty browser stub for the Node builtin.
       { find: /^buffer$/, replacement: resolve(__dirname, "node_modules/buffer/index.js") },
       { find: /^(node:)?events$/, replacement: resolve(__dirname, "src/mobile/shims/events.ts") },
+      // ubm-auth PKCE (randomBytes + sha256) for Capacitor — never Node's crypto.
+      { find: /^(node:)?crypto$/, replacement: resolve(__dirname, "src/mobile/shims/crypto.ts") },
     ],
   },
   build: {

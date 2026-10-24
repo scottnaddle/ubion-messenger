@@ -192,7 +192,7 @@ describe("mobile bridge: disabled features", () => {
     await expect(call("files:sendBuffer", "buddy:2")).rejects.toThrow(UNSUPPORTED);
     await expect(mb.bridge.deleteChatMessages([1])).rejects.toThrow(UNSUPPORTED);
     expect(await call("lock:status")).toEqual({ enabled: false, locked: false, timeoutMin: 0 });
-    expect(await mb.bridge.reactions.caps()).toEqual({ enabled: false });
+    expect(await mb.bridge.reactions.caps()).toEqual({ enabled: true });
     expect(await mb.bridge.polls.caps()).toMatchObject({ enabled: false });
     expect((await mb.bridge.zoom.caps()).enabled).toBe(false);
     expect((await mb.bridge.pubsub.caps()).send).toBe(false);
