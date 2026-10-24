@@ -97,6 +97,7 @@ import { guessMime } from "./core/mime";
 import { buildMediaResponse } from "./core/media-response";
 import { GoogleConnectorHost } from "./core/google-session";
 import {
+  appendGoogleOAuthDebugLog,
   emptyTokenFile,
   isGoogleConnectorId,
   parseTokenFile,
@@ -332,6 +333,7 @@ const googleHost = new GoogleConnectorHost({
   write: writeGoogleTokens,
   openBrowser: (url) => shell.openExternal(url),
   fetchImpl: (url, init) => fetch(url, init),
+  debugLog: (code) => appendGoogleOAuthDebugLog(path.join(app.getPath("userData"), "google-oauth-debug.log"), code),
 });
 
 function googleUser(userId: unknown): number {

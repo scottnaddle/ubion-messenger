@@ -24,6 +24,9 @@ import {
   tokenStatus,
   createOAuthState,
   createPkce,
+  GoogleConnectError,
+  oauthErrorCode,
+  oauthTokenFailureMessage,
   type GoogleConnectorId,
   type GoogleLinkStatus,
   type GoogleTokenFile,
@@ -67,6 +70,8 @@ export class GoogleConnectorHost {
     now?: () => number;
     loopback?: (state: string) => Promise<OAuthLoopback>;
     pkce?: () => { verifier: string; challenge: string; state: string };
+    /** Append-only diagnostic. Receives a sanitized error code, never a token or secret. */
+    debugLog?: (code: string) => void;
   }) {}
 
   private now(): number {
@@ -153,8 +158,20 @@ export class GoogleConnectorHost {
       };
       this.deps.write(putToken(this.deps.read(), userId, id, record));
       return account ? { connected: true, account } : { connected: true };
+    } catch (err) {
+      this.noteOAuthError(err);
+      throw err;
     } finally {
       loop.close();
+    }
+  }
+
+  private noteOAuthError(err: unknown): void {
+    if (!(err instanceof GoogleConnectError) || !this.deps.debugLog) return;
+    try {
+      this.deps.debugLog(err.oauthError);
+    } catch {
+      /* best effort */
     }
   }
 
@@ -167,9 +184,10 @@ export class GoogleConnectorHost {
       codeVerifier: verifier,
     });
     const got = await this.post(req.url, req.body);
-    if (!got || got.status !== 200) throw new Error(TOKEN_FAILED);
+    if (!got) throw new GoogleConnectError(TOKEN_FAILED, "network");
+    if (got.status !== 200) throw new GoogleConnectError(oauthTokenFailureMessage(got.json), oauthErrorCode(got.json));
     const parsed = parseGoogleTokenResponse(got.json, this.now());
-    if (!parsed) throw new Error(TOKEN_FAILED);
+    if (!parsed) throw new GoogleConnectError(TOKEN_FAILED, "token_invalid");
     return parsed;
   }
 
@@ -187,10 +205,16 @@ export class GoogleConnectorHost {
     const got = await this.post(req.url, req.body);
     if (!got) return { error: { ok: false, code: "network", message: LIST_FAILED } };
     if (got.status === 400 && isInvalidGrant(got.json)) {
+      this.noteOAuthError(new GoogleConnectError(REVOKED, "invalid_grant"));
       this.deps.write(dropToken(this.deps.read(), userId, id));
       return { error: { ok: false, code: "revoked", message: REVOKED } };
     }
-    const parsed = got.status === 200 ? parseGoogleTokenResponse(got.json, this.now()) : null;
+    if (got.status !== 200) {
+      const message = oauthTokenFailureMessage(got.json);
+      this.noteOAuthError(new GoogleConnectError(message, oauthErrorCode(got.json)));
+      return { error: { ok: false, code: "token", message } };
+    }
+    const parsed = parseGoogleTokenResponse(got.json, this.now());
     if (!parsed) return { error: { ok: false, code: "token", message: TOKEN_FAILED } };
     const record: GoogleTokenRecord = {
       ...current,

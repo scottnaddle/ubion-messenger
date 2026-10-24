@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import http from "node:http";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { fileURLToPath } from "node:url";
 import {
@@ -12,6 +15,8 @@ import { GoogleConnectorHost, type GoogleFetch } from "../electron/core/google-s
 import {
   GOOGLE_CALENDAR_SCOPE,
   GOOGLE_DRIVE_SCOPE,
+  GoogleConnectError,
+  appendGoogleOAuthDebugLog,
   calendarTodayUrl,
   cleanClientId,
   createPkce,
@@ -20,7 +25,10 @@ import {
   emptyTokenFile,
   googleAuthorizeUrl,
   googleTokenRequest,
+  isGoogleAuthCode,
   localDayRange,
+  oauthCallbackMessage,
+  oauthTokenFailureMessage,
   openOAuthLoopback,
   parseCalendarEvents,
   parseDriveFiles,
@@ -37,6 +45,24 @@ const CLIENT = "1234567890-alpha.apps.googleusercontent.com";
 
 function jsonResponse(status: number, body: unknown) {
   return { status, json: async () => body };
+}
+
+function rawGet(redirectUri: string, query: string): Promise<{ status: number; body: string }> {
+  const u = new URL(redirectUri);
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port: u.port,
+      path: `${u.pathname}?${query}`,
+      method: "GET",
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk) => chunks.push(chunk as Buffer));
+      res.on("end", () => resolve({ status: res.statusCode || 0, body: Buffer.concat(chunks).toString("utf8") }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
 }
 
 describe("google oauth protocol", () => {
@@ -152,6 +178,85 @@ describe("google oauth protocol", () => {
     await pending;
     denied.close();
   });
+
+  it("accepts a Google authorization code that contains a slash", async () => {
+    expect(isGoogleAuthCode("4/P7q7W91a-oMsCeLvIaQm6bTrgtp7")).toBe(true);
+    expect(isGoogleAuthCode("short")).toBe(false);
+    expect(isGoogleAuthCode("4/has space")).toBe(false);
+    const code = "4/0A-P7q7W91a.oMsCeLv_~+xyz";
+    const loop = await openOAuthLoopback("expected-state-value", 2000);
+    const ok = await rawGet(loop.redirectUri, `code=${encodeURIComponent(code)}&state=expected-state-value`);
+    expect(ok.status).toBe(200);
+    expect(ok.body).toContain("연결되었습니다");
+    expect(ok.body).not.toContain(code);
+    expect(ok.body).not.toContain("4/0A");
+    await expect(loop.done).resolves.toBe(code);
+    loop.close();
+
+    const plus = await openOAuthLoopback("expected-state-value", 2000);
+    const plusRes = await rawGet(plus.redirectUri, "code=4%2F0Aabc+def&state=expected-state-value");
+    expect(plusRes.status).toBe(200);
+    await expect(plus.done).resolves.toBe("4/0Aabc+def");
+    plus.close();
+  });
+
+  it("turns Google callback errors into distinct Korean hints without secrets", async () => {
+    const testing = "The developer has not given you access. It is currently being tested and it has not been verified by Google. code=4/0ASECRETCODE ya29.SUPERSECRETTOKEN";
+    expect(oauthCallbackMessage("access_denied", testing)).toContain("취소");
+    expect(oauthCallbackMessage("access_denied", testing)).toContain("cwdaddy@gmail.com");
+    expect(oauthCallbackMessage("access_denied", testing)).toContain("edtechnewsroom@gmail.com");
+    expect(oauthCallbackMessage("access_denied", testing)).toContain("access_denied");
+    expect(oauthCallbackMessage("access_denied", testing)).not.toContain("4/0A");
+    expect(oauthCallbackMessage("access_denied", testing)).not.toContain("ya29");
+    expect(oauthCallbackMessage("access_denied", "The user did not consent")).not.toContain("cwdaddy");
+    expect(oauthCallbackMessage("redirect_uri_mismatch", "Bad redirect")).toContain("리다이렉트");
+    expect(oauthCallbackMessage("invalid_client", "Unauthorized")).toContain("google-oauth.json");
+    expect(oauthCallbackMessage("server_error", "temporarily down")).toContain("server_error");
+    const unsafe = oauthCallbackMessage("not a code", "x");
+    expect(unsafe).toContain("unknown: x");
+    expect(unsafe).not.toContain("not a code");
+
+    const loop = await openOAuthLoopback("expected-state-value", 2000);
+    const failed = loop.done.then(() => { throw new Error("expected reject"); }, (err: unknown) => err);
+    const res = await rawGet(loop.redirectUri, `error=access_denied&error_description=${encodeURIComponent(testing)}&state=expected-state-value`);
+    expect(res.status).toBe(400);
+    expect(res.body).toContain("cwdaddy@gmail.com");
+    expect(res.body).not.toContain("<script>");
+    expect(res.body).not.toContain("4/0A");
+    expect(res.body).not.toContain("ya29");
+    const err = await failed;
+    expect(err).toBeInstanceOf(GoogleConnectError);
+    expect((err as GoogleConnectError).oauthError).toBe("access_denied");
+    expect((err as Error).message).toContain("edtechnewsroom@gmail.com");
+    loop.close();
+
+    const mismatch = await openOAuthLoopback("expected-state-value", 2000);
+    const mismatchErr = mismatch.done.then(() => { throw new Error("expected reject"); }, (e: unknown) => e);
+    const page = await rawGet(mismatch.redirectUri, "error=redirect_uri_mismatch&error_description=%3Cscript%3Ealert(1)%3C%2Fscript%3E");
+    expect(page.body).toContain("리다이렉트");
+    expect(page.body).toContain("&lt;script&gt;");
+    expect(page.body).not.toContain("<script>");
+    expect((await mismatchErr as GoogleConnectError).oauthError).toBe("redirect_uri_mismatch");
+    mismatch.close();
+  });
+
+  it("writes only the error code to the debug log", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "ubm-oauth-"));
+    const file = path.join(dir, "google-oauth-debug.log");
+    try {
+      appendGoogleOAuthDebugLog(file, "invalid_client");
+      appendGoogleOAuthDebugLog(file, "access_denied ya29.SHOULD_NOT_APPEAR 4/0Asecret");
+      const text = readFileSync(file, "utf8");
+      expect(text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z invalid_client\n/);
+      expect(text).toContain("unknown");
+      expect(text).not.toContain("ya29");
+      expect(text).not.toContain("4/0A");
+      expect(text).not.toContain("SHOULD");
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("google connector host", () => {
@@ -230,5 +335,68 @@ describe("google connector host", () => {
       loopback: async () => { throw new Error("should not listen"); },
     });
     await expect(host.connect(7, "google-calendar")).rejects.toThrow("UBM_GOOGLE_CLIENT_ID");
+  });
+
+  it("surfaces the token endpoint error and logs only that code", async () => {
+    const logged: string[] = [];
+    let body = "";
+    const host = new GoogleConnectorHost({
+      config: () => ({ clientId: CLIENT, clientSecret: "local-only-secret" }),
+      read: () => emptyTokenFile(),
+      write: () => { throw new Error("should not store"); },
+      openBrowser: async () => {},
+      fetchImpl: async (_url, init) => {
+        body = init?.body || "";
+        return jsonResponse(401, {
+          error: "invalid_client",
+          error_description: "The OAuth client was not found. client_secret=GOCSPX-supersecretvalue",
+        });
+      },
+      loopback: async () => ({
+        redirectUri: "http://127.0.0.1:9/callback",
+        done: Promise.resolve("4/0A-auth-code"),
+        close() {},
+      }),
+      debugLog: (code) => logged.push(code),
+    });
+    let caught: Error | undefined;
+    try {
+      await host.connect(7, "google-calendar");
+    } catch (err) {
+      caught = err as Error;
+    }
+    expect(caught?.message).toContain("Google 토큰을 받지 못했습니다.");
+    expect(caught?.message).toContain("클라이언트 ID 또는 비밀번호를 확인해 주세요.");
+    expect(caught?.message).toContain("invalid_client");
+    expect(caught?.message).toContain("The OAuth client was not found.");
+    expect(caught?.message).not.toContain("GOCSPX");
+    expect(caught?.message).not.toContain("local-only-secret");
+    expect(caught?.message).not.toContain("4/0A");
+    expect(body).toContain("client_secret=local-only-secret");
+    expect(body).toContain("code=4%2F0A-auth-code");
+    expect(logged).toEqual(["invalid_client"]);
+    expect(JSON.stringify(logged)).not.toContain("local-only-secret");
+    expect(JSON.stringify(logged)).not.toContain("4/0A");
+    expect(oauthTokenFailureMessage({ error: "redirect_uri_mismatch", error_description: "mismatch" })).toContain("리다이렉트");
+    expect(oauthTokenFailureMessage(null)).toBe("Google 토큰을 받지 못했습니다.");
+  });
+
+  it("logs access_denied from the callback and keeps the cancel wording", async () => {
+    const logged: string[] = [];
+    const message = oauthCallbackMessage("access_denied", "currently being tested and hasn't been verified");
+    const done = Promise.reject(new GoogleConnectError(message, "access_denied"));
+    done.catch(() => {});
+    const host = new GoogleConnectorHost({
+      config: () => ({ clientId: CLIENT }),
+      read: () => emptyTokenFile(),
+      write: () => { throw new Error("should not store"); },
+      openBrowser: async () => {},
+      fetchImpl: async () => { throw new Error("should not fetch"); },
+      loopback: async () => ({ redirectUri: "http://127.0.0.1:9/callback", done, close() {} }),
+      debugLog: (code) => logged.push(code),
+    });
+    await expect(host.connect(7, "google-drive")).rejects.toThrow(/취소/);
+    expect(logged).toEqual(["access_denied"]);
+    expect(message).toContain("cwdaddy@gmail.com");
   });
 });

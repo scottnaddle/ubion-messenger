@@ -3,6 +3,7 @@
  * PKCE + loopback. No client secret in this module. Tokens are not logged.
  */
 import http from "node:http";
+import fs from "node:fs";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { AddressInfo } from "node:net";
 
@@ -341,6 +342,156 @@ export function dropToken(file: GoogleTokenFile, userId: number, id: GoogleConne
 const SUCCESS_HTML = "<!doctype html><meta charset=\"utf-8\"><title>UBION</title><p>연결되었습니다. 이 창을 닫아도 됩니다.</p>";
 const FAIL_HTML = "<!doctype html><meta charset=\"utf-8\"><title>UBION</title><p>연결하지 못했습니다. 메신저로 돌아가 주세요.</p>";
 
+const OAUTH_ERROR_CODE_RE = /^[a-z0-9_]{1,64}$/;
+/**
+ * Google authorization codes include a slash (docs example: `4/P7q7...`).
+ * An allowlist without `/` rejects the callback after the user has already consented.
+ */
+const AUTH_CODE_RE = /^[A-Za-z0-9._~+/=-]{8,512}$/;
+
+export function sanitizeOAuthErrorCode(value: unknown): string {
+  if (typeof value !== "string") return "unknown";
+  const code = value.trim().toLowerCase();
+  return OAUTH_ERROR_CODE_RE.test(code) ? code : "unknown";
+}
+
+/** Short, single-line detail safe to show in a toast. Drops tokens, codes, and secrets. */
+export function sanitizeOAuthDetail(value: unknown, max = 160): string {
+  if (typeof value !== "string") return "";
+  const secretish = /(?:ya29\.[A-Za-z0-9._-]+|1\/\/\S+|GOCSPX-[A-Za-z0-9_-]+|4\/[A-Za-z0-9._~+/=-]{8,}|(?:access_token|refresh_token|id_token|client_secret|code_verifier|client_id|code)=[^\s&]+|[A-Za-z0-9._~+/=-]{40,})/gi;
+  return value
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(secretish, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+export function isGoogleAuthCode(code: string): boolean {
+  return AUTH_CODE_RE.test(code);
+}
+
+function mentionsTestingOrVerification(description: string): boolean {
+  return /testing|verification|verified|unverified|\btested\b|test user|테스트|검증/i.test(description);
+}
+
+function withOAuthDetail(message: string, code: string, description: string): string {
+  const suffix = description ? ` (${code}: ${description})` : ` (${code})`;
+  return `${message}${suffix}`;
+}
+
+/** Korean toast for a loopback `error` / `error_description`. */
+export function oauthCallbackMessage(errorCode: string, description: unknown): string {
+  const code = sanitizeOAuthErrorCode(errorCode);
+  const detail = sanitizeOAuthDetail(description);
+  if (code === "access_denied") {
+    const base = mentionsTestingOrVerification(detail)
+      ? "Google 연결이 취소되었습니다. GCP 테스트 사용자(cwdaddy@gmail.com 또는 edtechnewsroom@gmail.com)로 로그인해 주세요."
+      : "Google 연결이 취소되었습니다.";
+    return withOAuthDetail(base, code, detail);
+  }
+  if (code === "redirect_uri_mismatch") {
+    return withOAuthDetail("Google 리다이렉트 주소가 일치하지 않습니다. Desktop 클라이언트인지 확인해 주세요.", code, detail);
+  }
+  if (code === "invalid_client") {
+    return withOAuthDetail("Google 클라이언트 ID 또는 비밀번호가 올바르지 않습니다. google-oauth.json을 확인해 주세요.", code, detail);
+  }
+  return withOAuthDetail("Google 연결을 확인하지 못했습니다.", code, detail);
+}
+
+function readGoogleOAuthError(payload: unknown): { code: string; description: string } | null {
+  if (!payload || typeof payload !== "object") return null;
+  const error = (payload as { error?: unknown }).error;
+  if (typeof error !== "string" || !error.trim()) return null;
+  return {
+    code: sanitizeOAuthErrorCode(error),
+    description: sanitizeOAuthDetail((payload as { error_description?: unknown }).error_description),
+  };
+}
+
+/** Korean toast when the token endpoint is not HTTP 200. */
+export function oauthTokenFailureMessage(payload: unknown): string {
+  const base = "Google 토큰을 받지 못했습니다.";
+  const parsed = readGoogleOAuthError(payload);
+  if (!parsed) return base;
+  if (parsed.code === "invalid_client") {
+    return withOAuthDetail(`${base} 클라이언트 ID 또는 비밀번호를 확인해 주세요.`, parsed.code, parsed.description);
+  }
+  if (parsed.code === "redirect_uri_mismatch") {
+    return withOAuthDetail(`${base} 리다이렉트 주소가 일치하지 않습니다.`, parsed.code, parsed.description);
+  }
+  return withOAuthDetail(base, parsed.code, parsed.description);
+}
+
+/** Log token only. Never the description, auth code, or secret. */
+export function oauthErrorCode(payload: unknown): string {
+  return readGoogleOAuthError(payload)?.code ?? "token_failed";
+}
+
+export class GoogleConnectError extends Error {
+  readonly oauthError: string;
+  constructor(message: string, oauthError: string) {
+    super(message);
+    this.name = "GoogleConnectError";
+    this.oauthError = sanitizeOAuthErrorCode(oauthError);
+  }
+}
+
+/** One line in userData/google-oauth-debug.log: ISO time and a sanitized error code. Mode 0600. */
+export function appendGoogleOAuthDebugLog(
+  filePath: string,
+  code: string,
+  io: Pick<typeof fs, "appendFileSync" | "chmodSync" | "statSync" | "renameSync"> = fs,
+): void {
+  const line = `${new Date().toISOString()} ${sanitizeOAuthErrorCode(code)}\n`;
+  try {
+    try {
+      if (io.statSync(filePath).size > 64 * 1024) io.renameSync(filePath, `${filePath}.1`);
+    } catch {
+      /* new file */
+    }
+    io.appendFileSync(filePath, line, { mode: 0o600 });
+    io.chmodSync(filePath, 0o600);
+  } catch {
+    /* best effort */
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function failPage(message: string): string {
+  return `<!doctype html><meta charset="utf-8"><title>UBION</title><p>${escapeHtml(message)}</p>`;
+}
+
+/** Read `code` without turning a literal `+` into a space. */
+function readAuthCode(search: string): string {
+  const q = search.startsWith("?") ? search.slice(1) : search;
+  for (const part of q.split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    let key = "";
+    try {
+      key = decodeURIComponent(part.slice(0, eq).replace(/\+/g, "%2B"));
+    } catch {
+      continue;
+    }
+    if (key !== "code") continue;
+    try {
+      return decodeURIComponent(part.slice(eq + 1).replace(/\+/g, "%2B"));
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 export type OAuthLoopback = {
   redirectUri: string;
   done: Promise<string>;
@@ -387,18 +538,28 @@ export function openOAuthLoopback(expectedState: string, timeoutMs = 180_000): P
         return;
       }
       const error = url.searchParams.get("error");
-      const code = url.searchParams.get("code") || "";
+      const description = url.searchParams.get("error_description");
+      const code = readAuthCode(url.search);
       const state = url.searchParams.get("state") || "";
       settled = true;
       clearTimeout(timer);
       if (error) {
-        write(400, FAIL_HTML);
-        fail(new Error(error === "access_denied" ? "Google 연결이 취소되었습니다." : "Google 연결을 확인하지 못했습니다."));
+        const safeCode = sanitizeOAuthErrorCode(error);
+        const message = oauthCallbackMessage(safeCode, description);
+        write(400, failPage(message));
+        fail(new GoogleConnectError(message, safeCode));
         return;
       }
-      if (!sameState(state, expectedState) || !/^[A-Za-z0-9._~-]{8,512}$/.test(code)) {
-        write(400, FAIL_HTML);
-        fail(new Error("Google 연결을 확인하지 못했습니다."));
+      if (!sameState(state, expectedState)) {
+        const message = "Google 연결을 확인하지 못했습니다. 응답 state가 일치하지 않습니다.";
+        write(400, failPage(message));
+        fail(new GoogleConnectError(message, "invalid_state"));
+        return;
+      }
+      if (!isGoogleAuthCode(code)) {
+        const message = "Google 연결을 확인하지 못했습니다. 인증 코드가 올바르지 않습니다.";
+        write(400, failPage(message));
+        fail(new GoogleConnectError(message, "invalid_code"));
         return;
       }
       write(200, SUCCESS_HTML);
@@ -407,7 +568,7 @@ export function openOAuthLoopback(expectedState: string, timeoutMs = 180_000): P
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      fail(new Error("Google 연결 시간이 초과되었습니다."));
+      fail(new GoogleConnectError("Google 연결 시간이 초과되었습니다.", "timeout"));
       server.close();
     }, timeoutMs);
     timer.unref?.();
