@@ -6,6 +6,7 @@ import { flavorProfile } from "../../electron/core/flavor";
 import type {
   ApprovalDoc, BoardPost, CalendarEvent, MailItem, PortalBadge, PortalNoti, PortalSummary, PortalWidgetId, PortalWidgetState,
 } from "../../electron/core/portal";
+import { approvalOpenTarget, mailOpenTarget, type ApprovalOpenTarget, type MailOpenTarget } from "../lib/home-open";
 
 type Snap = { summary: PortalSummary | null; badge: PortalBadge; widgets: Partial<Record<PortalWidgetId, PortalWidgetState>> };
 
@@ -54,7 +55,14 @@ function Empty({ show, text }: { show: boolean; text: string }) {
   return show ? <div className="muted small home-empty">{text}</div> : null;
 }
 
-export function Home({ onLocal, showFlex = flavorProfile().flex }: { onLocal?: (v: "mail" | "approval" | "flex") => void; showFlex?: boolean }) {
+export function Home({
+  onLocal, onOpenMail, onOpenApproval, showFlex = flavorProfile().flex,
+}: {
+  onLocal?: (v: "mail" | "approval" | "flex") => void;
+  onOpenMail?: (target: MailOpenTarget) => void;
+  onOpenApproval?: (target: ApprovalOpenTarget) => void;
+  showFlex?: boolean;
+}) {
   const t = useT();
   const [snap, setSnap] = useState<Snap | null>(null);
   const [busy, setBusy] = useState(false);
@@ -95,6 +103,22 @@ export function Home({ onLocal, showFlex = flavorProfile().flex }: { onLocal?: (
   const mail = w.mail?.data as ({ items: MailItem[]; total: number; today?: number }) | undefined;
   const chips = snap?.summary?.chips || [];
   const openFlex = () => (onLocal ? onLocal("flex") : open("https://flex.team/home/todo/inbox"));
+  const openMail = (m: MailItem) => {
+    const target = mailOpenTarget(m);
+    if (target && onOpenMail) {
+      onOpenMail(target);
+      return;
+    }
+    open(m.url);
+  };
+  const openApproval = (d: ApprovalDoc, box: "todo" | "upcoming") => {
+    const target = approvalOpenTarget(d, box);
+    if (target && onOpenApproval) {
+      onOpenApproval(target);
+      return;
+    }
+    open(d.url);
+  };
 
   return (
     <div className="home">
@@ -121,7 +145,7 @@ export function Home({ onLocal, showFlex = flavorProfile().flex }: { onLocal?: (
           </button>
         )}
       </div>
-      <p className="muted tiny home-hint">{t("항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.")}</p>
+      <p className="muted tiny home-hint">{t("메일·결재 항목은 앱에서 열리고, 다른 항목은 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.")}</p>
       <div className="home-grid">
         <Card title={t("전사게시판 최근글")} webUrl="/app/board" state={w.posts}>
           <ul>{posts?.items.map((p) => (
@@ -149,7 +173,7 @@ export function Home({ onLocal, showFlex = flavorProfile().flex }: { onLocal?: (
         </Card>
         <Card title={t("결재 대기")} count={todo?.total ?? snap?.badge.approval} webUrl="/app/approval" state={w.approvalTodo}>
           <ul>{todo?.items.map((d) => (
-            <li key={d.id}><button onClick={() => open(d.url)}>
+            <li key={d.id}><button onClick={() => openApproval(d, "todo")}>
               <span className="tag">{d.formName}</span> <span className="ellipsis">{d.title}</span>
               {d.emergency && <span className="badge"> {t("긴급")}</span>}
             </button></li>))}</ul>
@@ -157,7 +181,7 @@ export function Home({ onLocal, showFlex = flavorProfile().flex }: { onLocal?: (
           {!!upcoming?.items.length && <>
             <h4 className="muted small">{t("결재 예정 {n}", { n: upcoming.total })}</h4>
             <ul>{upcoming.items.map((d) => (
-              <li key={d.id}><button onClick={() => open(d.url)}><span className="tag">{d.formName}</span> <span className="ellipsis">{d.title}</span></button></li>))}</ul>
+              <li key={d.id}><button onClick={() => openApproval(d, "upcoming")}><span className="tag">{d.formName}</span> <span className="ellipsis">{d.title}</span></button></li>))}</ul>
           </>}
         </Card>
         <Card title={t("읽지 않은 알림")} count={snap?.badge.noti} webUrl="/app/home" state={w.noti}>
@@ -170,7 +194,7 @@ export function Home({ onLocal, showFlex = flavorProfile().flex }: { onLocal?: (
         </Card>
         <Card title={t("메일 · 오늘 온 메일")} count={mail?.today ?? snap?.badge.mail} webUrl="/app/mail?work=quick&folder=today" state={w.mail}>
           <ul>{mail?.items.map((m) => (
-            <li key={`${m.folderFullName}/${m.id}`}><button onClick={() => open(m.url)} className={m.seen ? "" : "unseen"}>
+            <li key={`${m.folderFullName}/${m.id}`}><button onClick={() => openMail(m)} className={m.seen ? "" : "unseen"}>
               {!m.seen && <span className="dot">●</span>} <b>{m.from}</b> · <span className="ellipsis">{m.subject}</span>
             </button></li>))}</ul>
           <Empty show={!!mail && !mail.items.length} text={t("메일이 없습니다")} />

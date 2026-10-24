@@ -186,7 +186,7 @@ const dict: Record<string, string> = {
   "홈": "Trang chủ",
   "마지막 {time}": "Lần cuối {time}",
   "flex 승인 대기": "flex chờ duyệt",
-  "항목을 누르면 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.": "Nhấn vào mục để mở trong cửa sổ cổng thông tin (có thể đổi sang trình duyệt ngoài trong Cài đặt). Khi mở, mục có thể được đánh dấu đã đọc.",
+  "메일·결재 항목은 앱에서 열리고, 다른 항목은 포털 창에서 열립니다(설정에서 외부 브라우저로 변경 가능). 열면 읽음 처리될 수 있습니다.": "Mục thư và phê duyệt mở trong ứng dụng. Các mục khác mở trong cửa sổ cổng thông tin (có thể đổi sang trình duyệt ngoài trong Cài đặt). Khi mở, mục có thể được đánh dấu đã đọc.",
   "전사게시판 최근글": "Bài viết mới trên bảng tin công ty",
   "최근 글이 없습니다": "Không có bài viết mới",
   "휴가·근무 승인 요청 보기": "Xem yêu cầu duyệt nghỉ phép·chấm công",
