@@ -64,11 +64,13 @@ export function App() {
   const [flexPending, setFlexPending] = useState<number | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeKey;
-  /** Capacitor build: portal views (home/mail/flex/apps/approval) are not ported; phones get a single pane. */
+  /** Capacitor: phone-first IA — chats / mail / approval / people (+ settings modal). No home/flex/menu. */
   const mobileUi = isMobileUi();
   const compact = useIsCompact();
   useEffect(() => {
-    if (mobileUi && view !== "chats" && view !== "people") setView("chats");
+    if (!mobileUi) return;
+    const ok = view === "chats" || view === "people" || view === "mail" || view === "approval";
+    if (!ok) setView("chats");
   }, [mobileUi, view]);
 
   const toast = useCallback((text: string, kind: Toast["kind"] = "error", action?: ToastAction) => {
@@ -401,7 +403,7 @@ export function App() {
     <div className={`app${compact ? " compact" : ""}${compactChat ? " compact-chat" : ""}`}>
       <nav className="rail">
         <div className="rail-drag" />
-        <div className="logo-mark" title="UBION Messenger">U</div>
+        {!mobileUi && <div className="logo-mark" title="UBION Messenger">U</div>}
         {!mobileUi && (
           <RailButton id="home" active={view === "home"} onClick={() => setView("home")}>
             <Icon name="home" size={23} />
@@ -409,10 +411,17 @@ export function App() {
           </RailButton>
         )}
         <RailButton id="chats" active={view === "chats"} onClick={() => setView("chats")}>
-          <Icon name="chat" size={23} />
+          <Icon name="chat" size={mobileUi ? 22 : 23} />
+          {mobileUi && <span className="rail-label">{t("대화")}</span>}
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
         </RailButton>
-        {!mobileUi && (
+        {mobileUi ? (
+          <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
+            <Icon name="mail" size={22} />
+            <span className="rail-label">{t("메일")}</span>
+            {portalBadge.mail > 0 && <span className="rail-badge">{portalBadge.mail > 99 ? "99+" : portalBadge.mail}</span>}
+          </RailButton>
+        ) : (
           <>
             <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
               <Icon name="mail" size={23} />
@@ -423,8 +432,16 @@ export function App() {
             </RailButton>
           </>
         )}
+        {mobileUi ? (
+          <RailButton id="approval" active={view === "approval"} onClick={() => setView("approval")}>
+            <Icon name="approval" size={22} />
+            <span className="rail-label">{t("결재")}</span>
+            {portalBadge.approval > 0 && <span className="rail-badge">{portalBadge.approval > 99 ? "99+" : portalBadge.approval}</span>}
+          </RailButton>
+        ) : null}
         <RailButton id="people" active={view === "people"} onClick={() => setView("people")}>
-          <Icon name="people" size={23} />
+          <Icon name="people" size={mobileUi ? 22 : 23} />
+          {mobileUi && <span className="rail-label">{t("사람들")}</span>}
         </RailButton>
         {!mobileUi && (
           <>
@@ -439,11 +456,14 @@ export function App() {
         )}
         <div className="rail-spacer" />
         <RailButton id="settings" onClick={() => setShowSettings(true)}>
-          <Icon name="gear" size={23} />
+          <Icon name="gear" size={mobileUi ? 22 : 23} />
+          {mobileUi && <span className="rail-label">{t("설정")}</span>}
         </RailButton>
-        <RailProfile name={user.name} className="rail-me">
-          <Avatar name={user.name} src={user.thumbnail} size={32} presence={conn === "online" ? "online" : "offline"} />
-        </RailProfile>
+        {!mobileUi && (
+          <RailProfile name={user.name} className="rail-me">
+            <Avatar name={user.name} src={user.thumbnail} size={32} presence={conn === "online" ? "online" : "offline"} />
+          </RailProfile>
+        )}
       </nav>
       <div className="main">
         <UpdateBanner />

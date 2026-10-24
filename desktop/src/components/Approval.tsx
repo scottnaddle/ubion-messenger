@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
 import { tk, useT } from "../lib/i18n";
+import { isMobileUi } from "../lib/compact";
 import { sanitizeHtml } from "../lib/sanitize";
 import {
   APPROVAL_BOXES, APPROVAL_BOX_LABELS,
@@ -69,6 +70,7 @@ export const canAct = (d: ApprovalDocumentDetail) =>
 
 export function Approval() {
   const t = useT();
+  const mobile = isMobileUi();
   const [box, setBox] = useState<ApprovalBox>("todo");
   const [page, setPage] = useState(0);
   const [kw, setKw] = useState("");
@@ -295,13 +297,15 @@ export function Approval() {
                 <span className="tag">{detail.document.formName}</span>
                 <h3>{detail.document.title || t("(제목 없음)")}</h3>
               </div>
-              <div className="approval-actions">
+              {!mobile && (
+<div className="approval-actions">
                 {canAct(detail) && <>
                   <button className="primary small" onClick={() => ask("approve")}>{t("승인")}</button>
                   <button className="danger-btn" onClick={() => ask("return")}>{t("반려")}</button>
                 </>}
                 <button className="link" onClick={() => open(docUrl(detail.document.id))}>{t("웹에서 열기")}</button>
               </div>
+              )}
             </header>
             <div className="approval-meta">
               <span>{detail.document.docStatusName}</span>
@@ -345,7 +349,7 @@ export function Approval() {
         )}
       </section>
       {toast && <div className="approval-toast" role="status">{toast}</div>}
-      {action && (
+      {action && !mobile && (
         <div className="modal-back" onClick={() => !acting && setAction(null)}>
           <div className="modal approval-action-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="modal-body">

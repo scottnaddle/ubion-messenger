@@ -13,10 +13,20 @@ html.ubm-mobile body {
   -webkit-tap-highlight-color: transparent;
 }
 html.ubm-mobile body {
-  /* notch / home indicator / rounded corners */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  /* Capacitor already uses viewport-fit=cover — do NOT pad body top (that double-gaps under the status bar).
+     Left/right keep content off rounded corners; sticky headers own the top inset. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
   box-sizing: border-box;
 }
+/* Sticky headers absorb the notch / Dynamic Island inset */
+html.ubm-mobile .chat-head,
+html.ubm-mobile .side-head,
+html.ubm-mobile .login-card,
+html.ubm-mobile .mail-pane-folders .side-head,
+html.ubm-mobile .approval-boxes .side-head {
+  padding-top: calc(10px + env(safe-area-inset-top));
+}
+html.ubm-mobile .chat-head { padding-top: calc(10px + env(safe-area-inset-top)); }
 html.ubm-mobile #root { height: 100%; }
 
 /* desktop-only chrome: window drag areas, tooltips with keyboard hints */
@@ -110,3 +120,47 @@ html.ubm-mobile .composer textarea { min-width: 0; }
 /* mock bridge (?mock=1) reports darwin: drop the macOS traffic-light padding */
 html.ubm-mobile[data-platform="darwin"] .rail { padding-top: 10px; }
 html.ubm-mobile .app.compact .rail { padding-top: 4px; }
+
+/* ---------- phone-first tab bar labels ---------- */
+html.ubm-mobile .app.compact .rail-btn {
+  flex-direction: column;
+  gap: 2px;
+  width: auto;
+  min-width: 56px;
+  height: auto;
+  min-height: 52px;
+  padding: 4px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .72);
+}
+html.ubm-mobile .app.compact .rail-btn.on { color: #fff; }
+html.ubm-mobile .app.compact .rail-btn .rail-label {
+  display: block;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html.ubm-mobile .app.compact .rail-btn svg { flex: none; }
+/* Desktop rail has no labels in the button; hide if present outside compact */
+html.ubm-mobile .app:not(.compact) .rail-btn .rail-label { display: none; }
+
+/* Simplify mail/approval chrome on phone */
+@media (max-width: 767px) {
+  html.ubm-mobile .mail,
+  html.ubm-mobile .approval { flex-direction: column; }
+  html.ubm-mobile .mail-pane-folders,
+  html.ubm-mobile .approval-boxes { width: 100%; max-width: none; border-right: 0; }
+}
+
+/* Phone-first: no mutating mail/approval actions (list+detail only) */
+html.ubm-mobile .approval-actions,
+html.ubm-mobile .mail-write,
+html.ubm-mobile .compose-discard,
+html.ubm-mobile .mail .modal.compose-discard { display: none !important; }
+/* Hide "메일 쓰기" primary buttons in mail chrome */
+html.ubm-mobile .mail-pane-folders .primary.small,
+html.ubm-mobile .mail-overview .primary.small { display: none !important; }

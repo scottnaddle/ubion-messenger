@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./ui";
 import { useT } from "../lib/i18n";
+import { isMobileUi } from "../lib/compact";
 import { sanitizeMailHtml } from "../lib/sanitize";
 import { fileIcon } from "../../electron/core/attach";
 import { applyMailDelete, isTrashFolder } from "../../electron/core/mail";
@@ -120,6 +121,7 @@ function Overview({ page, inboxUnread, folders, onSender, onPick, onWrite }: {
 }
 
 export function Mail() {
+  const mobile = isMobileUi();
   const t = useT();
   const [folders, setFolders] = useState<MailFolders | null>(null);
   const [folderErr, setFolderErr] = useState("");
@@ -274,9 +276,9 @@ export function Mail() {
             <Icon name="refresh" size={18} />
           </button>
         </div>
-        <button className="primary small mail-write" onClick={() => startCompose("new")} title={t("새 메일 쓰기")}>
+        {!mobile && (<button className="primary small mail-write" onClick={() => startCompose("new")} title={t("새 메일 쓰기")}>
           <Icon name="plus" size={15} /> {t("메일 쓰기")}
-        </button>
+        </button>)}
         <div className="mail-folders">
           {folderErr && <div className="mail-error"><span>{folderErr}</span><button className="link" onClick={() => void loadFolders()}>{t("다시 시도")}</button></div>}
           {!folders && !folderErr && <div className="muted small pad">{t("불러오는 중…")}</div>}

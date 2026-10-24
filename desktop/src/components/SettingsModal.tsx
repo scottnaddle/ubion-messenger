@@ -5,6 +5,7 @@ import { useUpdateStatus } from "./UpdateBanner";
 import { THEME_MAX_BYTES, THEME_PRESETS, type ThemePresetId, type ThemeState } from "../../electron/core/theme";
 import { DND_DAY_LABELS } from "../../electron/core/dnd";
 import { LANGUAGES, LANGUAGE_NAMES, tk, useT, type Language } from "../lib/i18n";
+import { isMobileUi } from "../lib/compact";
 
 const PRESET_LABELS: Record<ThemePresetId, string> = { default: tk("기본"), blue: tk("블루"), green: tk("그린"), purple: tk("퍼플") };
 
@@ -12,6 +13,7 @@ export function SettingsModal({
   settings, i18nEnabled = false, user, onChange, onClose, onLogout,
 }: { settings: Settings; i18nEnabled?: boolean; user: SessionUser; onChange: (s: Settings) => void; onClose: () => void; onLogout: () => void }) {
   const t = useT();
+  const mobile = isMobileUi();
   const [info, setInfo] = useState<{ version: string; platform: string; encryption: boolean } | null>(null);
   const [lock, setLock] = useState<LockStatus | null>(null);
   const [lockCurrentPin, setLockCurrentPin] = useState("");
@@ -166,7 +168,7 @@ export function SettingsModal({
             <button className="danger-btn" onClick={onLogout}>{t("로그아웃")}</button>
           </section>
           <h4>{t("화면")}</h4>
-          {i18nEnabled && (
+          {i18nEnabled && !mobile && (
             <div className="row">
               <div>{t("언어")}</div>
               <select value={settings.language || "ko"} onChange={(e) => set({ language: e.target.value as Language })}>
@@ -194,6 +196,8 @@ export function SettingsModal({
               ))}
             </div>
           </div>
+          {!mobile && (
+            <>
           <div className="row">
             <div>
               <div>{t("사용자 테마")}</div>
@@ -224,10 +228,14 @@ export function SettingsModal({
             </div>
           )}
           {themeMsg && <div className={themeMsg.error ? "lock-error" : "muted tiny"}>{themeMsg.text}</div>}
+            </>
+          )}
           <div className="row">
             <div>{t("글자 크기")}</div>
             <input type="range" min={12} max={18} value={settings.fontSize} onChange={(e) => set({ fontSize: Number(e.target.value) })} />
           </div>
+          {!mobile && (
+            <>
           <h4>{t("알림")}</h4>
           <Toggle k="notifications" label={t("데스크톱 알림")} />
           <Toggle k="notificationPreview" label={t("알림에 메시지 내용 표시")} disabled={!settings.notifications} />
@@ -388,6 +396,8 @@ export function SettingsModal({
           <h4>{t("업데이트")}</h4>
           <UpdateRow />
           <Toggle k="autoUpdate" label={t("자동으로 업데이트 확인")} desc={t("시작할 때와 4시간마다 확인합니다")} />
+            </>
+          )}
           <p className="muted tiny about">UBION Messenger {info?.version} · {info?.platform}</p>
         </div>
       </div>

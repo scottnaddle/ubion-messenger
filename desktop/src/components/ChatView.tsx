@@ -42,6 +42,7 @@ import {
 import { LinkPreview } from "./LinkPreview";
 import { ReactionBar, ReactionPopup, type ReactionPickerState } from "./Reactions";
 import { REACTION_EMOJI, REACTION_ROOM_FORBIDDEN } from "../../electron/core/reactions";
+import { isMobileUi } from "../lib/compact";
 import { PollCard, PollCreateModal } from "./PollCard";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
@@ -1553,7 +1554,7 @@ function Composer({
         ref={ta}
         rows={1}
         value={text}
-        placeholder={t("메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)")}
+        placeholder={isMobileUi() ? t("메시지 입력") : t("메시지 입력 (Enter 전송, Shift+Enter 줄바꿈)")}
         onChange={(e) => {
           const value = e.target.value;
           setText(value);

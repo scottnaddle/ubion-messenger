@@ -564,6 +564,9 @@ const dict: Record<string, string> = {
   "총 {n}명 참여": "{n} voted",
   "투표 종료": "Close poll",
   "만들기": "Create",
+  "결재": "Approval",
+  "사람들": "People",
+  "메시지 입력": "Type a message",
 };
 
 export default dict;
