@@ -2,6 +2,7 @@ import { app, safeStorage } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeLanguage, type Language } from "../src/lib/i18n-core";
+import { flavorDefaults, flavorProfile } from "./core/flavor";
 import { normalizePreset, normalizeThemeState, type CustomTheme, type ThemePresetId } from "./core/theme";
 
 export type Settings = {
@@ -62,8 +63,10 @@ export type Settings = {
   language: Language;
 };
 
+const seeded = flavorDefaults();
+
 export const DEFAULTS: Settings = {
-  serverUrl: "https://coco.ubion.co.kr",
+  serverUrl: seeded.serverUrl,
   username: "",
   rememberMe: true,
   autoLogin: false,
@@ -76,11 +79,11 @@ export const DEFAULTS: Settings = {
   downloadDir: "",
   askSaveLocation: false,
   fontSize: 14,
-  autoUpdate: true,
+  autoUpdate: seeded.autoUpdate,
   portalPostNotify: true,
   portalOpenMode: "inapp",
   xmppTcpFallback: false,
-  flexAutoLogin: true,
+  flexAutoLogin: seeded.flexAutoLogin,
   awayMinutes: 10,
   mobileNotice: true,
   lockTimeoutMin: 0,
@@ -106,6 +109,7 @@ export function loadSettings(): Settings {
     s.activeThemeId = themes.activeThemeId;
     s.themePreset = normalizePreset(s.themePreset);
     s.language = normalizeLanguage(s.language);
+    if (!flavorProfile().flex) s.flexAutoLogin = false;
     return s;
   } catch {
     return { ...DEFAULTS };

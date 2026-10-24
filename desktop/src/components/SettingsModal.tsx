@@ -4,7 +4,8 @@ import { Avatar, Icon } from "./ui";
 import { useUpdateStatus } from "./UpdateBanner";
 import { THEME_MAX_BYTES, THEME_PRESETS, type ThemePresetId, type ThemeState } from "../../electron/core/theme";
 import { DND_DAY_LABELS } from "../../electron/core/dnd";
-import { LANGUAGES, LANGUAGE_NAMES, tk, useT, type Language } from "../lib/i18n";
+import { getLanguage, LANGUAGES, LANGUAGE_NAMES, tk, useT, type Language } from "../lib/i18n";
+import { flavorLabel, flavorProfile } from "../../electron/core/flavor";
 
 const PRESET_LABELS: Record<ThemePresetId, string> = { default: tk("기본"), blue: tk("블루"), green: tk("그린"), purple: tk("퍼플") };
 
@@ -314,7 +315,7 @@ export function SettingsModal({
               <div className="row">
                 <div>
                   <div>{t("상태 메시지")}</div>
-                  <div className="muted tiny">{t("UBION Messenger에서 표시할 상태 메시지입니다 (실험 기능)")}</div>
+                  <div className="muted tiny">{t("{app}에서 표시할 상태 메시지입니다 (실험 기능)", { app: flavorLabel(flavorProfile(), getLanguage()) })}</div>
                 </div>
               </div>
               <div className="row">
@@ -372,7 +373,9 @@ export function SettingsModal({
           <Toggle k="closeToTray" label={t("창을 닫으면 트레이로 최소화")} />
           <Toggle k="rememberMe" label={t("로그인 정보 저장")} desc={info && !info.encryption ? t("이 시스템에서는 보안 저장소를 사용할 수 없습니다") : t("OS 보안 저장소에 암호화")} />
           <Toggle k="autoLogin" label={t("자동 로그인")} disabled={!settings.rememberMe} />
-          <Toggle k="flexAutoLogin" label={t("flex 자동 로그인")} desc={t("저장된 포털 비밀번호로 flex.team에 로그인합니다 (username@ubion.co.kr)")} disabled={!settings.rememberMe} />
+          {flavorProfile().flex && (
+            <Toggle k="flexAutoLogin" label={t("flex 자동 로그인")} desc={t("저장된 포털 비밀번호로 flex.team에 로그인합니다 (username@ubion.co.kr)")} disabled={!settings.rememberMe} />
+          )}
           <div className="row">
             <div>
               <div>{t("다운로드 폴더")}</div>
@@ -386,9 +389,16 @@ export function SettingsModal({
           <Toggle k="askSaveLocation" label={t("매번 저장 위치 묻기")} desc={t("채팅 파일 '저장' 시 저장 위치와 이름을 선택합니다")} />
           <SearchCacheRow />
           <h4>{t("업데이트")}</h4>
-          <UpdateRow />
-          <Toggle k="autoUpdate" label={t("자동으로 업데이트 확인")} desc={t("시작할 때와 4시간마다 확인합니다")} />
-          <p className="muted tiny about">UBION Messenger {info?.version} · {info?.platform}</p>
+          {flavorProfile().updates ? (
+            <>
+              <UpdateRow />
+              <Toggle k="autoUpdate" label={t("자동으로 업데이트 확인")} desc={t("시작할 때와 4시간마다 확인합니다")} />
+            </>
+          ) : (
+            <p className="muted tiny">{t("이 빌드에는 업데이트 서버가 없습니다")}</p>
+          )}
+          <p className="muted tiny about">{flavorLabel(flavorProfile(), getLanguage())} {info?.version} · {info?.platform}</p>
+          {flavorProfile().unofficialNotice ? <p className="muted tiny about">{flavorProfile().unofficialNotice}</p> : null}
         </div>
       </div>
     </div>

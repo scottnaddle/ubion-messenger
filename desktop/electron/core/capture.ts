@@ -1,4 +1,5 @@
 /** 화면 캡쳐: pure helpers for the main-process region capture (overlay → crop → staged attach). */
+import { flavorProfile } from "./flavor";
 
 export const CAPTURE_START = "capture:start";
 /** Overlay → main (ipcRenderer.send); only accepted from the overlay's own webContents. */
@@ -8,8 +9,10 @@ export const CAPTURE_OVERLAY_IMAGE = "capture:overlay-image";
 export const CAPTURE_FILE_PREFIX = "do-messenger_screenshot_";
 /** Selections smaller than this (in DIP) are treated as a click, not a region. */
 export const CAPTURE_MIN_SIZE = 3;
-export const CAPTURE_PERMISSION_ERROR =
-  "화면 캡쳐 권한이 없습니다. 시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 UBION Messenger를 허용한 뒤 앱을 다시 시작하세요.";
+export function capturePermissionMessage(appName = "UBION Messenger"): string {
+  return `화면 캡쳐 권한이 없습니다. 시스템 설정 > 개인정보 보호 및 보안 > 화면 기록에서 ${appName}를 허용한 뒤 앱을 다시 시작하세요.`;
+}
+export const CAPTURE_PERMISSION_ERROR = capturePermissionMessage();
 
 export type CaptureRect = { x: number; y: number; width: number; height: number };
 export type CaptureResult = { name: string; type: "image/png"; data: Uint8Array; width: number; height: number };
@@ -73,7 +76,7 @@ export function captureThumbnailSize(size: { width: number; height: number }, sc
 /** macOS: getMediaAccessStatus('screen') must be "granted"; other platforms need no permission. */
 export function capturePermissionError(platform: string, status?: string): string | null {
   if (platform !== "darwin") return null;
-  return status === "granted" ? null : CAPTURE_PERMISSION_ERROR;
+  return status === "granted" ? null : capturePermissionMessage(flavorProfile().productName);
 }
 
 /** Pick the desktopCapturer source for a display; falls back to the only source when ids are missing. */

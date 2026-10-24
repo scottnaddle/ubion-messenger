@@ -9,10 +9,12 @@
  *   POST {base}/v1/polls/{id}/vote  body { optionIndex } → 200 poll (toggles the caller's vote)
  *   POST {base}/v1/polls/{id}/close → 200 poll (closed: true)
  * poll = { id, roomSeq, question, options: string[], multiSelect, deadline?, closed, votes: { [optionIndex]: number[] } }
- * Auth headers: X-UBM-User-Seq (caller seq) + X-UBM-Session (DaouOffice session proof). Never logged.
+ * Auth headers: X-UBM-User-Seq (caller seq) + X-UBM-Session (ubt1 server token, never a Daou cookie).
+ * X-UBM-Tenant is sent only when getTenantHost returns a host. UBION omits it. Never logged.
  */
 
 import { checkForwardTarget } from "./forward";
+import { resolveTenantHeader, ubmRequestHeaders } from "./tenant";
 
 export const POLLS_ENV = "UBM_POLLS";
 export const POLLS_DISABLED_TEXT = "투표는 아직 지원되지 않습니다";
@@ -48,6 +50,8 @@ export type PollsOptions = {
   baseUrl?: string;
   getUserSeq: () => number;
   getSessionHeader: () => Promise<string>;
+  /** Daou server host for a future multi-tenant bot. Empty omits X-UBM-Tenant. */
+  getTenantHost?: () => string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 };
@@ -157,6 +161,7 @@ export function createPollsClient({
   baseUrl = "https://bot.ubion.global",
   getUserSeq,
   getSessionHeader,
+  getTenantHost,
   fetch: fetchImpl,
   timeoutMs = 8000,
 }: PollsOptions) {
@@ -182,11 +187,7 @@ export function createPollsClient({
       const doFetch = fetchImpl ?? globalThis.fetch;
       res = await doFetch(`${root}${path}`, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          "X-UBM-User-Seq": String(userSeq),
-          "X-UBM-Session": session,
-        },
+        headers: ubmRequestHeaders(userSeq, session, resolveTenantHeader(getTenantHost)),
         body: body != null ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });

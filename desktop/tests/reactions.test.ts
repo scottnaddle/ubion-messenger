@@ -99,6 +99,36 @@ describe("reactions server client (unverified shape)", () => {
     );
   });
 
+  it("omits X-UBM-Tenant unless a tenant host is supplied, and does not change the body", async () => {
+    const fetch = vi.fn().mockResolvedValue(ok({ ok: true, added: true, messageId: 5, reactions: { "👍": [42] } }));
+    const plain = createReactionsClient({ getUserSeq: () => 42, getSessionHeader: async () => "a=b", fetch: fetch as any });
+    await plain.toggle(123, 5, "👍");
+    const plainHeaders = (fetch.mock.calls[0] as any)[1].headers;
+    expect(plainHeaders["X-UBM-Tenant"]).toBeUndefined();
+    expect(plainHeaders.Cookie).toBeUndefined();
+
+    const tenanted = createReactionsClient({
+      getUserSeq: () => 42,
+      getSessionHeader: async () => "a=b",
+      getTenantHost: () => "Tenant.Example",
+      fetch: fetch as any,
+    });
+    await tenanted.toggle(123, 5, "👍");
+    const init = (fetch.mock.calls[1] as any)[1];
+    expect(init.headers["X-UBM-Tenant"]).toBe("tenant.example");
+    expect(init.headers["X-UBM-Session"]).toBe("a=b");
+    expect(JSON.parse(init.body)).toEqual({ roomSeq: 123, messageId: 5, emoji: "👍" });
+
+    const broken = createReactionsClient({
+      getUserSeq: () => 42,
+      getSessionHeader: async () => "a=b",
+      getTenantHost: () => { throw new Error("no session yet"); },
+      fetch: fetch as any,
+    });
+    await broken.toggle(123, 5, "👍");
+    expect((fetch.mock.calls[2] as any)[1].headers["X-UBM-Tenant"]).toBeUndefined();
+  });
+
   it("POST toggles with the documented body and returns a ReactionMap keyed by messageId", async () => {
     const fetch = vi.fn().mockResolvedValue(ok({ ok: true, added: true, messageId: 5, reactions: { "👍": [42] } }));
     const c = createReactionsClient({ getUserSeq: () => 42, getSessionHeader: async () => "a=b", fetch: fetch as any });

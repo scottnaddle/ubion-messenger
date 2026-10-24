@@ -9,6 +9,8 @@ Slack-like local client for on-prem DaouOffice (Group Office) messenger at `coco
 See `PROTOCOL.md` for protocol details.
 
 > 데스크톱 앱(UBION Messenger)은 `desktop/`에 있어요. 설치 파일: https://github.com/scottnaddle/ubion-messenger-releases/releases/latest
+>
+> 같은 코드로 **다워 (Dawer)** 를 빌드할 수 있어요. `cd desktop && npm run dev:dawer` (`UBM_FLAVOR=generic`). 기본 빌드는 그대로 UBION Messenger 입니다. 자세한 차이는 `desktop/README.md`의 Flavors.
 
 ## 왜 UBION Messenger인가요?
 

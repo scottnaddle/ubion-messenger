@@ -1,3 +1,5 @@
+import { flavorProfile } from "./flavor";
+import { isFlexUrl } from "./portal-cookies";
 import { MAIL_DELETE_ENABLED, deleteMail } from "./mail";
 import { uploadMailAttachment, type Uploader, type UploadedAttach } from "./mail-attach";
 import { sendMail, type MailSender, normalizeDraft } from "./mail-compose";
@@ -597,6 +599,16 @@ export const LOCAL_MENU: MenuEntry[] = [
   { id: "l-flex", name: "flex (휴가·근무)", appName: "flex", url: "https://flex.team/home/todo/inbox", custom: true, target: "portal", section: "메신저" },
 ];
 
+/** Ubion keeps the flex entry. Generic drops it (and any flex.team link the server menu returned). */
+export function localMenu(flex = flavorProfile().flex): MenuEntry[] {
+  return flex ? LOCAL_MENU : LOCAL_MENU.filter((m) => m.appName !== "flex");
+}
+
+export function withoutUbionOnlyMenu(items: MenuEntry[], flex = flavorProfile().flex): MenuEntry[] {
+  if (flex) return items;
+  return items.filter((m) => m.appName !== "flex" && !isFlexUrl(m.url));
+}
+
 /** At most this many individual new-post notifications per check; the rest are summarised. */
 export const MAX_POST_NOTIFY = 5;
 /** How many posts to look at on the first check after start when a persisted baseline exists. */
@@ -774,7 +786,8 @@ export class PortalService {
       this.log(`portal menu failed: ${maskSecrets((e as Error).message)}`);
     }
     if (!items.length) { items = STATIC_MENU; source = "static"; }
-    this.menuCache = { items: [...items, ...LOCAL_MENU], source, at: Date.now() };
+    items = withoutUbionOnlyMenu(items);
+    this.menuCache = { items: [...items, ...localMenu()], source, at: Date.now() };
     return this.menuCache;
   }
 

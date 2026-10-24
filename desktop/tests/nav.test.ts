@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NAV_ORDER, navForDigit } from "../src/nav";
+import { NAV_ORDER, navForDigit, navOrder } from "../src/nav";
 
 describe("rail navigation", () => {
   it("has the exact Scott-requested order", () => {
@@ -13,6 +13,14 @@ describe("rail navigation", () => {
     expect(navForDigit("4")).toBe("flex");
     expect(navForDigit(5)).toBe("people");
     expect(navForDigit("6")).toBe("menu");
+  });
+
+  it("drops flex and keeps digits contiguous when the flavor hides it", () => {
+    const order = navOrder(false);
+    expect(order).toEqual(["home", "chats", "mail", "people", "menu"]);
+    expect(navForDigit(4, order)).toBe("people");
+    expect(navForDigit(5, order)).toBe("menu");
+    expect(navForDigit(6, order)).toBeNull();
   });
 
   it("ignores out-of-range or non-numeric digits", () => {

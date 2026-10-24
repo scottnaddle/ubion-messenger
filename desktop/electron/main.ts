@@ -53,7 +53,7 @@ import { normalizeStatusText, statusCaps, statusServerEnabled, statusXmppEnabled
 import { createStatusClient } from "./core/status-server";
 import { redactDiag,
   createReactionsClient, guardReactionRoom, normalizeEmoji, normalizeMessageId, normalizeMessageIds, normalizeRoomSeq,
-  reactionsCaps, REACTIONS_DISABLED_TEXT, reactionsEnabled,
+  REACTIONS_DISABLED_TEXT, reactionsEnabled,
 } from "./core/reactions";
 import {
   createPollsClient, guardPollRoom, normalizeOptionIndex, normalizePollId, normalizePollInput,
@@ -86,7 +86,7 @@ import { isMentioningMe } from "../src/lib/mention";
 import { isBotAuthDm } from "../src/lib/markers";
 import { createBotSettingsClient } from "./core/bot-settings";
 import { createUbmAuth, withUbmRetry, type UbmAuthToken } from "./core/ubm-auth";
-import { applyMainLanguage, filterLanguagePatch, i18nCaps, tm } from "./core/i18n-main";
+import { applyMainLanguage, filterLanguagePatch, getMainLanguage, i18nCaps, tm } from "./core/i18n-main";
 import { createAwayMonitor } from "./core/away";
 import { createLockState, hashPin, validatePin, verifyPin, type PinRecord } from "./core/lock";
 import {
@@ -106,10 +106,15 @@ import {
   saveSettings,
   type Settings,
 } from "./settings";
+import { flavorAppId, flavorIconName, flavorLabel, flavorProfile, normalizeServerUrl } from "./core/flavor";
+import { botApiBaseUrl, botTenantHeader, coreFeaturesEnabled, hasCoreLicense } from "./core/subscription";
 
-const APP_NAME = "UBION Messenger";
-app.setName(APP_NAME);
-if (process.platform === "win32") app.setAppUserModelId("global.ubion.messenger");
+const profile = flavorProfile();
+/** Korean UI title (다워 / UBION Messenger). OS app name stays profile.productName. */
+const APP_NAME = profile.productNameKo;
+app.setName(profile.productName);
+app.setPath("userData", path.join(app.getPath("appData"), profile.userDataDir));
+if (process.platform === "win32") app.setAppUserModelId(flavorAppId(profile, !app.isPackaged || process.env.UBM_APP_CHANNEL === "dev"));
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -277,7 +282,21 @@ let locked = false;
 const lockState = createLockState({ now: () => Date.now() });
 const updater = new Updater(() => win);
 
-const UBM_BASE_URL = () => process.env.UBM_BOT_API_URL || "https://bot.ubion.global";
+/** ubion, or a future Core license. hasCoreLicense is false, so Dawer Free stays off. */
+const coreOn = () => coreFeaturesEnabled(profile.id, hasCoreLicense(settings.serverUrl));
+const UBM_BASE_URL = () =>
+  botApiBaseUrl({
+    flavor: profile.id,
+    license: hasCoreLicense(settings.serverUrl),
+    envUrl: process.env.UBM_BOT_API_URL,
+    defaultBotApiUrl: profile.defaultBotApiUrl,
+  });
+/**
+ * UBION's deployed bot is single-tenant and must not see X-UBM-Tenant.
+ * A licensed non-ubion build sends the Daou host; Free never reaches that path.
+ */
+const getBotTenantHost = (): string =>
+  botTenantHeader(profile.id, hasCoreLicense(settings.serverUrl), settings.serverUrl);
 const ubmTokenFile = () => path.join(app.getPath("userData"), "ubm-token.bin");
 
 /** OS-keychain-backed persistence for the UBION token; without safeStorage the token stays in memory only. */
@@ -349,6 +368,7 @@ const botSettings = createBotSettingsClient({
   baseUrl: UBM_BASE_URL(),
   getUserSeq: () => core.user?.id ?? 0,
   getSessionHeader: ubmServerProof,
+  getTenantHost: getBotTenantHost,
 });
 
 const statusClient = () => {
@@ -356,6 +376,7 @@ const statusClient = () => {
     baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
+    getTenantHost: getBotTenantHost,
   });
   return {
     get: (userSeq: number) => retryUbm(() => client.get(userSeq), isUbmAuthFailure),
@@ -368,6 +389,7 @@ const reactionsClient = () => {
     baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
+    getTenantHost: getBotTenantHost,
   });
   return {
     list: (roomSeq: number, messageIds: number[]) =>
@@ -382,6 +404,7 @@ const pollsClient = () => {
     baseUrl: UBM_BASE_URL(),
     getUserSeq: () => core.user?.id ?? 0,
     getSessionHeader: ubmServerProof,
+    getTenantHost: getBotTenantHost,
   });
   return {
     create: (input: Parameters<typeof client.create>[0]) =>
@@ -526,7 +549,7 @@ function rebuildTrayMenu(n = core.unreadTotal()) {
     Menu.buildFromTemplate([
       { label: n ? tm("읽지 않은 메시지 {n}개", { n }) : tm("새 메시지 없음"), enabled: false },
       { type: "separator" },
-      { label: tm("UBION Messenger 열기"), click: showWindow },
+      { label: tm("{app} 열기", { app: flavorLabel(profile, getMainLanguage()) }), click: showWindow },
       { label: tm("설정"), click: () => (showWindow(), send("nav:settings", null)) },
       { type: "separator" },
       { label: tm("종료"), click: () => ((quitting = true), app.quit()) },
@@ -557,7 +580,9 @@ function applyLanguage() {
 }
 
 function createTray() {
-  const img = nativeImage.createFromPath(resPath(process.platform === "darwin" ? "trayTemplate.png" : "tray.png"));
+  const img = nativeImage.createFromPath(
+    resPath(flavorIconName(profile, process.platform === "darwin" ? "trayTemplate.png" : "tray.png")),
+  );
   if (process.platform === "darwin") img.setTemplateImage(true);
   tray = new Tray(img);
   tray.setToolTip(APP_NAME);
@@ -587,6 +612,7 @@ function portalUrl(rel: string): string | null {
 /** Open a portal deep link only on explicit user action (opening may mark items as read). */
 function openPortal(rel: string, mode?: "external" | "inapp") {
   if (isFlexUrl(rel)) {
+    if (!profile.flex) throw new Error("이 빌드에서는 flex를 열 수 없습니다");
     const fu = new URL(rel).toString();
     return (mode || settings.portalOpenMode) === "external" ? shell.openExternal(fu) : openPortalWindow(fu);
   }
@@ -642,10 +668,10 @@ function portalNavMenu() {
 
 
 async function tryFlexAutoLogin(wc: BrowserWindow["webContents"]) {
-  if (flexAutoLoginTried || !settings.flexAutoLogin || !settings.rememberMe) return;
+  if (!profile.flex || flexAutoLoginTried || !settings.flexAutoLogin || !settings.rememberMe) return;
   const url = wc.getURL();
   if (!isFlexLoginUrl(url)) return;
-  const email = flexEmailFromUsername(settings.username);
+  const email = flexEmailFromUsername(settings.username, profile.flexEmailDomain);
   const password = loadPassword();
   if (!email || !password) return;
   flexAutoLoginTried = true; // one try even if fill fails
@@ -704,6 +730,7 @@ async function flexSessionPost(path: string, body: unknown): Promise<{ status: n
  * Falls back to DOM "진행 (N)" scrape. Never approve/reject/modify.
  */
 async function refreshFlexPending(force = false): Promise<{ count: number | null; at: number; error?: string }> {
+  if (!profile.flex) return { count: null, at: Date.now(), error: "disabled" };
   if (!force && Date.now() - flexPendingCache.at < 60_000) return flexPendingCache;
   try {
     const { status, json } = await flexSessionPost(FLEX_TODO_SEARCH, FLEX_TODO_PENDING_BODY);
@@ -780,7 +807,7 @@ function openWebLogin(serverUrl: string): Promise<any> {
     let poll: ReturnType<typeof setInterval> | null = null;
     let checking = false;
     const w = new BrowserWindow({
-      width: 980, height: 760, title: "웹 로그인 — UBION Messenger", parent: win ?? undefined, modal: !!win,
+      width: 980, height: 760, title: `웹 로그인 — ${APP_NAME}`, parent: win ?? undefined, modal: !!win,
       autoHideMenuBar: true,
       webPreferences: { partition: PORTAL_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true },
     });
@@ -847,13 +874,13 @@ async function openPortalWindow(url: string) {
     return;
   }
   portalWin = new BrowserWindow({
-    width: 1280, height: 860, title: "DaouOffice — UBION Messenger", autoHideMenuBar: false,
+    width: 1280, height: 860, title: profile.id === "ubion" ? "DaouOffice — UBION Messenger" : APP_NAME, autoHideMenuBar: false,
     webPreferences: { partition: PORTAL_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   portalWin.setMenu(portalNavMenu());
-  attachFlexWindowHooks(portalWin.webContents);
+  if (profile.flex) attachFlexWindowHooks(portalWin.webContents);
   const base = core.client.baseUrl;
-  const inWin = (u: string) => isPortalUrl(u, base) || isFlexUrl(u) || isFlexSsoUrl(u);
+  const inWin = (u: string) => isPortalUrl(u, base) || (profile.flex && (isFlexUrl(u) || isFlexSsoUrl(u)));
   portalWin.webContents.setWindowOpenHandler(({ url: u }) => {
     if (inWin(u)) {
       void portalWin?.loadURL(u);
@@ -1073,7 +1100,7 @@ function createWindow() {
     minHeight: 520,
     title: APP_NAME,
     show: false,
-    icon: resPath("icon.png"),
+    icon: resPath(flavorIconName(profile, "icon.png")),
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#16181d" : "#ffffff",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     autoHideMenuBar: true,
@@ -1206,6 +1233,12 @@ function registerIpc() {
   handle("app:info", () => ({
     version: app.getVersion(),
     platform: process.platform,
+    flavor: profile.id,
+    productName: profile.productName,
+    productNameKo: profile.productNameKo,
+    flex: profile.flex,
+    unofficialNotice: profile.unofficialNotice,
+    core: coreOn(),
     encryption: (() => {
       try {
         return safeStorage.isEncryptionAvailable();
@@ -1224,6 +1257,7 @@ function registerIpc() {
     if ("dndStartMin" in patch) patch.dndStartMin = normalizeDndMin(patch.dndStartMin);
     if ("dndEndMin" in patch) patch.dndEndMin = normalizeDndMin(patch.dndEndMin);
     filterLanguagePatch(patch, process.env);
+    if (!profile.flex && "flexAutoLogin" in patch) delete patch.flexAutoLogin;
     settings = { ...settings, ...patch };
     saveSettings(settings);
     if ("launchAtLogin" in patch) applyLoginItem();
@@ -1248,8 +1282,7 @@ function registerIpc() {
       // Saved password belongs to settings.username only; never reuse it for a different account.
       const sameUser = o.username.trim() === (settings.username || "").trim();
       const password = o.password || (o.rememberMe && sameUser ? loadPassword() : null);
-      const serverUrl = (o.serverUrl || settings.serverUrl).trim().replace(/\/$/, "");
-      if (!/^https?:\/\//.test(serverUrl)) throw new Error("서버 주소는 https:// 로 시작해야 합니다");
+      const serverUrl = normalizeServerUrl(o.serverUrl ?? settings.serverUrl);
       const key = accountKey(serverUrl, o.username);
       const flagged = !!settings.webLoginAccounts?.includes(key);
       // OTP accounts: never re-POST /api/login with the saved password (lockout risk) — reuse web cookies or ask for web login.
@@ -1294,8 +1327,7 @@ function registerIpc() {
     }
   );
   handle("auth:webLogin", async (o?: { serverUrl?: string }) => {
-    const serverUrl = (o?.serverUrl || settings.serverUrl).trim().replace(/\/$/, "");
-    if (!/^https?:\/\//.test(serverUrl)) throw new Error("서버 주소는 https:// 로 시작해야 합니다");
+    const serverUrl = normalizeServerUrl(o?.serverUrl ?? settings.serverUrl);
     return openWebLogin(serverUrl); // SessionUser, or null if the user closed the window
   });
   handle("auth:logout", async () => {
@@ -1362,10 +1394,12 @@ function registerIpc() {
   handle("rooms:pin", (key: string, pin: boolean) => core.setPin(key, pin));
   handle("rooms:setPush", (key: string, usePush: boolean) => core.setRoomPush(key, !!usePush));
   handle("bot:roomSettings:get", (roomKey: unknown) => {
+    if (!coreOn()) throw new Error("이 빌드에서는 봇 설정을 사용하지 않습니다");
     if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
     return botSettingsWithRetry.get(roomKey);
   });
   handle("bot:roomSettings:set", (roomKey: unknown, autonomy: unknown) => {
+    if (!coreOn()) throw new Error("이 빌드에서는 봇 설정을 사용하지 않습니다");
     if (typeof roomKey !== "string" || !/^room:\d+$/.test(roomKey)) throw new Error("잘못된 대화방입니다");
     if (typeof autonomy !== "boolean") throw new Error("자율활동 설정 값이 올바르지 않습니다");
     return botSettingsWithRetry.set(roomKey, autonomy);
@@ -1840,11 +1874,14 @@ function registerIpc() {
     return { manualUntil };
   });
   // 상태 메시지 (XMPP free-text presence + server fallback), gated by UBM_STATUS_XMPP / UBM_STATUS_SERVER.
-  handle("status:caps", () => statusCaps(process.env));
+  handle("status:caps", () => {
+    const caps = statusCaps(process.env);
+    return coreOn() ? caps : { ...caps, server: false };
+  });
   handle("status:get", async () => {
     const me = core.user?.id;
     if (me == null) return { text: null as string | null };
-    if (statusServerEnabled(process.env) && !currentStatusText) {
+    if (coreOn() && statusServerEnabled(process.env) && !currentStatusText) {
       const r = await statusClient().get(me);
       if (r.ok && r.text) currentStatusText = r.text;
     }
@@ -1855,7 +1892,7 @@ function registerIpc() {
     if (me == null) throw new Error("로그인이 필요합니다");
     const value = normalizeStatusText(text);
     if (statusXmppEnabled(process.env)) core.setStatusMessage(value || "");
-    if (statusServerEnabled(process.env)) {
+    if (coreOn() && statusServerEnabled(process.env)) {
       const r = await statusClient().put(me, value);
       if (!r.ok) throw new Error(r.message);
     }
@@ -1864,8 +1901,8 @@ function registerIpc() {
   });
   handle("status:presenceStatus", () => core.allStatusMessages());
   // 이모지 리액션: our server (bot.ubion.global) keyed by roomSeq:messageId. On by default; UBM_REACTIONS=0 disables.
-  const REACTIONS_ON = reactionsEnabled(process.env);
-  handle("reactions:caps", () => reactionsCaps(process.env));
+  const reactionsOn = () => coreOn() && reactionsEnabled(process.env);
+  handle("reactions:caps", () => ({ enabled: reactionsOn() }));
   // Diagnostics (no tokens/codes: only channel, room, status text): userData/ubm-reactions.log, capped ~256 KB.
   const reactionsLog = (line: string) => {
     try {
@@ -1878,7 +1915,7 @@ function registerIpc() {
     try { return await fn(...a); } catch (e) { reactionsLog(`${ch} error: ${errMsg(e)}`); throw e; }
   });
   handleR("reactions:list", async (roomSeq: unknown, ids: unknown) => {
-    if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
+    if (!reactionsOn()) throw new Error(REACTIONS_DISABLED_TEXT);
     if (core.user == null) { reactionsLog("list fail: no core.user"); throw new Error("로그인이 필요합니다"); }
     const seq = normalizeRoomSeq(roomSeq);
     const r = await reactionsClient().list(seq, normalizeMessageIds(ids));
@@ -1886,7 +1923,7 @@ function registerIpc() {
     return r.data;
   });
   handleR("reactions:toggle", async (roomSeq: unknown, messageId: unknown, emoji: unknown) => {
-    if (!REACTIONS_ON) throw new Error(REACTIONS_DISABLED_TEXT);
+    if (!reactionsOn()) throw new Error(REACTIONS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) { reactionsLog("toggle fail: no core.user"); throw new Error("로그인이 필요합니다"); }
     const seq = normalizeRoomSeq(roomSeq);
@@ -1900,10 +1937,13 @@ function registerIpc() {
     return r.data;
   });
   // 투표: our server (bot.ubion.global / UBM_BOT_API_URL); bot posts the poll + results. Behind UBM_POLLS=1.
-  const POLLS_ON = pollsEnabled(process.env);
-  handle("polls:caps", () => pollsCaps(process.env));
+  const pollsOn = () => coreOn() && pollsEnabled(process.env);
+  handle("polls:caps", () => {
+    const caps = pollsCaps(process.env);
+    return coreOn() ? caps : { ...caps, enabled: false };
+  });
   handle("polls:create", async (input: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const parsed = normalizePollInput(input);
@@ -1913,14 +1953,14 @@ function registerIpc() {
     return r.data;
   });
   handle("polls:get", async (id: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     if (core.user == null) throw new Error("로그인이 필요합니다");
     const r = await pollsClient().get(normalizePollId(id));
     if (!r.ok) throw new Error(r.message);
     return r.data;
   });
   handle("polls:vote", async (id: unknown, optionIndex: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const r = await pollsClient().vote(normalizePollId(id), normalizeOptionIndex(optionIndex));
@@ -1928,7 +1968,7 @@ function registerIpc() {
     return r.data;
   });
   handle("polls:close", async (id: unknown) => {
-    if (!POLLS_ON) throw new Error(POLLS_DISABLED_TEXT);
+    if (!pollsOn()) throw new Error(POLLS_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const r = await pollsClient().close(normalizePollId(id));
@@ -1966,10 +2006,13 @@ function registerIpc() {
   });
   // 유비온봇 대화 요약 / 안 읽은 메시지 요약: posts a /요약 command to the 나 room (bot room).
   // New message-sending path → self-only guard. Behind UBM_BOT_SUMMARY=1 (needs server deploy).
-  const BOT_SUMMARY_ON = botSummaryEnabled(process.env);
-  handle("bot:summary:caps", () => botSummaryCaps(process.env));
+  const botSummaryOn = () => coreOn() && botSummaryEnabled(process.env);
+  handle("bot:summary:caps", () => {
+    const caps = botSummaryCaps(process.env);
+    return coreOn() ? caps : { ...caps, enabled: false };
+  });
   handle("bot:summary:request", async (target: unknown, mode: unknown, recentN?: unknown) => {
-    if (!BOT_SUMMARY_ON) throw new Error(BOT_SUMMARY_DISABLED_TEXT);
+    if (!botSummaryOn()) throw new Error(BOT_SUMMARY_DISABLED_TEXT);
     const me = core.user?.id;
     if (me == null) throw new Error("로그인이 필요합니다");
     const selfRoom = core.getRooms().find((r) => r.isSelf) ?? null;
@@ -2089,7 +2132,7 @@ app.on("window-all-closed", () => {
 
 app.whenReady().then(async () => {
   nativeTheme.themeSource = settings.theme;
-  if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath("icon-mac.png")));
+  if (process.platform === "darwin") app.dock?.setIcon(nativeImage.createFromPath(resPath(flavorIconName(profile, "icon-mac.png"))));
   applyMainLanguage(settings.language, process.env);
   buildAppMenu();
   lockRecord = loadLockRecord();

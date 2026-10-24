@@ -6,10 +6,13 @@
  *   GET  {base}/v1/reactions?roomSeq=123&ids=1,2,3  → 200 { reactions: { [messageId]: { [emoji]: number[] } } }
  *   POST {base}/v1/reactions  body { roomSeq, messageId, emoji }  → toggles the caller's reaction
  *        → 200 { ok, added, messageId, reactions: { [emoji]: number[] } } (one message's emoji map)
- * Auth headers: X-UBM-User-Seq (caller seq) + X-UBM-Session (DaouOffice session proof). Headers are never logged.
+ * Auth headers: X-UBM-User-Seq (caller seq) + X-UBM-Session (ubt1 server token, never a Daou cookie).
+ * X-UBM-Tenant is sent only when getTenantHost returns a host. UBION omits it.
+ * Headers are never logged.
  */
 
 import { checkForwardTarget } from "./forward";
+import { resolveTenantHeader, ubmRequestHeaders } from "./tenant";
 
 export const REACTIONS_ENV = "UBM_REACTIONS";
 export const REACTIONS_DISABLED_TEXT = "이모지 리액션은 아직 지원되지 않습니다";
@@ -28,6 +31,8 @@ export type ReactionsOptions = {
   baseUrl?: string;
   getUserSeq: () => number;
   getSessionHeader: () => Promise<string>;
+  /** Daou server host for a future multi-tenant bot. Empty omits X-UBM-Tenant. */
+  getTenantHost?: () => string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
 };
@@ -134,6 +139,7 @@ export function createReactionsClient({
   baseUrl = "https://bot.ubion.global",
   getUserSeq,
   getSessionHeader,
+  getTenantHost,
   fetch: fetchImpl,
   timeoutMs = 8000,
 }: ReactionsOptions) {
@@ -164,11 +170,7 @@ export function createReactionsClient({
       const doFetch = fetchImpl ?? globalThis.fetch;
       res = await doFetch(`${root}${path}`, {
         method,
-        headers: {
-          "Content-Type": "application/json",
-          "X-UBM-User-Seq": String(userSeq),
-          "X-UBM-Session": session,
-        },
+        headers: ubmRequestHeaders(userSeq, session, resolveTenantHeader(getTenantHost)),
         body: body != null ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
