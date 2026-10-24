@@ -15,5 +15,6 @@ export default defineConfig({
     root: ".",
     build: { rollupOptions: { input: { index: resolve("index.html") } } },
     plugins: [react()],
+    define: { __UBM_MOBILE__: "false" },
   },
 });

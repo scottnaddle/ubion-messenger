@@ -12,5 +12,5 @@
     "declaration": true,
     "esModuleInterop": true
   },
-  "include": ["electron/**/*", "scripts/**/*", "src/lib/mention.ts", "src/lib/bot-status.ts", "src/lib/i18n-core.ts", "src/lib/global-search.ts", "src/lib/markers.ts", "src/lib/bot-summary.ts", "src/lib/locales/*.ts", "electron.vite.config.ts"]
+  "include": ["electron/**/*", "scripts/**/*", "src/lib/mention.ts", "src/lib/bot-status.ts", "src/lib/i18n-core.ts", "src/lib/global-search.ts", "src/lib/markers.ts", "src/lib/bot-summary.ts", "src/lib/locales/*.ts", "electron.vite.config.ts", "vite.mobile.config.ts", "capacitor.config.ts"]
 }

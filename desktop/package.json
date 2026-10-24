@@ -10,6 +10,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:mobile": "vite build -c vite.mobile.config.ts",
+    "cap:sync": "npm run build:mobile && npx cap sync",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -24,6 +26,12 @@
     "release": "bash scripts/release.sh"
   },
   "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/ios": "^7.6.9",
+    "@capacitor/preferences": "^7.0.4",
+    "buffer": "^6.0.3",
     "electron-updater": "^6.8.9",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -20,3 +20,6 @@ desktop/dist-smoke/
 desktop/*.tsbuildinfo
 desktop/out/*.tsbuildinfo
 .ref/
+desktop/dist-mobile/
+desktop/ios/App/App/public/
+desktop/android/app/src/main/assets/public/
