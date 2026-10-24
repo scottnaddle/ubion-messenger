@@ -389,8 +389,14 @@ export function SettingsModal({
           <Toggle k="askSaveLocation" label={t("매번 저장 위치 묻기")} desc={t("채팅 파일 '저장' 시 저장 위치와 이름을 선택합니다")} />
           <SearchCacheRow />
           <h4>{t("업데이트")}</h4>
-          <UpdateRow />
-          <Toggle k="autoUpdate" label={t("자동으로 업데이트 확인")} desc={t("시작할 때와 4시간마다 확인합니다")} />
+          {flavorProfile().updates ? (
+            <>
+              <UpdateRow />
+              <Toggle k="autoUpdate" label={t("자동으로 업데이트 확인")} desc={t("시작할 때와 4시간마다 확인합니다")} />
+            </>
+          ) : (
+            <p className="muted tiny">{t("이 빌드에는 업데이트 서버가 없습니다")}</p>
+          )}
           <p className="muted tiny about">{flavorLabel(flavorProfile(), getLanguage())} {info?.version} · {info?.platform}</p>
           {flavorProfile().unofficialNotice ? <p className="muted tiny about">{flavorProfile().unofficialNotice}</p> : null}
         </div>

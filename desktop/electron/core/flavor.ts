@@ -39,8 +39,15 @@ export type FlavorProfile = {
    * `hasCoreLicense` is false until a verifier exists, so generic stays off.
    */
   enhancedServer: boolean;
-  /** GitHub update feed. Generic has none yet. */
+  /**
+   * GitHub update feed. Generic stays false until a separate repo exists.
+   * An empty updateOwner/updateRepo means there is no feed URL.
+   */
   updates: boolean;
+  /** GitHub owner for the installer feed. Empty on Dawer. */
+  updateOwner: string;
+  /** GitHub repo for the installer feed. Empty on Dawer. A future value is `dawer-releases`. */
+  updateRepo: string;
   /** One-line Korean disclaimer. Empty on the company flavor. */
   unofficialNotice: string;
   artifactPrefix: string;

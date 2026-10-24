@@ -426,6 +426,7 @@ const dict: Record<string, string> = {
   "채팅 파일 '저장' 시 저장 위치와 이름을 선택합니다": "Choose the location and name when saving chat files",
   "업데이트": "Updates",
   "자동으로 업데이트 확인": "Automatically check for updates",
+  "이 빌드에는 업데이트 서버가 없습니다": "This build has no update server",
   "시작할 때와 4시간마다 확인합니다": "Checks at startup and every 4 hours",
   "확인 중…": "Checking…",
   "최신 버전입니다": "You're up to date",

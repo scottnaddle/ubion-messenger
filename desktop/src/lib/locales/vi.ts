@@ -425,6 +425,7 @@ const dict: Record<string, string> = {
   "채팅 파일 '저장' 시 저장 위치와 이름을 선택합니다": "Chọn vị trí và tên khi 'Lưu' tệp trong trò chuyện",
   "업데이트": "Cập nhật",
   "자동으로 업데이트 확인": "Tự động kiểm tra cập nhật",
+  "이 빌드에는 업데이트 서버가 없습니다": "Bản dựng này không có máy chủ cập nhật",
   "시작할 때와 4시간마다 확인합니다": "Kiểm tra khi khởi động và mỗi 4 giờ",
   "확인 중…": "Đang kiểm tra…",
   "최신 버전입니다": "Bạn đang dùng phiên bản mới nhất",

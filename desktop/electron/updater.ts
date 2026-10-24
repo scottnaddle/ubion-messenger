@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { autoUpdater } from "electron-updater";
 import { flavorProfile } from "./core/flavor";
-import { checkMacUpdate, RELEASES_PAGE, type UpdateInfo } from "./core/update-check";
+import { checkMacUpdate, releasesPage, resolveUpdateFeed, type UpdateInfo } from "./core/update-check";
 
 export type UpdateStatus =
   | { state: "idle" | "checking" | "none"; current: string; checkedAt?: number }
@@ -52,16 +52,23 @@ export class Updater {
     return app.isPackaged && (process.platform === "win32" || process.platform === "darwin");
   }
 
+  /** Null on Dawer: updates are off and updateRepo is empty, so no feed URL exists. */
+  private feed() {
+    const profile = flavorProfile();
+    return resolveUpdateFeed(profile);
+  }
+
   schedule(enabled: boolean) {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    if (!flavorProfile().updates || !enabled || !this.supported) return;
+    if (!this.feed() || !enabled || !this.supported) return;
     setTimeout(() => void this.check(), 15_000);
     this.timer = setInterval(() => void this.check(), FOUR_HOURS);
   }
 
   async check(): Promise<UpdateStatus> {
-    if (!flavorProfile().updates) {
+    const feed = this.feed();
+    if (!feed) {
       this.set({ state: "error", current: app.getVersion(), message: "이 빌드에는 업데이트 서버가 없습니다" });
       return this.status;
     }
@@ -75,7 +82,7 @@ export class Updater {
         await autoUpdater.checkForUpdates();
       } else {
         this.set({ state: "checking", current: app.getVersion() });
-        const info = await checkMacUpdate(app.getVersion(), process.arch);
+        const info = await checkMacUpdate(app.getVersion(), process.arch, fetch, feed);
         this.macInfo = info;
         this.set(
           info
@@ -92,7 +99,7 @@ export class Updater {
   /** macOS: download dmg to ~/Downloads with progress, then open it. */
   async downloadMac(): Promise<string | null> {
     const info = this.macInfo;
-    if (!info?.dmgUrl) return null;
+    if (!this.feed() || !info?.dmgUrl) return null;
     this.set({ state: "downloading", current: app.getVersion(), version: info.version, percent: 0 });
     try {
       const res = await fetch(info.dmgUrl, { redirect: "follow" });
@@ -139,6 +146,9 @@ export class Updater {
   }
 
   openReleasePage() {
-    return shell.openExternal(this.status.state === "available" ? this.status.pageUrl : RELEASES_PAGE);
+    const feed = this.feed();
+    const page = this.status.state === "available" ? this.status.pageUrl : feed ? releasesPage(feed) : "";
+    if (!page) return;
+    return shell.openExternal(page);
   }
 }

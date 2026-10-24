@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { checkMacUpdate, compareVersions, parseLatestYml } from "../electron/core/update-check";
+import { describe, expect, it, vi } from "vitest";
+import { flavorProfile } from "../electron/core/flavor";
+import { checkMacUpdate, compareVersions, parseLatestYml, RELEASES_REPO, resolveUpdateFeed } from "../electron/core/update-check";
 
 const YML = `version: 1.0.3
 files:
@@ -38,5 +39,34 @@ describe("update check", () => {
     expect(await checkMacUpdate("1.0.3", "arm64", fake(200))).toBeNull();
     expect(await checkMacUpdate("1.0.4", "arm64", fake(200))).toBeNull();
     expect(await checkMacUpdate("1.0.2", "arm64", fake(404, ""))).toBeNull();
+  });
+
+  it("keeps the ubion feed and gives Dawer no URL", () => {
+    const ubion = flavorProfile("ubion");
+    expect(resolveUpdateFeed(ubion)).toEqual({
+      owner: "scottnaddle",
+      repo: RELEASES_REPO,
+      artifactPrefix: "UBION-Messenger",
+    });
+    expect(resolveUpdateFeed(flavorProfile("generic"))).toBeNull();
+  });
+
+  it("does not call the network when the feed is empty", async () => {
+    const fetch = vi.fn();
+    expect(await checkMacUpdate("1.0.2", "arm64", fetch as unknown as typeof globalThis.fetch, null)).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("a future dawer-releases feed is not the ubion repo", async () => {
+    const fetch = vi.fn(async () => new Response(YML, { status: 200 }));
+    const feed = { owner: "scottnaddle", repo: "dawer-releases", artifactPrefix: "Dawer" };
+    const u = await checkMacUpdate("1.0.2", "arm64", fetch as unknown as typeof globalThis.fetch, feed);
+    expect(fetch).toHaveBeenCalledWith(
+      "https://github.com/scottnaddle/dawer-releases/releases/latest/download/latest-mac.yml",
+      expect.any(Object),
+    );
+    expect(u?.dmgUrl).toBe("https://github.com/scottnaddle/dawer-releases/releases/download/v1.0.3/Dawer-1.0.3-arm64.dmg");
+    expect(u?.pageUrl).toBe("https://github.com/scottnaddle/dawer-releases/releases/tag/v1.0.3");
+    expect(u?.dmgUrl).not.toContain(RELEASES_REPO);
   });
 });

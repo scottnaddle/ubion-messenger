@@ -16,6 +16,14 @@ function resolveFlavor(env = process.env) {
   return "ubion";
 }
 
+/** GitHub publish block, or null when this flavor has no feed. Does not create a repo. */
+function publishConfig(profile) {
+  const owner = String(profile.updateOwner || "").trim();
+  const repo = String(profile.updateRepo || "").trim();
+  if (!profile.updates || !owner || !repo) return null;
+  return [{ provider: "github", owner, repo, releaseType: "release" }];
+}
+
 function buildConfig(env = process.env) {
   const cfg = JSON.parse(JSON.stringify(base));
   const id = resolveFlavor(env);
@@ -47,7 +55,9 @@ function buildConfig(env = process.env) {
       filter: ["*.png", "*.ico", "*.icns"],
     },
   ];
-  delete cfg.publish;
+  const feed = publishConfig(p);
+  if (feed) cfg.publish = feed;
+  else delete cfg.publish;
   cfg.extraMetadata = {
     description: "다워 (Dawer) — 비공식 클라이언트",
     author: "Dawer",
@@ -55,4 +65,4 @@ function buildConfig(env = process.env) {
   return cfg;
 }
 
-module.exports = { buildConfig, resolveFlavor };
+module.exports = { buildConfig, publishConfig, resolveFlavor };

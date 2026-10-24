@@ -10,7 +10,8 @@ import { navOrder } from "../src/nav";
 import { railShortcut } from "../src/rail-tooltip";
 
 const require = createRequire(import.meta.url);
-const { buildConfig } = require("../scripts/flavor-build.cjs") as {
+const { buildConfig, publishConfig } = require("../scripts/flavor-build.cjs") as {
+  publishConfig: (profile: { updates: boolean; updateOwner?: string; updateRepo?: string }) => { repo?: string }[] | null;
   buildConfig: (env?: Record<string, string | undefined>) => {
     appId: string;
     productName: string;
@@ -57,6 +58,8 @@ describe("UBM_FLAVOR", () => {
       expect(p.defaultBotApiUrl).toBe("");
       expect(p.enhancedServer).toBe(false);
       expect(p.updates).toBe(false);
+      expect(p.updateOwner).toBe("");
+      expect(p.updateRepo).toBe("");
       expect(p.unofficialNotice).toBe("비공식 클라이언트");
       expect(p.userDataDir).toBe("Dawer");
       expect(p.iconDir).toBe("dawer");
@@ -99,6 +102,7 @@ describe("electron-builder flavor", () => {
     expect(cfg.nsis.shortcutName).toBe("UBION Messenger");
     expect(cfg.mac.artifactName).toBe("UBION-Messenger-${version}-${arch}-mac.${ext}");
     expect(cfg.publish?.[0]?.repo).toBe("ubion-messenger-releases");
+    expect(cfg.publish).toEqual(publishConfig(flavorProfile("ubion")));
     expect(cfg.mac.icon).toBe("resources/icon.icns");
     expect(cfg.win.icon).toBe("resources/icon.ico");
     expect(cfg.linux.icon).toBe("resources/icon-1024.png");
@@ -112,6 +116,10 @@ describe("electron-builder flavor", () => {
     expect(cfg.nsis.shortcutName).toBe("Dawer");
     expect(cfg.mac.artifactName).toBe("Dawer-${version}-${arch}-mac.${ext}");
     expect(cfg.publish).toBeUndefined();
+    expect(publishConfig(flavorProfile("generic"))).toBeNull();
+    expect(publishConfig({ updates: true, updateOwner: "scottnaddle", updateRepo: "dawer-releases" })).toEqual([
+      { provider: "github", owner: "scottnaddle", repo: "dawer-releases", releaseType: "release" },
+    ]);
     expect(cfg.extraMetadata?.author).toBe("Dawer");
     expect(cfg.mac.icon).toBe("resources/dawer/icon.icns");
     expect(cfg.win.icon).toBe("resources/dawer/icon.ico");

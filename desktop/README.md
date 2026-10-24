@@ -59,7 +59,7 @@ One codebase, two products. `UBM_FLAVOR` is read when electron-vite starts and b
 | Server | `https://coco.ubion.co.kr` | blank — type the tenant URL on the login screen |
 | flex.team / `@ubion.co.kr` | on | off |
 | Reactions, polls, status server, 유비온봇 | on when the flavor is ubion (same env flags as before) | off. `hasCoreLicense()` is always false, so Free does not call a bot |
-| Updates | `ubion-messenger-releases` | none |
+| Updates | `ubion-messenger-releases` | off. Empty feed URL. A future `dawer-releases` repo can be named in the profile; it is not created here |
 | Settings folder | `UBION Messenger` | `Dawer` (does not share the company profile) |
 | App icon | blue UB monogram, `resources/icon.*` | warm 다 mark, `resources/dawer/` |
 
@@ -113,9 +113,23 @@ Subscription key shape (stub, not verified): `{ v: 1, tenantHost, tier: "core", 
 
 ## 자동 업데이트 / 릴리스 (v1.0.3+)
 
+UBION Messenger only. Dawer does not use this feed.
+
 - 배포 저장소(공개, 설치 파일만): https://github.com/scottnaddle/ubion-messenger-releases
 - Windows: electron-updater 로 시작 시·4시간마다 확인 → 백그라운드 다운로드 → '새 버전 설치 후 다시 시작' 또는 종료 시 설치.
 - macOS(미서명): latest-mac.yml 로 새 버전 감지 → 맞는 아키텍처 dmg 를 ~/Downloads 로 받아 열기 → 응용 프로그램으로 끌어 '대치'.
 - 설정: 현재 버전, '업데이트 확인', 자동 확인 토글.
 - 릴리스: 버전 올리기 → commit/push → Mac 에서 `desktop/scripts/release.sh` (CI 대기·산출물 다운로드·gh release create). 토큰 불필요(gh 로그인 사용).
 - 검증: `node desktop/scripts/verify-update.mjs 1.0.2`
+
+### Dawer updates
+
+Dawer does not check or publish to `ubion-messenger-releases`. In `flavor-profiles.json` the generic profile has `updates: false` and empty `updateOwner` / `updateRepo`, so there is no feed URL. Auto-check does not run, the settings screen does not offer it, and `electron-builder` omits `publish`. `npm run dist:dawer` also passes `--publish never`.
+
+When a separate public installer repo exists, fill in the generic profile only:
+
+- `updates`: `true`
+- `updateOwner`: `scottnaddle`
+- `updateRepo`: `dawer-releases`
+
+That turns on the Mac check and the GitHub `publish` block for later release tooling. This change does not create that repository and does not upload anything.
