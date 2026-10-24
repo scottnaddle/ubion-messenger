@@ -30,7 +30,8 @@ export type ToolExecContext = {
   extra?: Readonly<Record<string, (args: Record<string, unknown>) => Promise<unknown>>>;
 };
 
-const RESULT_LIMIT = 6000;
+/** Mail lists stay small. A Drive read may be 20k characters plus JSON. */
+const RESULT_LIMIT = 48_000;
 
 function clip(text: string, max: number): string {
   const flat = text.replace(/\s+/g, " ").trim();
@@ -45,7 +46,25 @@ function limitOf(args: Record<string, unknown>): number {
 
 function pack(value: unknown): string {
   const text = JSON.stringify(value);
-  return text.length > RESULT_LIMIT ? JSON.stringify({ ok: false, code: "truncated", message: "결과가 너무 길어 잘렸습니다." }) : text;
+  if (text.length <= RESULT_LIMIT) return text;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return JSON.stringify({ ok: false, code: "truncated", message: "결과가 너무 길어 잘렸습니다." });
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.text !== "string") {
+    return JSON.stringify({ ok: false, code: "truncated", message: "결과가 너무 길어 잘렸습니다." });
+  }
+  const row: Record<string, unknown> = { ...record, truncated: true };
+  let body = record.text;
+  for (let i = 0; i < 6 && body.length > 0; i++) {
+    const overhead = JSON.stringify({ ...row, text: "" }).length;
+    body = body.slice(0, Math.max(0, RESULT_LIMIT - overhead));
+    row.text = body;
+    const packed = JSON.stringify(row);
+    if (packed.length <= RESULT_LIMIT) return packed;
+    body = body.slice(0, Math.floor(body.length * 0.8));
+  }
+  return JSON.stringify({ ok: false, code: "truncated", message: "결과가 너무 길어 잘렸습니다." });
 }
 
 function fail(code: string, message: string): string {

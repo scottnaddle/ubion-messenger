@@ -428,6 +428,7 @@ export function installMockIfNeeded() {
       },
       disconnect: async () => ({ connected: false as const }),
       driveList: async () => ({ ok: false as const, code: "connect-later", message: "Google Drive는 아직 연결 전입니다." }),
+      driveRead: async () => ({ ok: false as const, code: "connect-later", message: "Google Drive는 아직 연결 전입니다." }),
       calendarToday: async () => ({ ok: false as const, code: "connect-later", message: "Google Calendar는 아직 연결 전입니다." }),
     },
     pathForFile: () => "",

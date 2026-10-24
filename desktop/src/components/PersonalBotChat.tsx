@@ -64,7 +64,13 @@ function googleExecutors(userId: number): Record<string, (args: Record<string, u
   return {
     google_drive_list: (args: Record<string, unknown>) => google.driveList(userId, {
       query: typeof args.query === "string" ? args.query : undefined,
+      mime: typeof args.mime === "string" ? args.mime : typeof args.mimeType === "string" ? args.mimeType : undefined,
+      folderId: typeof args.folderId === "string" ? args.folderId : undefined,
       limit: typeof args.limit === "number" ? args.limit : undefined,
+    }),
+    google_drive_read: (args: Record<string, unknown>) => google.driveRead(userId, {
+      fileId: args.fileId,
+      maxChars: args.maxChars,
     }),
     google_calendar_today: () => google.calendarToday(userId),
   };
@@ -175,11 +181,28 @@ export function PersonalBotChat({
         tools: advertisedTools(resolved),
         connectorStatus: connectorStatusList(resolved),
         signal: ac.signal,
-        execute: (call) => executePersonalBotTool(call, {
-          resolved,
-          ubion: ubionFromBridge(typeof window === "undefined" ? null : window.ubion),
-          extra: googleExecutors(userId),
-        }),
+        execute: async (call) => {
+          const raw = await executePersonalBotTool(call, {
+            resolved,
+            ubion: ubionFromBridge(typeof window === "undefined" ? null : window.ubion),
+            extra: googleExecutors(userId),
+          });
+          if (call.name === "google_drive_read" || call.name === "google_drive_list") {
+            try {
+              const parsed = JSON.parse(raw) as { code?: unknown };
+              if (parsed.code === "reconnect") {
+                const google = googleBridge();
+                const status = google ? await google.status(userId) : null;
+                if (status && ticket === gen.current) {
+                  setLinks(Object.fromEntries(status.connectors.map((item) => [item.id, { connected: item.connected, account: item.account }])));
+                }
+              }
+            } catch {
+              /* keep the tool text */
+            }
+          }
+          return raw;
+        },
       }).then((out) => out.added)
       : client.reply({ userId, messages: toPersonalBotWire(next), signal: ac.signal }).then((reply) => [
         { role: "assistant" as const, content: reply },

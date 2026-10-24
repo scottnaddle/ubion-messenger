@@ -2076,7 +2076,8 @@ function registerIpc() {
   handle("google:status", (userId: unknown) => googleHost.status(googleUser(userId)));
   handle("google:connect", (userId: unknown, id: unknown) => googleHost.connect(googleUser(userId), googleId(id)));
   handle("google:disconnect", (userId: unknown, id: unknown) => googleHost.disconnect(googleUser(userId), googleId(id)));
-  handle("google:driveList", (userId: unknown, args: unknown) => googleHost.driveList(googleUser(userId), (args && typeof args === "object" ? args : {}) as { query?: unknown; limit?: unknown }));
+  handle("google:driveList", (userId: unknown, args: unknown) => googleHost.driveList(googleUser(userId), (args && typeof args === "object" ? args : {}) as { query?: unknown; limit?: unknown; mime?: unknown; folderId?: unknown }));
+  handle("google:driveRead", (userId: unknown, args: unknown) => googleHost.driveRead(googleUser(userId), (args && typeof args === "object" ? args : {}) as { fileId?: unknown; maxChars?: unknown }));
   handle("google:calendarToday", (userId: unknown) => googleHost.calendarToday(googleUser(userId)));
   handle("portal:mailUpload", (name: unknown, data: unknown, mime: unknown) => core.portal.mailUpload(name, data, mime));
   handle("portal:mailCaps", () => core.portal.mailCaps());

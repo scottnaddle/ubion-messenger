@@ -94,6 +94,21 @@ describe("connector registry", () => {
       { resolved, extra: { google_drive_list: async () => ({ ok: true, files: ["보고서.pdf"] }) } },
     ));
     expect(listed.files).toEqual(["보고서.pdf"]);
+    const names = advertisedTools(resolved).map((tool) => tool.name);
+    expect(names).toContain("google_drive_list");
+    expect(names).toContain("google_drive_read");
+    const drive = CONNECTORS.find((item) => item.id === "google-drive");
+    expect(drive?.tools.map((tool) => tool.name)).toEqual(["google_drive_list", "google_drive_read"]);
+    expect(drive?.tools.every((tool) => tool.effect === "read")).toBe(true);
+    expect(drive?.tools[1]?.description).toContain("연결한 Drive 파일 본문을 읽습니다. 수정·삭제하지 않습니다");
+    expect(drive?.tools[1]?.parameters.required).toEqual(["fileId"]);
+    const body = "가".repeat(15_000);
+    const read = JSON.parse(await executePersonalBotTool(
+      { id: "g2", name: "google_drive_read", arguments: { fileId: "file_1" } },
+      { resolved, extra: { google_drive_read: async () => ({ ok: true, name: "보고서.pdf", mimeType: "application/pdf", text: body }) } },
+    ));
+    expect(read.ok).toBe(true);
+    expect(read.text).toBe(body);
   });
 
   it("loops tool calls on the desktop and then takes the reply", async () => {
@@ -139,6 +154,10 @@ describe("connector registry", () => {
     expect(note).toContain("ubion_mail_list");
     expect(note).toContain("connect-later");
     expect(note).toContain("Daou");
+    expect(note).toContain("google_drive_read");
+    expect(PERSONAL_BOT_SYSTEM_PROMPT).toContain("google_drive_read");
+    expect(PERSONAL_BOT_SYSTEM_PROMPT).toContain("수정·삭제·이동·공유하지 않습니다");
+    expect(PERSONAL_BOT_SYSTEM_PROMPT).not.toContain("목록만");
     expect(PERSONAL_BOT_SYSTEM_PROMPT).not.toContain("아직 연결되어 있지 않습니다");
   });
 });

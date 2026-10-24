@@ -1,7 +1,7 @@
 {
   "name": "ubion-messenger",
   "productName": "UBION Messenger",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "UBION Messenger — DaouOffice desktop client",
   "main": "out/main/index.js",
   "author": "UBION",
@@ -25,6 +25,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
+    "jszip": "3.10.1",
+    "pdf-parse": "1.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tough-cookie": "^5.0.0"

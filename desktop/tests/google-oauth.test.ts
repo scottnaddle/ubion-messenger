@@ -78,7 +78,10 @@ describe("google oauth protocol", () => {
     });
     const parsed = new URL(url);
     expect(parsed.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(parsed.searchParams.get("scope")).toBe(GOOGLE_DRIVE_SCOPE);
+    expect(GOOGLE_DRIVE_SCOPE).toBe("https://www.googleapis.com/auth/drive.readonly");
+    expect(parsed.searchParams.get("scope")?.split(" ")).toEqual([GOOGLE_DRIVE_SCOPE]);
+    expect(parsed.searchParams.get("scope")).not.toContain("metadata");
+    expect(parsed.searchParams.get("scope")).not.toContain("drive.file");
     expect(parsed.searchParams.get("scope")).not.toBe(GOOGLE_CALENDAR_SCOPE);
     expect(parsed.searchParams.get("code_verifier")).toBeNull();
     expect(url).not.toContain("client_secret");
@@ -153,7 +156,11 @@ describe("google oauth protocol", () => {
     expect(example).toContain("YOUR_CLIENT_ID");
     expect(resolveGoogleClientConfig({ fileText: example })).toBeNull();
     const doc = readFileSync(fileURLToPath(new URL("../docs/google-connectors.md", import.meta.url)), "utf8");
+    expect(doc).toContain("https://www.googleapis.com/auth/drive.readonly");
     expect(doc).toContain("drive.metadata.readonly");
+    expect(doc).toContain("google_drive_read");
+    expect(doc).toContain("does not create, edit, delete, move, or share");
+    expect(doc).not.toContain("files.delete");
     expect(doc).toContain("calendar.readonly");
     expect(doc).toContain("google-oauth.json");
     expect(doc).toContain("UBM_GOOGLE_CLIENT_ID");
@@ -300,7 +307,7 @@ describe("google connector host", () => {
     });
     const prefs: ConnectorPrefs = { "google-drive": { enabled: true } };
     const resolved = resolveConnectors(prefs, undefined, { "google-drive": true });
-    expect(advertisedTools(resolved).map((tool) => tool.name)).toContain("google_drive_list");
+    expect(advertisedTools(resolved).map((tool) => tool.name)).toEqual(expect.arrayContaining(["google_drive_list", "google_drive_read"]));
     const store = { saved: "" };
     saveConnectorPrefs({ setItem: (_k, v) => { store.saved = v; } }, 7, prefs);
     expect(store.saved).not.toContain("refresh-token");

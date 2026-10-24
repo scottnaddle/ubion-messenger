@@ -112,14 +112,28 @@ export const CONNECTORS: readonly ConnectorDef[] = [
     availability: "connect-later",
     tools: [{
       name: "google_drive_list",
-      description: "연결한 Google Drive에서 파일을 찾습니다.",
+      description: "연결한 Google Drive에서 문서를 찾습니다. 만들거나 수정·삭제·이동·공유하지 않습니다. query로 이름·검색어, mime으로 형식, folderId로 폴더를 좁히세요. 이어서 google_drive_read로 본문을 읽고 한국어로 정리·요약하세요.",
       effect: "read",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string" },
+          query: { type: "string", description: "파일 이름 또는 내용 검색어" },
+          mime: { type: "string", description: "pdf, document, spreadsheet, presentation, docx, xlsx, pptx, text, csv, html" },
+          folderId: { type: "string", description: "이 폴더 안에서만 찾습니다" },
           limit: READ_LIMIT,
         },
+      },
+    }, {
+      name: "google_drive_read",
+      description: "연결한 Drive 파일 본문을 읽습니다. 수정·삭제하지 않습니다. Google 문서·시트·슬라이드, PDF, 텍스트, docx, xlsx, pptx를 읽을 수 있습니다. 받은 텍스트만으로 한국어 요약을 하세요.",
+      effect: "read",
+      parameters: {
+        type: "object",
+        properties: {
+          fileId: { type: "string", description: "google_drive_list가 돌려준 파일 ID" },
+          maxChars: { type: "number", description: "본문 최대 글자 수. 기본 12000, 최대 20000" },
+        },
+        required: ["fileId"],
       },
     }],
   },

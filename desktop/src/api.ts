@@ -200,7 +200,8 @@ export type Bridge = {
     status(userId: number): Promise<{ connectors: { id: "google-drive" | "google-calendar"; connected: boolean; account?: string }[] }>;
     connect(userId: number, id: "google-drive" | "google-calendar"): Promise<{ connected: true; account?: string }>;
     disconnect(userId: number, id: "google-drive" | "google-calendar"): Promise<{ connected: false }>;
-    driveList(userId: number, args?: { query?: string; limit?: number }): Promise<{ ok: true; files: { id: string; name: string; mimeType: string; modifiedTime?: string }[] } | { ok: false; code: string; message: string }>;
+    driveList(userId: number, args?: { query?: string; mime?: string; folderId?: string; limit?: number }): Promise<{ ok: true; files: { id: string; name: string; mimeType: string; modifiedTime?: string; folder?: string }[]; note?: string } | { ok: false; code: string; message: string }>;
+    driveRead(userId: number, args: { fileId?: unknown; maxChars?: unknown }): Promise<{ ok: true; name: string; mimeType: string; text: string; truncated?: true; note?: string } | { ok: false; code: string; message: string; name?: string; mimeType?: string }>;
     calendarToday(userId: number): Promise<{ ok: true; items: { summary: string; start: string; end: string; allDay: boolean; location: string }[] } | { ok: false; code: string; message: string }>;
   };
   pathForFile(f: File): string;

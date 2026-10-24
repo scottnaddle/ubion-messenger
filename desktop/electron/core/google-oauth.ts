@@ -9,8 +9,19 @@ import type { AddressInfo } from "node:net";
 
 export const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
+/** File content and metadata. Not the full `drive` scope and not `drive.file`. */
+export const GOOGLE_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+/** 1.1.5 grant. Lists names but cannot download bytes. No longer requested. */
+export const GOOGLE_DRIVE_METADATA_SCOPE = "https://www.googleapis.com/auth/drive.metadata.readonly";
 export const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+export const DRIVE_READ_DEFAULT_CHARS = 12_000;
+export const DRIVE_READ_MAX_CHARS = 20_000;
+export const DRIVE_READ_MAX_BYTES = 20 * 1024 * 1024;
+export const DRIVE_SCAN_NOTE = "텍스트를 추출하지 못했습니다(스캔본일 수 있음).";
+export const DRIVE_EMPTY_NOTE = "텍스트를 추출하지 못했습니다.";
+export const DRIVE_RECONNECT_MESSAGE = "Drive 파일 내용을 읽으려면 권한을 다시 받아야 합니다. Google Drive 행에서 연결을 다시 눌러 주세요.";
+export const DRIVE_NAME_ONLY_NOTE = "파일 이름만 검색했습니다. 본문 검색과 읽기는 Google Drive 행에서 연결을 다시 눌러 주세요.";
+export const DRIVE_MIME_ERROR = "지원하지 않는 형식 필터입니다. pdf, document, spreadsheet, presentation, docx, xlsx, pptx, text, csv, html 중 하나를 쓰세요.";
 
 export const GOOGLE_CONNECTOR_IDS = ["google-drive", "google-calendar"] as const;
 export type GoogleConnectorId = (typeof GOOGLE_CONNECTOR_IDS)[number];
@@ -152,37 +163,297 @@ export function clipLimit(value: unknown, fallback = 8, max = 8): number {
   return Math.max(1, Math.min(max, Math.floor(n)));
 }
 
-export function driveListUrl(query: string, limit: number): string {
-  const name = query.trim().slice(0, 100).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-  const q = name ? `trashed = false and name contains '${name}'` : "trashed = false";
+export function clipReadChars(value: unknown, fallback = DRIVE_READ_DEFAULT_CHARS, max = DRIVE_READ_MAX_CHARS): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(n)));
+}
+
+const DRIVE_FILE_ID_RE = /^[A-Za-z0-9_-]{1,200}$/;
+
+export function cleanDriveFileId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const id = value.trim();
+  return DRIVE_FILE_ID_RE.test(id) ? id : null;
+}
+
+function escapeDriveQuery(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/** Up to five tokens from a name or keyword search. */
+export function driveKeywords(query: string): string[] {
+  const raw = query.trim().slice(0, 100);
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const part of raw.split(/\s+/)) {
+    const kw = part.trim();
+    if (!kw) continue;
+    out.push(kw.slice(0, 40));
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+const DRIVE_MIME_ALIASES: Record<string, string> = {
+  pdf: "application/pdf",
+  document: "application/vnd.google-apps.document",
+  doc: "application/vnd.google-apps.document",
+  gdoc: "application/vnd.google-apps.document",
+  spreadsheet: "application/vnd.google-apps.spreadsheet",
+  sheet: "application/vnd.google-apps.spreadsheet",
+  sheets: "application/vnd.google-apps.spreadsheet",
+  presentation: "application/vnd.google-apps.presentation",
+  slide: "application/vnd.google-apps.presentation",
+  slides: "application/vnd.google-apps.presentation",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  word: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  excel: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  powerpoint: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  txt: "text/plain",
+  text: "text/plain",
+  markdown: "text/markdown",
+  md: "text/markdown",
+  csv: "text/csv",
+  html: "text/html",
+};
+
+/** A Drive `q` mime clause, or invalid when the filter is not a known alias or mime type. */
+export function driveMimeClause(mime: string | undefined): { ok: true; clause?: string } | { ok: false } {
+  if (typeof mime !== "string" || !mime.trim()) return { ok: true };
+  const raw = mime.trim().toLowerCase();
+  const alias = DRIVE_MIME_ALIASES[raw];
+  if (alias) return { ok: true, clause: `mimeType = '${alias}'` };
+  if (/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/.test(raw) && raw.length <= 140) return { ok: true, clause: `mimeType = '${raw}'` };
+  return { ok: false };
+}
+
+export type DriveListOptions = {
+  mime?: string;
+  folderId?: string;
+  /** When false, search file names only (metadata-only tokens). Default true. */
+  contentSearch?: boolean;
+};
+
+export function driveSearchQuery(query: string, options: DriveListOptions = {}): string {
+  const parts = ["trashed = false"];
+  const folder = cleanDriveFileId(options.folderId);
+  if (folder) parts.push(`'${folder}' in parents`);
+  const mime = driveMimeClause(options.mime);
+  if (mime.ok && mime.clause) parts.push(mime.clause);
+  const content = options.contentSearch !== false;
+  for (const kw of driveKeywords(query)) {
+    const escaped = escapeDriveQuery(kw);
+    parts.push(content
+      ? `(name contains '${escaped}' or fullText contains '${escaped}')`
+      : `name contains '${escaped}'`);
+  }
+  return parts.join(" and ");
+}
+
+export function driveListUrl(query: string, limit: number, options: DriveListOptions = {}): string {
   const url = new URL("https://www.googleapis.com/drive/v3/files");
   url.searchParams.set("pageSize", String(limit));
-  url.searchParams.set("fields", "files(id,name,mimeType,modifiedTime)");
-  url.searchParams.set("orderBy", "modifiedTime desc");
+  url.searchParams.set("fields", "files(id,name,mimeType,modifiedTime,parents)");
   url.searchParams.set("spaces", "drive");
+  url.searchParams.set("supportsAllDrives", "true");
+  url.searchParams.set("includeItemsFromAllDrives", "true");
+  const q = driveSearchQuery(query, options);
   url.searchParams.set("q", q);
+  if (!q.includes("fullText")) url.searchParams.set("orderBy", "modifiedTime desc");
   return url.toString();
 }
 
-export type DriveFileItem = { id: string; name: string; mimeType: string; modifiedTime?: string };
+export function driveParentsUrl(ids: readonly string[]): string {
+  const unique = [...new Set(ids.map((id) => cleanDriveFileId(id)).filter((id): id is string => !!id))].slice(0, 10);
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  url.searchParams.set("pageSize", String(Math.max(1, unique.length)));
+  url.searchParams.set("fields", "files(id,name)");
+  url.searchParams.set("supportsAllDrives", "true");
+  url.searchParams.set("includeItemsFromAllDrives", "true");
+  url.searchParams.set("q", unique.map((id) => `id = '${id}'`).join(" or ") || "trashed = false");
+  return url.toString();
+}
 
-export function parseDriveFiles(payload: unknown, limit: number): DriveFileItem[] {
+export function driveFileMetaUrl(fileId: string): string {
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+  url.searchParams.set("fields", "id,name,mimeType,size");
+  url.searchParams.set("supportsAllDrives", "true");
+  return url.toString();
+}
+
+export function driveExportUrl(fileId: string, exportMime: string): string {
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export`);
+  url.searchParams.set("mimeType", exportMime);
+  url.searchParams.set("supportsAllDrives", "true");
+  return url.toString();
+}
+
+export function driveMediaUrl(fileId: string): string {
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+  url.searchParams.set("alt", "media");
+  url.searchParams.set("supportsAllDrives", "true");
+  return url.toString();
+}
+
+export type DriveFileItem = { id: string; name: string; mimeType: string; modifiedTime?: string; folder?: string };
+
+export type ParsedDriveFile = { id: string; name: string; mimeType: string; modifiedTime?: string; parentId?: string };
+
+export function parseDriveFiles(payload: unknown, limit: number): ParsedDriveFile[] {
   const files = payload && typeof payload === "object" ? (payload as { files?: unknown }).files : null;
   if (!Array.isArray(files)) return [];
-  const out: DriveFileItem[] = [];
+  const out: ParsedDriveFile[] = [];
   for (const item of files) {
     if (!item || typeof item !== "object") continue;
-    const row = item as { id?: unknown; name?: unknown; mimeType?: unknown; modifiedTime?: unknown };
+    const row = item as { id?: unknown; name?: unknown; mimeType?: unknown; modifiedTime?: unknown; parents?: unknown };
     if (typeof row.id !== "string" || typeof row.name !== "string") continue;
+    const parent = Array.isArray(row.parents) ? row.parents.find((id) => cleanDriveFileId(id)) : undefined;
     out.push({
       id: row.id.slice(0, 200),
       name: row.name.slice(0, 180),
-      mimeType: typeof row.mimeType === "string" ? row.mimeType.slice(0, 120) : "",
+      mimeType: typeof row.mimeType === "string" ? row.mimeType.slice(0, 160) : "",
       ...(typeof row.modifiedTime === "string" ? { modifiedTime: row.modifiedTime.slice(0, 40) } : {}),
+      ...(typeof parent === "string" ? { parentId: parent.slice(0, 200) } : {}),
     });
     if (out.length >= limit) break;
   }
+  return out.sort((a, b) => (b.modifiedTime || "").localeCompare(a.modifiedTime || ""));
+}
+
+export function parseDriveNames(payload: unknown): Record<string, string> {
+  const files = payload && typeof payload === "object" ? (payload as { files?: unknown }).files : null;
+  const out: Record<string, string> = {};
+  if (!Array.isArray(files)) return out;
+  for (const item of files) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as { id?: unknown; name?: unknown };
+    if (typeof row.id !== "string" || typeof row.name !== "string" || !row.name.trim()) continue;
+    out[row.id.slice(0, 200)] = row.name.slice(0, 180);
+  }
   return out;
+}
+
+export type DriveFileMeta = { id: string; name: string; mimeType: string; size?: number };
+
+export function parseDriveFileMeta(payload: unknown): DriveFileMeta | null {
+  if (!payload || typeof payload !== "object") return null;
+  const row = payload as { id?: unknown; name?: unknown; mimeType?: unknown; size?: unknown };
+  const id = typeof row.id === "string" ? row.id.slice(0, 200) : "";
+  const mimeType = typeof row.mimeType === "string" ? row.mimeType.slice(0, 160) : "";
+  if (!id || !mimeType) return null;
+  let size: number | undefined;
+  if (typeof row.size === "string" && /^\d{1,16}$/.test(row.size)) {
+    const n = Number(row.size);
+    if (Number.isSafeInteger(n)) size = n;
+  } else if (typeof row.size === "number" && Number.isSafeInteger(row.size) && row.size >= 0) {
+    size = row.size;
+  }
+  const name = typeof row.name === "string" && row.name.trim() ? row.name.slice(0, 180) : "(이름 없음)";
+  return { id, name, mimeType, ...(size !== undefined ? { size } : {}) };
+}
+
+const FULL_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
+
+/** Empty scope means "unknown" — try the API. Metadata-only grants cannot download bytes. */
+export function driveScopeAllowsContent(scope: string | undefined): boolean {
+  if (typeof scope !== "string" || !scope.trim()) return true;
+  const parts = scope.split(/\s+/).filter(Boolean);
+  return parts.includes(GOOGLE_DRIVE_SCOPE) || parts.includes(FULL_DRIVE_SCOPE);
+}
+
+function collectField(value: unknown, key: string, depth = 0, out: string[] = []): string[] {
+  if (!value || depth > 8) return out;
+  if (Array.isArray(value)) {
+    for (const item of value) collectField(item, key, depth + 1, out);
+    return out;
+  }
+  if (typeof value === "object") {
+    for (const [k, child] of Object.entries(value as Record<string, unknown>)) {
+      if (k === key && typeof child === "string") out.push(child);
+      else collectField(child, key, depth + 1, out);
+    }
+  }
+  return out;
+}
+
+/**
+ * True only for a token that lacks the Drive content scope.
+ * `insufficientFilePermissions` is a single-file ACL miss and must not clear the token.
+ */
+export function isInsufficientDriveScope(status: number, payload: unknown): boolean {
+  if (status !== 403) return false;
+  const reasons = collectField(payload, "reason").map((reason) => reason.toLowerCase().replace(/[\s_-]+/g, ""));
+  if (reasons.some((reason) => reason.includes("insufficientfilepermission"))) return false;
+  if (reasons.some((reason) => reason === "insufficientpermissions" || reason === "accesstokenscopeinsufficient")) return true;
+  return collectField(payload, "message").some((message) => /insufficient authentication scopes/i.test(message));
+}
+
+export function truncateDriveText(text: string, maxChars: number): { text: string; truncated: boolean } {
+  const normalized = text.replace(/\u0000/g, "").replace(/\r\n/g, "\n").replace(/^\uFEFF/, "");
+  const cap = clipReadChars(maxChars);
+  if (normalized.length <= cap) return { text: normalized, truncated: false };
+  return { text: normalized.slice(0, cap), truncated: true };
+}
+
+export type DriveReadRoute =
+  | { kind: "export"; exportMime: "text/plain" | "text/csv" }
+  | { kind: "pdf" }
+  | { kind: "text"; html: boolean }
+  | { kind: "docx" | "xlsx" | "pptx" }
+  | { kind: "unsupported"; message: string };
+
+const DOCX_MIMES = new Set([
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+  "application/vnd.ms-word.document.macroenabled.12",
+]);
+const XLSX_MIMES = new Set([
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+  "application/vnd.ms-excel.sheet.macroenabled.12",
+]);
+const PPTX_MIMES = new Set([
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.presentationml.template",
+  "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+]);
+
+function normalizeMime(mimeType: string): string {
+  return mimeType.toLowerCase().split(";")[0]?.trim() || "";
+}
+
+function unsupportedDriveMessage(mime: string): string {
+  if (mime === "application/vnd.google-apps.folder") return "폴더 전체는 읽지 않습니다. 파일을 찾은 뒤 하나씩 읽으며, 만들거나 수정·삭제·이동하지 않습니다.";
+  if (mime === "application/vnd.google-apps.shortcut") return "바로가기는 읽지 않습니다. 대상 파일을 찾으세요.";
+  if (mime.startsWith("image/")) return "이미지 파일은 텍스트로 읽지 않습니다. 수정·삭제하지 않습니다.";
+  if (mime.startsWith("video/") || mime.startsWith("audio/")) return "동영상·음성 파일은 텍스트로 읽지 않습니다. 수정·삭제하지 않습니다.";
+  if (mime === "application/zip" || mime === "application/x-zip-compressed" || mime === "application/gzip" || mime === "application/x-tar" || mime === "application/vnd.rar" || mime === "application/x-7z-compressed") {
+    return "압축 파일은 열지 않습니다. 수정·삭제하지 않습니다.";
+  }
+  if (mime === "application/msword" || mime === "application/vnd.ms-excel" || mime === "application/vnd.ms-powerpoint") {
+    return "예전 Office 파일(.doc, .xls, .ppt)은 텍스트로 읽지 않습니다. docx, xlsx 또는 Google 문서를 사용하세요.";
+  }
+  return "이 형식의 파일 내용은 읽지 않습니다. 수정·삭제하지 않습니다.";
+}
+
+export function routeDriveMime(mimeType: string): DriveReadRoute {
+  const mime = normalizeMime(mimeType);
+  if (mime === "application/vnd.google-apps.document" || mime === "application/vnd.google-apps.presentation") {
+    return { kind: "export", exportMime: "text/plain" };
+  }
+  if (mime === "application/vnd.google-apps.spreadsheet") return { kind: "export", exportMime: "text/csv" };
+  if (mime === "application/pdf") return { kind: "pdf" };
+  if (DOCX_MIMES.has(mime)) return { kind: "docx" };
+  if (XLSX_MIMES.has(mime)) return { kind: "xlsx" };
+  if (PPTX_MIMES.has(mime)) return { kind: "pptx" };
+  if (mime === "text/html" || mime === "application/xhtml+xml") return { kind: "text", html: true };
+  if (mime.startsWith("text/") || mime === "application/json" || mime === "application/xml" || mime === "application/csv") {
+    return { kind: "text", html: false };
+  }
+  return { kind: "unsupported", message: unsupportedDriveMessage(mime) };
 }
 
 export function parseDriveAccount(payload: unknown): string | undefined {
