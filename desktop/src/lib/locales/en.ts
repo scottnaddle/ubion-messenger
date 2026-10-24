@@ -563,6 +563,17 @@ const dict: Record<string, string> = {
   "총 {n}명 참여": "{n} voted",
   "투표 종료": "Close poll",
   "만들기": "Create",
+  "방 AI": "Room AI",
+  "요약을 만들지 못했습니다.": "Couldn't build a summary.",
+  "앱이 앞에 있을 때만 갱신합니다": "Updates only while the app is in front",
+  "채팅에 메시지를 남기지 않습니다": "Does not post into the chat",
+  "요약": "Summary",
+  "아직 이 방의 요약이 없습니다.": "No summary for this room yet.",
+  "최근 갱신 {time}": "Updated {time}",
+  "할 일": "To-dos",
+  "이 기기에만 저장됩니다": "Saved on this device only",
+  "담당 {name}": "Owner {name}",
+  "추출된 할 일이 없습니다.": "No to-dos extracted.",
 };
 
 export default dict;

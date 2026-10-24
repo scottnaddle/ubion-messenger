@@ -43,6 +43,7 @@ import { LinkPreview } from "./LinkPreview";
 import { ReactionBar, ReactionPopup, type ReactionPickerState } from "./Reactions";
 import { REACTION_EMOJI, REACTION_ROOM_FORBIDDEN } from "../../electron/core/reactions";
 import { PollCard, PollCreateModal } from "./PollCard";
+import { RoomAiPanel } from "./RoomAiPanel";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
 import { Avatar, Icon } from "./ui";
 import { tk, useT } from "../lib/i18n";
@@ -912,6 +913,13 @@ export function ChatView({
             onMode={(mode) => setPicker((p) => (p ? { ...p, mode } : p))}
             onPick={(emoji) => { toggleReaction(picker.messageId, emoji); setPicker(null); }} />
         )}
+        <RoomAiPanel
+          roomKey={room.key}
+          userId={me.id}
+          messages={msgs}
+          focused={focused}
+          historyLoading={loading}
+        />
         {searchOpen && <SearchPanel room={room} onClose={() => setSearchOpen(false)} />}
       </div>
       {uploading > 0 && <div className="upload-bar">{t("파일 {n}개 업로드 중…", { n: uploading })}</div>}
