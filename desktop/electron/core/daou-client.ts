@@ -28,6 +28,7 @@ type ReqInit = {
   form?: Record<string, string>;
   body?: Buffer;
   contentType?: string;
+  accept?: string;
   retry?: boolean;
 };
 type Res = { status: number; text: string; buffer: Buffer; contentType: string };
@@ -662,7 +663,9 @@ export class DaouClient {
   /** Authenticated GET of any same-server path (thumbnails, avatars, files). */
   async fetchBinary(path: string): Promise<{ data: Buffer; contentType: string }> {
     if (!path.startsWith("/")) path = "/" + path;
-    const res = await this.request(path);
+    // Chat files are bytes. The default Accept prefers JSON and some gateways honor it.
+    const accept = path.startsWith("/api/chat/files/") ? "*/*" : undefined;
+    const res = await this.request(path, accept ? { accept } : {});
     if (res.status !== 200) throw new HttpError(res.status, `GET ${res.status}`);
     return { data: res.buffer, contentType: res.contentType };
   }
@@ -708,7 +711,7 @@ export class DaouClient {
     const headers: Record<string, string> = {
       "User-Agent": "UBIONMessenger-Desktop/1.0",
       "X-Requested-With": "XMLHttpRequest",
-      Accept: "application/json, text/javascript, */*; q=0.01",
+      Accept: init.accept || "application/json, text/javascript, */*; q=0.01",
     };
     const cookie = await this.jar.getCookieString(url);
     if (cookie) headers.Cookie = cookie;
@@ -724,7 +727,8 @@ export class DaouClient {
     }
     if (init.contentType) headers["Content-Type"] = init.contentType;
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), body && body.length > 1e6 ? 300_000 : 30_000);
+    const long = path.startsWith("/api/chat/files/");
+    const timer = setTimeout(() => ctrl.abort(), (body && body.length > 1e6) || long ? 300_000 : 30_000);
     try {
       const res = await this.fetchImpl(url, {
         method: init.method || (body ? "POST" : "GET"),

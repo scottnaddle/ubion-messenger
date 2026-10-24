@@ -4,7 +4,7 @@ import {
 } from "../api";
 import {
   filterMembers, findMentionTrigger, insertMention, parseMentionTokens,
-  type MentionMember, type MentionTrigger,
+  type MentionTrigger,
 } from "../lib/mention";
 import {
   addFilesWithReport, executeSendPlan, folderSkipMessage, formatSize, isImageFile,
@@ -27,6 +27,8 @@ import { REMINDER_PRESETS, type ReminderPreset } from "../../electron/core/remin
 import { isSendEnter } from "../lib/composer";
 import { botStatusLabel, type BotStatusEntry } from "../lib/bot-status";
 import { isBotGroupRoom } from "../lib/bot-room";
+import { messageCopyText, writeClipboard } from "../lib/message-copy";
+import { loadRoomMembers, type RoomMemberFace } from "../lib/room-members";
 import { SUMMARY_DEFAULT_RECENT_N, type SummaryMode } from "../lib/bot-summary";
 import {
   applyToggle, mergeReactionUpdate, nextReactionPollDelay, reactionPollIds, REACTION_ROOM_INITIAL, reactionBlockedToast, reactionRoomFailed, reactionToggleErrorText, reactionRoomOk, reactionRoomReason, type ReactionRoomState,
@@ -45,41 +47,11 @@ import { REACTION_EMOJI, REACTION_ROOM_FORBIDDEN } from "../../electron/core/rea
 import { isMobileUi } from "../lib/compact";
 import { PollCard, PollCreateModal } from "./PollCard";
 import { dayLabel, fileSize, parseTime, sameDay, timeLabel, URL_RE } from "../lib/format";
-import { Avatar, Icon } from "./ui";
+import { Avatar, Icon, RoomAvatar } from "./ui";
 import { tk, useT } from "../lib/i18n";
 import type { Toast, ToastFn } from "../App";
 
 const PRES_LABEL: Record<Presence, string> = { online: tk("온라인"), away: tk("자리 비움"), busy: tk("다른 용무 중"), offline: tk("오프라인") };
-
-type MentionCandidate = MentionMember & { image?: string };
-
-const memberCache = new Map<string, MentionCandidate[]>();
-const memberPending = new Map<string, Promise<MentionCandidate[]>>();
-
-/** Fetch room members once per room; both the composer and message rendering share this cache. */
-function loadRoomMembers(roomKey: string): Promise<MentionCandidate[]> {
-  const cached = memberCache.get(roomKey);
-  if (cached) return Promise.resolve(cached);
-  const pending = memberPending.get(roomKey);
-  if (pending) return pending;
-  const req = api()
-    .call<MentionCandidate[]>("rooms:members", roomKey)
-    .then((list) => {
-      const members = (Array.isArray(list) ? list : [])
-        .filter((m) => m && typeof m.name === "string" && m.name)
-        .map((m) => ({
-          userId: Number(m.userId), name: m.name,
-          position: m.position || "", department: m.department || "", image: m.image || "",
-        }));
-      memberCache.set(roomKey, members);
-      return members;
-    })
-    // don't cache failures, so a transient error doesn't disable mentions for the room until restart
-    .catch(() => [] as MentionCandidate[])
-    .finally(() => { memberPending.delete(roomKey); });
-  memberPending.set(roomKey, req);
-  return req;
-}
 
 export function ChatView({
   room, me, focused, presence, statusMessage, botStatus, botUserSeq, toast, onBack,
@@ -107,7 +79,7 @@ export function ChatView({
   const [zoomCaps, setZoomCaps] = useState<ZoomCaps | null>(null);
   const [zoomBusy, setZoomBusy] = useState(false);
   const [composerInsert, setComposerInsert] = useState<ComposerInsert | null>(null);
-  const [roomMembers, setRoomMembers] = useState<MentionCandidate[]>([]);
+  const [roomMembers, setRoomMembers] = useState<RoomMemberFace[]>([]);
   const [botAutonomy, setBotAutonomy] = useState(false);
   const [botLoading, setBotLoading] = useState(false);
   const [botSaving, setBotSaving] = useState(false);
@@ -492,6 +464,14 @@ export function ChatView({
     if (m.messageId == null || isDeletedMessage(m) || m.pending || m.failed) return;
     setConfirmNotice(m);
   };
+  const copyMessage = async (m: ChatMessage) => {
+    try {
+      await writeClipboard(messageCopyText(m));
+      toast(t("메시지를 복사했습니다"), "info");
+    } catch (e) {
+      toast((e as Error).message);
+    }
+  };
   const saveMessage = async (m: ChatMessage) => {
     try {
       await api().saved.add({
@@ -801,7 +781,7 @@ export function ChatView({
             ← {t("목록")}
           </button>
         )}
-        <Avatar name={room.name} src={room.avatar} size={34} presence={room.peerUserId ? presence || "offline" : undefined} />
+        <RoomAvatar room={room} size={34} presence={room.peerUserId ? presence || "offline" : undefined} />
         <div className="chat-title">
           <div className="name">{room.name}</div>
           <div className="sub muted">{subtitle}</div>
@@ -884,7 +864,8 @@ export function ChatView({
                     onDelete={deletable && canDeleteMessage(m, me.id) ? () => requestDelete(m) : undefined}
                     onNotice={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestNotice(m) : undefined}
                     onSave={!isDeletedMessage(m) && !m.pending && !m.failed ? () => void saveMessage(m) : undefined}
-                    onRemind={!isDeletedMessage(m) && !m.pending && !m.failed ? () => setRemindTarget(m) : undefined}
+                    onCopy={isMobileUi() && !isDeletedMessage(m) && !m.pending && !m.failed ? () => void copyMessage(m) : undefined}
+                    onRemind={!isMobileUi() && !isDeletedMessage(m) && !m.pending && !m.failed ? () => setRemindTarget(m) : undefined}
                     onEdit={editOn && canDeleteMessage(m, me.id) && !isDeletedMessage(m) ? () => requestEdit(m) : undefined}
                     onReply={!isDeletedMessage(m) && !m.pending && !m.failed && m.messageId != null ? () => requestReply(m) : undefined}
                     reactions={reactions} onToggleReaction={toggleReaction}
@@ -1177,16 +1158,20 @@ function RoomMenu({
 type MenuReaction = { disabledReason: string | null; onPick: (emoji: string) => void; onMore: () => void; onBlocked: () => void };
 
 function MessageMenu({
-  x, y, reaction, onEdit, onReply, onDelete, onNotice, onSave, onRemind, onClose,
-}: { x: number; y: number; reaction?: MenuReaction; onEdit?: () => void; onReply?: () => void; onDelete?: () => void; onNotice?: () => void; onSave?: () => void; onRemind?: () => void; onClose: () => void }) {
+  x, y, reaction, onEdit, onReply, onCopy, onDelete, onNotice, onSave, onRemind, onClose,
+}: {
+  x: number; y: number; reaction?: MenuReaction; onEdit?: () => void; onReply?: () => void; onCopy?: () => void;
+  onDelete?: () => void; onNotice?: () => void; onSave?: () => void; onRemind?: () => void; onClose: () => void;
+}) {
   const t = useT();
+  const sheet = isMobileUi();
   useEffect(() => {
     const h = (e: Event) => { if (e instanceof KeyboardEvent && e.key !== "Escape") return; onClose(); };
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
     return () => { window.removeEventListener("mousedown", h); window.removeEventListener("keydown", h); window.removeEventListener("blur", h); };
   }, [onClose]);
-  return (
-    <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+  const items = (
+    <>
       {reaction && (reaction.disabledReason ? (
         <button role="menuitem" className="ctx-disabled" aria-disabled="true" title={t(reaction.disabledReason)}
           onClick={() => { onClose(); reaction.onBlocked(); }}>
@@ -1205,11 +1190,27 @@ function MessageMenu({
         </div>
       ))}
       {onReply && <button role="menuitem" onClick={() => { onClose(); onReply(); }}><Icon name="reply" size={14} /> {t("답장")}</button>}
+      {onCopy && <button role="menuitem" onClick={() => { onClose(); onCopy(); }}><Icon name="copy" size={14} /> {t("복사")}</button>}
       {onEdit && <button role="menuitem" onClick={() => { onClose(); onEdit(); }}><Icon name="edit" size={14} /> {t("수정")}</button>}
       {onSave && <button role="menuitem" onClick={() => { onClose(); onSave(); }}><Icon name="star" size={14} /> {t("저장")}</button>}
       {onRemind && <button role="menuitem" onClick={() => { onClose(); onRemind(); }}><Icon name="clock" size={14} /> {t("나중에 알림")}</button>}
       {onNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> {t("공지로 등록")}</button>}
       {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> {t("삭제")}</button>}
+      {sheet && <button role="menuitem" onClick={onClose}>{t("취소")}</button>}
+    </>
+  );
+  if (sheet) {
+    return (
+      <div className="sheet-back" onMouseDown={(e) => { e.stopPropagation(); onClose(); }}>
+        <div className="ctx-menu sheet" role="menu" aria-label={t("메시지 작업")} onMouseDown={(e) => e.stopPropagation()}>
+          {items}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
+      {items}
     </div>
   );
 }
@@ -1301,12 +1302,12 @@ function ScheduleModal({ onPick, onClose }: { onPick: (sendAt: number, sendOnMis
 
 function MessageRow({
   m, mine, grouped, showTime, room, meId, isLastMine, memberNames, myName, onImage, onRetry, toast, onDelete, onNotice, onSave, onRemind,
-  onEdit, onReply, reactions, onToggleReaction, reactionNames, showReactions, reactionBlocked, pickerMode, onOpenPicker, onReactionBlocked, pollsOn,
+  onEdit, onReply, onCopy, reactions, onToggleReaction, reactionNames, showReactions, reactionBlocked, pickerMode, onOpenPicker, onReactionBlocked, pollsOn,
 }: {
   m: ChatMessage; mine: boolean; grouped: boolean; showTime: boolean; room: Room; meId: number; isLastMine: boolean;
   memberNames: string[]; myName: string;
   onImage: () => void; onRetry: () => void; toast: ToastFn; onDelete?: () => void; onNotice?: () => void;
-  onSave?: () => void; onRemind?: () => void; onEdit?: () => void; onReply?: () => void;
+  onSave?: () => void; onRemind?: () => void; onEdit?: () => void; onReply?: () => void; onCopy?: () => void;
   reactions?: ReactionMap; onToggleReaction: (messageId: number, emoji: string) => void;
   reactionNames: ReadonlyMap<number, string>; showReactions: boolean; reactionBlocked: string | null;
   pickerMode: "palette" | "full" | null; onOpenPicker: (mode: "palette" | "full" | null) => void; onReactionBlocked: () => void;
@@ -1316,14 +1317,14 @@ function MessageRow({
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   // 리액션 달기 is offered for every sent message; when the bot server is unusable it is shown disabled with a reason.
-  const canReact = !deleted && !m.pending && !m.failed && m.messageId != null;
+  const canReact = !mine && !deleted && !m.pending && !m.failed && m.messageId != null;
   const reaction = canReact ? {
     disabledReason: showReactions ? reactionBlocked : (reactionBlocked ?? "봇 서버 연결 안 됨"),
     onPick: (emoji: string) => onToggleReaction(m.messageId!, emoji),
     onMore: () => onOpenPicker("full"),
     onBlocked: onReactionBlocked,
   } : undefined;
-  const hasMenu = !!(onDelete || onNotice || onSave || onRemind || onEdit || onReply || reaction);
+  const hasMenu = !!(onDelete || onNotice || onSave || onRemind || onEdit || onReply || onCopy || reaction);
   const openMenu = (e: React.MouseEvent) => {
     if (!hasMenu || deleted) return;
     e.preventDefault();
@@ -1338,7 +1339,7 @@ function MessageRow({
   return (
     <div className={`msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}`}>
       {menu && hasMenu && (
-        <MessageMenu x={menu.x} y={menu.y} reaction={reaction} onEdit={onEdit} onReply={onReply} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
+        <MessageMenu x={menu.x} y={menu.y} reaction={reaction} onEdit={onEdit} onReply={onReply} onCopy={onCopy} onDelete={onDelete} onNotice={onNotice} onSave={onSave} onRemind={onRemind} onClose={() => setMenu(null)} />
       )}
       {!mine && <div className="msg-av">{!grouped && <Avatar name={m.sendUserName} src={m.userImage} size={34} />}</div>}
       <div className="msg-main">
@@ -1371,7 +1372,7 @@ function MessageRow({
             </div>
           )}
           {showReactions && !deleted && !m.pending && !m.failed && m.messageId != null && (
-            <ReactionBar map={reactions} messageId={m.messageId} me={meId} names={reactionNames}
+            <ReactionBar map={reactions} messageId={m.messageId} me={meId} names={reactionNames} readOnly={mine}
               onToggle={(e) => onToggleReaction(m.messageId!, e)}
               open={pickerMode != null} onOpenPicker={onOpenPicker} disabledReason={reactionBlocked} onBlocked={onReactionBlocked} />
           )}
@@ -1387,6 +1388,12 @@ function MessageRow({
               </>
             )}
           </div>
+          {isMobileUi() && hasMenu && !deleted && (
+            <button type="button" className="icon-btn msg-more" aria-label={t("메시지 작업")}
+              onClick={(e) => { e.stopPropagation(); setMenu({ x: 0, y: 0 }); }}>
+              <Icon name="more" size={16} />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1406,7 +1413,7 @@ function Composer({
   const t = useT();
   const [text, setText] = useState("");
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [members, setMembers] = useState<MentionCandidate[]>([]);
+  const [members, setMembers] = useState<RoomMemberFace[]>([]);
   const [trigger, setTrigger] = useState<MentionTrigger | null>(null);
   const [cursorEnd, setCursorEnd] = useState(0);
   const [active, setActive] = useState(0);
@@ -1493,7 +1500,7 @@ function Composer({
     setActive(0);
   };
 
-  const pick = (member: MentionCandidate) => {
+  const pick = (member: RoomMemberFace) => {
     if (!trigger) return;
     const current = ta.current?.value ?? text;
     const next = insertMention(current, trigger, cursorEnd, member.name);

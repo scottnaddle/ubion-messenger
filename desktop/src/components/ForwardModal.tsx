@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { api, type ChatMessage, type Person, type Room } from "../api";
 import { apiRoomSeq, FORWARD_MAX_MEMBERS, FORWARD_SUCCESS_TEXT } from "../../electron/core/forward";
 import type { ToastFn } from "../App";
-import { Avatar, Icon } from "./ui";
+import { Avatar, Icon, RoomAvatar } from "./ui";
 import { useT } from "../lib/i18n";
 
 type Tab = "rooms" | "people";
@@ -157,7 +157,7 @@ export function ForwardModal({
                   onClick={() => setRoom(r)}
                   onDoubleClick={() => { setRoom(r); setConfirm({ kind: "room" }); }}
                 >
-                  <Avatar name={r.name} src={r.avatar} size={34} />
+                  <RoomAvatar room={r} size={34} />
                   <div className="room-body">
                     <div className="room-name">{r.name}{r.isSelf && <span className="tag">{t("나")}</span>}</div>
                     <div className="room-preview">{r.kind === "room" ? t("그룹 대화") : r.kind === "pubsub" ? t("알림 채널") : t("1:1 대화")}</div>

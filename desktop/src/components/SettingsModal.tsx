@@ -10,8 +10,11 @@ import { isMobileUi } from "../lib/compact";
 const PRESET_LABELS: Record<ThemePresetId, string> = { default: tk("기본"), blue: tk("블루"), green: tk("그린"), purple: tk("퍼플") };
 
 export function SettingsModal({
-  settings, i18nEnabled = false, user, onChange, onClose, onLogout,
-}: { settings: Settings; i18nEnabled?: boolean; user: SessionUser; onChange: (s: Settings) => void; onClose: () => void; onLogout: () => void }) {
+  settings, i18nEnabled = false, user, onChange, onClose, onLogout, onOpenSaved,
+}: {
+  settings: Settings; i18nEnabled?: boolean; user: SessionUser; onChange: (s: Settings) => void;
+  onClose: () => void; onLogout: () => void; onOpenSaved?: () => void;
+}) {
   const t = useT();
   const mobile = isMobileUi();
   const [info, setInfo] = useState<{ version: string; platform: string; encryption: boolean } | null>(null);
@@ -167,6 +170,9 @@ export function SettingsModal({
             </div>
             <button className="danger-btn" onClick={onLogout}>{t("로그아웃")}</button>
           </section>
+          {mobile && onOpenSaved && (
+            <button className="row" type="button" onClick={onOpenSaved}>{t("저장한 메시지")}</button>
+          )}
           <h4>{t("화면")}</h4>
           {i18nEnabled && !mobile && (
             <div className="row">

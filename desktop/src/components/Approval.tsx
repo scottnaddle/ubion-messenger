@@ -69,6 +69,74 @@ function FlowGroup({ name, activities }: { name: string; activities: ApprovalAct
 export const canAct = (d: ApprovalDocumentDetail) =>
   ["isApprovalWaitingUser", "isAgreementWaitingUser", "isCheckWaitingUser", "isInspectionWaitingUser", "isApprovalDeputy", "isAgreementDeputy"].some((k) => d.actionCheck?.[k]);
 
+/** Summary shown in the reading pane when no document is selected. Derived from data already loaded. */
+export function approvalOverview(list: ApprovalList | null, counts: Partial<Record<ApprovalBox, number>>) {
+  const items = list?.items ?? [];
+  return {
+    todo: counts.todo,
+    upcoming: counts.upcoming,
+    emergency: list ? items.filter((i) => i.emergency).length : undefined,
+    total: list?.page.total ?? (list ? items.length : undefined),
+    recent: items.slice(0, 6),
+    urgent: items.filter((i) => i.emergency).slice(0, 5),
+  };
+}
+
+function countLabel(n: number | undefined) {
+  return n == null ? "-" : n > 99 ? "99+" : String(n);
+}
+
+function Overview({
+  list, counts, loading, onPick,
+}: {
+  list: ApprovalList | null;
+  counts: Partial<Record<ApprovalBox, number>>;
+  loading: boolean;
+  onPick: (item: ApprovalListItem) => void;
+}) {
+  const t = useT();
+  const o = approvalOverview(list, counts);
+  return (
+    <div className="mail-overview">
+      <div className="mail-ov-cards">
+        <div className="mail-ov-card"><span className="muted small">{t("결재 대기")}</span><b>{countLabel(o.todo)}</b></div>
+        <div className="mail-ov-card"><span className="muted small">{t("결재 예정")}</span><b>{countLabel(o.upcoming)}</b></div>
+        <div className="mail-ov-card"><span className="muted small">{t("긴급")}</span><b>{countLabel(o.emergency)}</b><span className="muted tiny">{t("현재 목록")}</span></div>
+        <div className="mail-ov-card"><span className="muted small">{t("현재 목록")}</span><b>{countLabel(o.total)}</b></div>
+      </div>
+      <div className="mail-ov-cols">
+        <section className="mail-ov-sec">
+          <h4>{t("최근 문서")}</h4>
+          {loading && !list && <div className="muted small">{t("불러오는 중…")}</div>}
+          {!loading && !o.recent.length && <div className="muted small">{t("문서가 없습니다")}</div>}
+          {o.recent.map((d) => (
+            <button key={d.documentId ?? d.id} className="mail-ov-row" onClick={() => onPick(d)}>
+              <span className="mail-ov-av">{(d.drafterName || d.title || "?").slice(0, 1)}</span>
+              <span className="ellipsis">{d.title || t("(제목 없음)")}<span className="muted tiny"> {d.formName}</span></span>
+              <span className="muted small">{dt(d.draftedAt)}</span>
+            </button>
+          ))}
+        </section>
+        <section className="mail-ov-sec">
+          <h4>{t("긴급 문서")}</h4>
+          {list && !o.urgent.length && <div className="muted small">{t("긴급 문서가 없습니다")}</div>}
+          {loading && !list && <div className="muted small">{t("불러오는 중…")}</div>}
+          {o.urgent.map((d) => (
+            <button key={`e-${d.documentId ?? d.id}`} className="mail-ov-row" onClick={() => onPick(d)}>
+              <span className="approval-emergency">{t("긴급")}</span>
+              <span className="ellipsis">{d.title || t("(제목 없음)")}</span>
+              <span className="muted small">{[d.drafterName, d.drafterDeptName].filter(Boolean).join(" · ")}</span>
+            </button>
+          ))}
+        </section>
+      </div>
+      <div className="mail-ov-actions">
+        <span className="muted tiny">{t("문서를 선택하면 여기에서 바로 결재할 수 있습니다.")}</span>
+      </div>
+    </div>
+  );
+}
+
 function pinnedItem(pin: ApprovalOpenTarget): ApprovalListItem {
   return {
     id: pin.id,
@@ -190,13 +258,12 @@ export function Approval({ initial = null }: { initial?: ApprovalOpenTarget | nu
       void openDoc(pinnedItem(pin));
       return;
     }
-    // Phone stack stays on the box list until the user picks a row. iPad and desktop open the first document.
+    // Phone stack stays on the box list until the user picks a row.
+    // iPad keeps the landing overview instead of auto-opening the first document (same as Mail).
     if (compact) return;
     const same = sel && list.items.some((i) => approvalDocId(i) === (sel ? approvalDocId(sel) : -1));
     if (same) return;
-    const first = list.items[0];
-    if (first) void openDoc(first);
-    else {
+    if (!list.items.length && sel) {
       detailReq.current++;
       setSel(null);
       setDetail(null);
@@ -359,7 +426,9 @@ export function Approval({ initial = null }: { initial?: ApprovalOpenTarget | nu
             <button className="link" onClick={retryDetail}>{t("다시 시도")}</button>
           </div>
         )}
-        {!sel && !detailLoading && !detailError && <div className="muted small pad">{t("문서를 선택하세요")}</div>}
+        {!sel && !detailLoading && !detailError && (
+          <Overview list={list} counts={counts} loading={listLoading} onPick={(item) => void openDoc(item, "user")} />
+        )}
         {detail && (
           <>
             <header className="approval-detail-head">

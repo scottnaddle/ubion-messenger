@@ -36,7 +36,6 @@ const dict: Record<string, string> = {
   "긴급": "Khẩn",
   "◀ 이전": "◀ Trước",
   "다음 ▶": "Sau ▶",
-  "문서를 선택하세요": "Chọn một văn bản",
   "웹에서 열기": "Mở trên web",
   "결재선 정보가 없습니다": "Không có thông tin tuyến phê duyệt",
   "첨부파일": "Tệp đính kèm",
@@ -536,6 +535,16 @@ const dict: Record<string, string> = {
   "결재": "Duyệt",
   "사람들": "Mọi người",
   "메시지 입력": "Nhập tin nhắn",
+  "최근 문서": "Văn bản gần đây",
+  "긴급 문서": "Văn bản khẩn",
+  "긴급 문서가 없습니다": "Không có văn bản khẩn",
+  "문서를 선택하면 여기에서 바로 결재할 수 있습니다.": "Chọn một văn bản để phê duyệt tại đây.",
+  "크게 보기": "Xem lớn hơn",
+  "복사": "Sao chép",
+  "메시지를 복사했습니다": "Đã sao chép tin nhắn",
+  "메시지 작업": "Thao tác tin nhắn",
+  "공유": "Chia sẻ",
+  "공유 / 다른 앱으로 열기": "Chia sẻ / Mở bằng ứng dụng khác",
 };
 
 export default dict;
