@@ -8,13 +8,14 @@ import { Floating } from "./Floating";
 
 /**
  * 이모지 리액션: chips beside the bubble (own reaction highlighted) + a hover "+" button.
+ * On the author's own bubble the chips stay (other people's reactions) but add/toggle is omitted.
  * The compact palette has the 8 quick emoji; "더보기" opens the full composer picker.
  */
 export type ReactionPickerState = { messageId: number; mode: "palette" | "full" } | null;
 
 /** Chips + the "+" button. Presentational: the open palette lives in ChatView (see ReactionPopup). */
 export function ReactionBar({
-  map, messageId, me, names, onToggle, open = false, onOpenPicker, disabledReason = null, onBlocked,
+  map, messageId, me, names, onToggle, open = false, onOpenPicker, disabledReason = null, onBlocked, readOnly = false,
 }: {
   map: ReactionMap | undefined;
   messageId: number | undefined;
@@ -26,35 +27,49 @@ export function ReactionBar({
   disabledReason?: string | null;
   /** Click on a disabled control: explain why (toast). */
   onBlocked?: () => void;
+  /** Own bubble: show chips others left; the author cannot add or toggle. */
+  readOnly?: boolean;
 }) {
   const t = useT();
   const chips = reactionChips(map, messageId, me);
   if (messageId == null) return null;
+  if (readOnly && chips.length === 0) return null;
   const byEmoji = map?.[String(messageId)] ?? {};
   const nameFor = (seq: number): string | undefined => (seq === me ? t("나") : names?.get(seq));
   return (
-    <div className="reactions">
+    <div className={`reactions${readOnly ? " readonly" : ""}`}>
       {chips.length > 0 && (
         <span className="reaction-chips">
           {chips.map((c) => {
             const label = formatReactionTooltip(c.emoji, byEmoji[c.emoji] ?? [], nameFor);
-            return (
-              <button key={c.emoji} type="button" title={label} aria-label={label} aria-disabled={!!disabledReason}
-                className={`reaction-chip${c.mine ? " mine" : ""}`} onClick={() => (disabledReason ? onBlocked?.() : onToggle(c.emoji))}>
+            const className = `reaction-chip${c.mine ? " mine" : ""}${readOnly ? " readonly" : ""}`;
+            const body = (
+              <>
                 <span className="reaction-emoji">{c.emoji}</span>
                 <span className="reaction-count">{c.count}</span>
+              </>
+            );
+            if (readOnly) {
+              return <span key={c.emoji} title={label} aria-label={label} className={className}>{body}</span>;
+            }
+            return (
+              <button key={c.emoji} type="button" title={label} aria-label={label} aria-disabled={!!disabledReason}
+                className={className} onClick={() => (disabledReason ? onBlocked?.() : onToggle(c.emoji))}>
+                {body}
               </button>
             );
           })}
         </span>
       )}
-      <button type="button" className={`reaction-add${disabledReason ? " disabled" : ""}`} data-reaction-add={messageId}
-        aria-label={t("리액션")} title={disabledReason ? t(disabledReason) : t("리액션")}
-        aria-disabled={!!disabledReason} aria-expanded={open}
-        onMouseDown={(e) => e.stopPropagation()}
-        onClick={() => { if (disabledReason) onBlocked?.(); else onOpenPicker?.(open ? null : "palette"); }}>
-        <span aria-hidden="true">☺+</span>
-      </button>
+      {!readOnly && (
+        <button type="button" className={`reaction-add${disabledReason ? " disabled" : ""}`} data-reaction-add={messageId}
+          aria-label={t("리액션")} title={disabledReason ? t(disabledReason) : t("리액션")}
+          aria-disabled={!!disabledReason} aria-expanded={open}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => { if (disabledReason) onBlocked?.(); else onOpenPicker?.(open ? null : "palette"); }}>
+          <span aria-hidden="true">☺+</span>
+        </button>
+      )}
     </div>
   );
 }

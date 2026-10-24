@@ -4,6 +4,7 @@
  * Paths and cookies are never logged.
  */
 import type { DaouClient } from "../../electron/core/daou-client";
+import { extensionHint, sniffMediaType } from "../../electron/core/media-response";
 
 const cache = new Map<string, string>();
 const inflight = new Map<string, Promise<string>>();
@@ -23,12 +24,27 @@ function normalizePath(p: string): string {
   return path;
 }
 
-function toObjectUrl(data: Buffer | Uint8Array, contentType: string): string {
+function toObjectUrl(data: Buffer | Uint8Array, contentType: string, nameOrExt?: string): string {
   const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
-  const blob = new Blob([copy], { type: contentType || "image/jpeg" });
+  // Daou often labels an mp4 application/octet-stream. Sniff so <video> will play the blob.
+  const type = sniffMediaType(copy, contentType, nameOrExt) || contentType || "application/octet-stream";
+  const blob = new Blob([copy], { type });
   return URL.createObjectURL(blob);
+}
+
+/** `ubmExt` is a renderer hint (desktop media protocol). It must not be sent to Daou. */
+export function stripMediaHint(src: string): { path: string; ext: string } {
+  const path = normalizePath(src);
+  try {
+    const u = new URL(path, "https://local.invalid");
+    const ext = extensionHint(u.searchParams.get("ubmExt") || "");
+    u.searchParams.delete("ubmExt");
+    return { path: u.pathname + u.search, ext };
+  } catch {
+    return { path, ext: "" };
+  }
 }
 
 function remember(path: string, url: string) {
@@ -50,7 +66,8 @@ function remember(path: string, url: string) {
 export async function resolveMediaUrl(client: DaouClient | null | undefined, src: string | null | undefined): Promise<string> {
   if (!src || !client?.user) return "";
   if (src.startsWith("data:") || src.startsWith("blob:")) return src;
-  const path = normalizePath(src);
+  const hinted = stripMediaHint(src);
+  const path = hinted.path;
   const hit = cache.get(path);
   if (hit) return hit;
   const pending = inflight.get(path);
@@ -61,7 +78,7 @@ export async function resolveMediaUrl(client: DaouClient | null | undefined, src
       if (p.startsWith("/api/chat/files/") && !/[?&]userSeq=/.test(p) && client.user)
         p += (p.includes("?") ? "&" : "?") + `userSeq=${client.user.id}`;
       const { data, contentType } = await client.fetchBinary(p);
-      const url = toObjectUrl(data, contentType);
+      const url = toObjectUrl(data, contentType, hinted.ext);
       remember(path, url);
       return url;
     } catch {
@@ -77,7 +94,7 @@ export async function resolveMediaUrl(client: DaouClient | null | undefined, src
 export function peekMediaUrl(src: string | null | undefined): string {
   if (!src) return "";
   if (src.startsWith("data:") || src.startsWith("blob:")) return src;
-  return cache.get(normalizePath(src)) || "";
+  return cache.get(stripMediaHint(src).path) || "";
 }
 
 export function clearMediaCache() {

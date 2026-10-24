@@ -104,6 +104,8 @@ function abortable<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
 export function createNativeFetch(http: NativeHttp = CapacitorHttp): HttpFetch {
   return async (url, init) => {
     const data = bodyToString(init.body);
+    const long = /\/api\/chat\/files\//.test(url);
+    const timeout = long ? 300_000 : DEFAULT_TIMEOUT_MS;
     const res = await abortable(
       http.request({
         url,
@@ -112,8 +114,8 @@ export function createNativeFetch(http: NativeHttp = CapacitorHttp): HttpFetch {
         ...(data !== undefined ? { data } : {}),
         responseType: "arraybuffer",
         disableRedirects: true,
-        connectTimeout: DEFAULT_TIMEOUT_MS,
-        readTimeout: DEFAULT_TIMEOUT_MS,
+        connectTimeout: timeout,
+        readTimeout: timeout,
       }),
       init.signal,
     );

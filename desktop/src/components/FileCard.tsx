@@ -1,13 +1,44 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, media, type ChatMessage } from "../api";
 import { attachKind, durationLabel, expiryLabel, fileIcon, isExpired, sizeLabel } from "../../electron/core/attach";
+import { chatFileMediaPath } from "../../electron/core/media-response";
 import { isPreviewExtension } from "../../electron/core/doc-preview";
 import { Icon } from "./ui";
-import { t as tr, useT } from "../lib/i18n";
+import { t as tr, tk, useT } from "../lib/i18n";
+import { claimPlaybackError, playbackErrorKey } from "../lib/playback-error";
 import { ForwardModal } from "./ForwardModal";
+import { isMobileUi } from "../lib/compact";
 
-export const fileUrl = (cryptId: string, messageId?: number) =>
-  messageId != null ? media(`/api/chat/files/${encodeURIComponent(cryptId)}?messageId=${messageId}`) : "";
+export const fileUrl = (cryptId: string, messageId?: number, nameOrExt?: string) =>
+  messageId != null ? media(chatFileMediaPath(cryptId, messageId, nameOrExt)) : "";
+
+/**
+ * Desktop already has an authenticated URL (ubion-media://). Capacitor does not, so chat
+ * images and video are fetched with the session cookie and played from a blob: URL.
+ */
+function useAuthenticatedSrc(raw: string): { src: string; pending: boolean; failed: boolean } {
+  const mobile = typeof __UBM_MOBILE__ !== "undefined" && __UBM_MOBILE__;
+  const [state, setState] = useState(() => ({ src: mobile ? "" : raw, pending: mobile && !!raw, failed: false }));
+  useEffect(() => {
+    if (!mobile) {
+      setState({ src: raw, pending: false, failed: false });
+      return;
+    }
+    if (!raw || raw.startsWith("data:") || raw.startsWith("blob:")) {
+      setState({ src: raw, pending: false, failed: false });
+      return;
+    }
+    let cancel = false;
+    setState({ src: "", pending: true, failed: false });
+    api().call<string>("media:url", raw).then((u) => {
+      if (!cancel) setState({ src: u || "", pending: false, failed: !u });
+    }).catch(() => {
+      if (!cancel) setState({ src: "", pending: false, failed: true });
+    });
+    return () => { cancel = true; };
+  }, [mobile, raw]);
+  return state;
+}
 
 type SaveMode = "downloads" | "saveAs" | "open";
 type ToastFn = (text: string, kind?: "error" | "info", action?: { label: string; run: () => void }) => void;
@@ -22,7 +53,10 @@ export async function saveChatFile(m: ChatMessage, mode: SaveMode, toast: ToastF
   try {
     const p = await api().call<string | null>("files:save", a.cryptId, m.messageId, a.name, mode);
     if (p && mode !== "open")
-      toast(tr("{name} 저장됨 · {dir}", { name: baseName(p), dir: dirName(p) }), "info", { label: tr("폴더 열기"), run: () => void api().call("files:showInFolder", p) });
+      toast(tr("{name} 저장됨 · {dir}", { name: baseName(p), dir: dirName(p) }), "info", {
+        label: isMobileUi() ? tr(tk("공유")) : tr("폴더 열기"),
+        run: () => void api().call("files:showInFolder", p),
+      });
     return p;
   } catch (e) {
     toast(tr("다운로드 실패: {error}", { error: (e as Error).message }));
@@ -43,7 +77,22 @@ function SaveMenu({
     window.addEventListener("mousedown", h); window.addEventListener("keydown", h); window.addEventListener("blur", h);
     return () => { window.removeEventListener("mousedown", h); window.removeEventListener("keydown", h); window.removeEventListener("blur", h); };
   }, [onClose]);
-  return (
+  const sheet = isMobileUi();
+  return sheet ? (
+    <div className="sheet-back" onMouseDown={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="ctx-menu sheet" role="menu" onMouseDown={(e) => e.stopPropagation()}>
+        {canSave && <>
+          <button role="menuitem" onClick={() => { onClose(); onPick("downloads"); }}><Icon name="download" size={14} /> {t("저장")}</button>
+          <button role="menuitem" onClick={() => { onClose(); onPick("saveAs"); }}>{t("다른 이름으로 저장…")}</button>
+          <button role="menuitem" onClick={() => { onClose(); onPick("open"); }}><Icon name="external" size={14} /> {t("공유 / 다른 앱으로 열기")}</button>
+        </>}
+        {onForward && canForward && <button role="menuitem" onClick={() => { onClose(); onForward(); }}><Icon name="send" size={14} /> {t("전달")}</button>}
+        {onNotice && canNotice && <button role="menuitem" onClick={() => { onClose(); onNotice(); }}><Icon name="report" size={14} /> {t("공지로 등록")}</button>}
+        {onDelete && <button role="menuitem" className="danger" onClick={() => { onClose(); onDelete(); }}><Icon name="trash" size={14} /> {t("삭제")}</button>}
+        <button role="menuitem" onClick={onClose}>{t("취소")}</button>
+      </div>
+    </div>
+  ) : (
     <div className="ctx-menu" role="menu" style={{ left: x, top: y }} onMouseDown={(e) => e.stopPropagation()}>
       {canSave && <>
         <button role="menuitem" onClick={() => { onClose(); onPick("downloads"); }}><Icon name="download" size={14} /> {t("저장")}</button>
@@ -65,6 +114,7 @@ export function FileCard({
   canDelete?: boolean; onDelete?: () => void; canNotice?: boolean; onNotice?: () => void;
 }) {
   const t = useT();
+  const unplayableText = t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요.");
   const a = m.attach!;
   const missing = !a.cryptId && !a.expired;
   const expired = missing || isExpired(a);
@@ -72,6 +122,20 @@ export function FileCard({
   const exp = expiryLabel(a);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [forwardOpen, setForwardOpen] = useState(false);
+  const [unplayable, setUnplayable] = useState(false);
+  const videoPath = !expired && kind === "video" ? fileUrl(a.cryptId, m.messageId, a.extention || a.name) : "";
+  const posterPath = !expired && kind === "video" ? media(a.videoThumb || a.thumbMid || a.thumbLarge || a.thumbSmall) : "";
+  const playable = useAuthenticatedSrc(videoPath);
+  const poster = useAuthenticatedSrc(posterPath);
+  const onPlayError = () => {
+    setUnplayable(true);
+    if (claimPlaybackError(playbackErrorKey(a.cryptId, m.messageId))) toast(unplayableText);
+  };
+  useEffect(() => {
+    if (playable.failed) onPlayError();
+    // toast identity changes every render; the failed flag is the signal.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playable.failed]);
   const save = async (mode: SaveMode) => { if (!expired) await saveChatFile(m, mode, toast); };
   const ctxDelete = canDelete && onDelete ? onDelete : undefined;
   const ctxNotice = canNotice && onNotice ? onNotice : undefined;
@@ -89,7 +153,7 @@ export function FileCard({
       canNotice={!!ctxNotice} onNotice={ctxNotice} onClose={() => setMenu(null)}
     />
   );
-  const canPreview = !expired && !!a.cryptId && m.messageId != null && kind === "file" && isPreviewExtension(a.name, a.extention);
+  const canPreview = !isMobileUi() && !expired && !!a.cryptId && m.messageId != null && kind === "file" && isPreviewExtension(a.name, a.extention);
   const [previewing, setPreviewing] = useState(false);
   const preview = async () => {
     if (!canPreview || previewing) return;
@@ -133,18 +197,35 @@ export function FileCard({
     );
   }
   if (!expired && kind === "video") {
-    const poster = media(a.videoThumb || a.thumbMid || a.thumbLarge || a.thumbSmall);
+    const showFallback = unplayable || playable.failed || (!playable.pending && !playable.src);
     return (
       <div className="media-card" onContextMenu={onCtx}>
         {ctx}{forwardModal}
-        <button className="img-bubble video-bubble" onClick={onOpenMedia} title={a.name}>
-          {poster ? <LazyImg src={poster} alt={a.name} w={a.width} h={a.height} /> : <VideoFrame src={fileUrl(a.cryptId, m.messageId)} size={a.size} />}
-          <span className="play-ic" aria-hidden>▶</span>
-          {durationLabel(a.duration) && <span className="dur">{durationLabel(a.duration)}</span>}
-        </button>
+        {playable.pending ? (
+          <div className="inline-video video-pending" role="status">{t("불러오는 중…")}</div>
+        ) : showFallback ? (
+          <div className="video-fallback">
+            {poster.src ? <img src={poster.src} alt="" /> : null}
+            <p className="tiny">{unplayableText}</p>
+            <button className="link tiny" type="button" onClick={() => void save("open")}>{isMobileUi() ? t("공유 / 다른 앱으로 열기") : t("기본 앱으로 열기")}</button>
+          </div>
+        ) : (
+          <video
+            className="inline-video"
+            src={playable.src}
+            poster={poster.src || undefined}
+            controls
+            playsInline
+            preload="metadata"
+            aria-label={a.name}
+            onError={onPlayError}
+          />
+        )}
         <div className="fc-name tiny" title={a.name}>{a.name}</div>
+        {durationLabel(a.duration) && <div className="fc-meta tiny"><span>{durationLabel(a.duration)}</span></div>}
         {meta}
         {actions}
+        <button className="link tiny" type="button" onClick={onOpenMedia}>{t("크게 보기")}</button>
       </div>
     );
   }
@@ -173,53 +254,18 @@ export function FileCard({
 /** Keeps aspect ratio, max ~240px, lazy-loaded; falls back to an icon on error. */
 function LazyImg({ src, alt, w, h }: { src: string; alt: string; w?: number; h?: number }) {
   const [err, setErr] = useState(false);
-  if (err || !src) return <div className="thumb-fallback"><Icon name="image" size={28} /></div>;
+  const resolved = useAuthenticatedSrc(src);
+  const url = err ? "" : resolved.src;
+  if (resolved.pending) return <div className="thumb-fallback">{tr("불러오는 중…")}</div>;
+  if (err || !url) return <div className="thumb-fallback"><Icon name="image" size={28} /></div>;
   const style = w && h ? { aspectRatio: `${w} / ${h}` } : undefined;
-  return <img className="thumb" src={src} alt={alt} loading="lazy" decoding="async" style={style} onError={() => setErr(true)} />;
-}
-
-const FRAME_MAX_BYTES = 30 * 1024 * 1024;
-/** No server poster: grab the first frame in a hidden <video> once visible (skipped for big files). */
-function VideoFrame({ src, size }: { src: string; size?: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [poster, setPoster] = useState<string | null>(null);
-  const [visible, setVisible] = useState(false);
-  const allowed = !!src && (size == null || size <= FRAME_MAX_BYTES);
-  useEffect(() => {
-    if (!allowed || !ref.current) return;
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && (setVisible(true), io.disconnect()));
-    io.observe(ref.current);
-    return () => io.disconnect();
-  }, [allowed]);
-  useEffect(() => {
-    if (!visible) return;
-    const v = document.createElement("video");
-    v.muted = true; v.preload = "metadata"; v.src = src;
-    const onData = () => { v.currentTime = Math.min(0.1, (v.duration || 1) / 2); };
-    const onSeek = () => {
-      try {
-        const c = document.createElement("canvas");
-        const k = Math.min(1, 480 / (v.videoWidth || 480));
-        c.width = Math.round((v.videoWidth || 320) * k); c.height = Math.round((v.videoHeight || 180) * k);
-        c.getContext("2d")!.drawImage(v, 0, 0, c.width, c.height);
-        setPoster(c.toDataURL("image/jpeg", 0.75));
-      } catch { /* ignore */ }
-      v.removeAttribute("src"); v.load();
-    };
-    v.addEventListener("loadeddata", onData, { once: true });
-    v.addEventListener("seeked", onSeek, { once: true });
-    return () => { v.removeAttribute("src"); v.load(); };
-  }, [visible, src]);
-  return (
-    <div ref={ref} className="video-frame">
-      {poster ? <img className="thumb" src={poster} alt="" /> : <div className="thumb-fallback"><Icon name="file" size={28} /></div>}
-    </div>
-  );
+  return <img className="thumb" src={url} alt={alt} loading="lazy" decoding="async" style={style} onError={() => setErr(true)} />;
 }
 
 /** Full-screen viewer for images and in-app video player. */
 export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: () => void; toast: ToastFn }) {
   const t = useT();
+  const unplayableText = t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요.");
   const a = m.attach!;
   const kind = attachKind(a);
   useEffect(() => {
@@ -227,8 +273,19 @@ export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: ()
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
-  const src = fileUrl(a.cryptId, m.messageId);
+  const src = useAuthenticatedSrc(fileUrl(a.cryptId, m.messageId, a.extention || a.name));
+  const poster = useAuthenticatedSrc(media(a.videoThumb || a.thumbLarge));
+  const image = useAuthenticatedSrc(media(a.thumbOriginal || a.thumbLarge) || fileUrl(a.cryptId, m.messageId, a.extention || a.name));
   const save = (mode: SaveMode) => void saveChatFile(m, mode, toast);
+  const [unplayable, setUnplayable] = useState(false);
+  const onPlayError = () => {
+    setUnplayable(true);
+    if (claimPlaybackError(playbackErrorKey(a.cryptId, m.messageId))) toast(unplayableText);
+  };
+  useEffect(() => {
+    if (kind === "video" && src.failed) onPlayError();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src.failed, kind]);
   return (
     <div className="viewer" onClick={onClose}>
       <div className="viewer-bar" onClick={(e) => e.stopPropagation()}>
@@ -237,17 +294,23 @@ export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: ()
         <div className="grow" />
         <button className="link tiny" onClick={() => save("downloads")}>{t("저장")}</button>
         <button className="link tiny" onClick={() => save("saveAs")}>{t("다른 이름으로 저장")}</button>
-        <button className="icon-btn" title={t("기본 앱으로 열기")} onClick={() => save("open")}><Icon name="external" /></button>
+        <button className="icon-btn" title={isMobileUi() ? t("공유 / 다른 앱으로 열기") : t("기본 앱으로 열기")} onClick={() => save("open")}><Icon name="external" /></button>
         <button className="icon-btn" title={t("닫기 (Esc)")} onClick={onClose}><Icon name="close" /></button>
       </div>
       {kind === "video" ? (
-        <video className="viewer-img" src={src} controls autoPlay poster={media(a.videoThumb || a.thumbLarge) || undefined}
-          onClick={(e) => e.stopPropagation()} onError={() => toast(t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요."))} />
+        src.pending ? (
+          <div className="viewer-fallback" onClick={(e) => e.stopPropagation()}>{t("불러오는 중…")}</div>
+        ) : unplayable || src.failed || !src.src ? (
+          <div className="viewer-fallback" onClick={(e) => e.stopPropagation()}>{unplayableText}</div>
+        ) : (
+          <video className="viewer-img" src={src.src} controls autoPlay playsInline poster={poster.src || undefined}
+            onClick={(e) => e.stopPropagation()} onError={onPlayError} />
+        )
       ) : (
         <img
           className="viewer-img"
-          src={media(a.thumbOriginal || a.thumbLarge) || src}
-          onError={(e) => { if (src && (e.target as HTMLImageElement).src !== src) (e.target as HTMLImageElement).src = src; }}
+          src={image.src || src.src}
+          onError={(e) => { if (src.src && (e.target as HTMLImageElement).src !== src.src) (e.target as HTMLImageElement).src = src.src; }}
           onClick={(e) => e.stopPropagation()}
           alt={a.name}
         />

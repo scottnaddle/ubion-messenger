@@ -562,6 +562,7 @@ export function App() {
           user={user}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
+          onOpenSaved={mobileUi ? () => { setShowSettings(false); setSavedOpen(true); } : undefined}
           onLogout={async () => {
             await api().call("auth:logout");
             setShowSettings(false);

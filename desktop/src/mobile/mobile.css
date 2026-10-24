@@ -241,3 +241,33 @@ html.ubm-mobile .mail3 .modal.compose-discard { display: none !important; }
 html.ubm-mobile .mail-pane-folders .primary.small,
 html.ubm-mobile .mail-overview .primary.small { display: none !important; }
 html.ubm-mobile .mail-bulk { display: none !important; }
+
+/* Bottom action sheet for message and file menus (long-press is unreliable on iOS). */
+html.ubm-mobile .sheet-back {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, .35);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+html.ubm-mobile .ctx-menu.sheet {
+  position: relative;
+  left: auto;
+  top: auto;
+  width: min(560px, 100%);
+  max-height: 70vh;
+  overflow: auto;
+  margin: 0;
+  border-radius: 16px 16px 0 0;
+  padding: 8px 8px calc(12px + env(safe-area-inset-bottom));
+}
+html.ubm-mobile .ctx-menu.sheet button {
+  min-height: 44px;
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px;
+}
+html.ubm-mobile .msg-line { align-items: flex-end; }
+html.ubm-mobile .msg-more { width: 36px; height: 36px; flex: none; color: var(--muted); }

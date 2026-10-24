@@ -37,7 +37,7 @@ function fakeServer() {
     if (path === "/api/chat/new/buddies") {
       const last = buddyMsgs[buddyMsgs.length - 1];
       return json(200, { hasNext: false, data: [
-        { buddySeq: 2, buddyName: "김하늘", message: last.message, messageId: last.messageId, unreadMessageCount: 1, createdAt: last.createdAt },
+        { buddySeq: 2, buddyRoomSeq: 77, buddyName: "김하늘", message: last.message, messageId: last.messageId, unreadMessageCount: 1, createdAt: last.createdAt },
         { roomSeq: 10, chatRoomName: "TF", message: "회의", messageId: 5, memberCount: 3, createdAt: "2026-10-23T08:00:00+09:00" },
       ] });
     }
@@ -50,6 +50,12 @@ function fakeServer() {
     }
     if (/^\/api\/chat\/buddies\/2\/\d+\/before$/.test(path) && o.method === "PUT") return json(200, { code: "200" });
     if (path === "/api/logout") return json(200, {});
+    if (path === "/api/chat/message/delete" && o.method === "PUT") return json(200, { code: "200" });
+    if (path.startsWith("/api/chat/notice/") && o.method === "PUT") return json(200, { code: "200" });
+    if (path.includes("/push") && o.method === "PUT") return json(200, { code: "200" });
+    if (path.startsWith("/api/chat/files/") && (o.method === "GET" || !o.method)) {
+      return { status: 200, headers: { "Content-Type": "video/mp4" }, data: b64("mp4-bytes") };
+    }
     return json(404, { message: "not found" });
   });
   return { request, calls, buddyMsgs };
@@ -190,7 +196,7 @@ describe("mobile bridge: disabled features", () => {
   });
   it("unported actions reject with a readable reason; caps report disabled", async () => {
     await expect(call("files:sendBuffer", "buddy:2")).rejects.toThrow(UNSUPPORTED);
-    await expect(mb.bridge.deleteChatMessages([1])).rejects.toThrow(UNSUPPORTED);
+    await expect(mb.bridge.previewFile("crypt", 1, "a.pdf")).rejects.toThrow(UNSUPPORTED);
     expect(await call("lock:status")).toEqual({ enabled: false, locked: false, timeoutMin: 0 });
     expect(await mb.bridge.reactions.caps()).toEqual({ enabled: true });
     expect(await mb.bridge.polls.caps()).toMatchObject({ enabled: false });
@@ -200,5 +206,43 @@ describe("mobile bridge: disabled features", () => {
     expect(await mb.bridge.saved.list()).toEqual([]);
     expect(await mb.bridge.theme.css()).toBe("");
     expect((await mb.bridge.search.global(3, { keyword: "x" } as any)).hits).toEqual([]);
+  });
+
+  it("deletes, registers a notice, toggles push, edits, and saves messages locally", async () => {
+    await login();
+    expect(await mb.bridge.deleteChatMessages([10])).toEqual({ ok: true, count: 1 });
+    expect(server.calls.some((c) => c.method === "PUT" && c.url.includes("/api/chat/message/delete"))).toBe(true);
+    const noticed = await mb.bridge.registerNotice("room:10", 5);
+    expect(noticed.key).toBe("room:10");
+    expect(server.calls.some((c) => c.method === "PUT" && c.url.includes("/api/chat/notice/10"))).toBe(true);
+    await mb.bridge.setRoomPush("buddy:2", false);
+    expect(server.calls.some((c) => c.method === "PUT" && c.url.includes("/api/chat/buddies/2/push") && c.url.includes("usePush=false"))).toBe(true);
+    expect(await mb.bridge.edit.caps()).toMatchObject({ enabled: true, selfOnly: false });
+    const edited = await mb.bridge.edit.edit("buddy:2", 10, "수정본");
+    expect(edited.ok).toBe(true);
+    const item = await mb.bridge.saved.add({ roomKey: "buddy:2", roomName: "김하늘", message: "안녕", sendUserName: "김하늘" });
+    expect((await mb.bridge.saved.list()).some((m) => m.id === item.id)).toBe(true);
+    expect(await mb.bridge.saved.remove(item.id)).toEqual({ ok: true });
+    expect(await mb.bridge.saved.list()).toEqual([]);
+  });
+
+  it("writes a chat file on device and treats a dismissed share sheet as cancel", async () => {
+    await login();
+    const write = vi.fn(async (_name: string, bytes: Uint8Array) => {
+      expect(new TextDecoder().decode(bytes)).toBe("mp4-bytes");
+      return { uri: "file:///tmp/clip.mp4", displayPath: "Files/UBION/clip.mp4", name: "clip.mp4", shareToKeep: false };
+    });
+    const share = vi.fn(async () => "cancelled" as const);
+    const extra = createMobileBridge({
+      fetch: createNativeFetch({ request: server.request }),
+      storage, platform: "ios", version: "1.0.22", pollMs: 60_000, doc: d.doc as any,
+      files: { write, share, shareSaved: async () => undefined },
+    });
+    await extra.bridge.call("auth:login", { serverUrl: SERVER, username: "hong", password: "right-pw", rememberMe: false, autoLogin: false });
+    expect(await extra.bridge.call("files:save", "crypt", 10, "clip.mp4", "downloads")).toBe("Files/UBION/clip.mp4");
+    expect(share).not.toHaveBeenCalled();
+    expect(await extra.bridge.call("files:save", "crypt", 10, "clip.mp4", "saveAs")).toBeNull();
+    expect(share).toHaveBeenCalled();
+    extra.dispose();
   });
 });

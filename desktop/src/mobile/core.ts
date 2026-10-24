@@ -293,6 +293,25 @@ export class MobileCore {
     this.emitRooms();
   }
 
+  /** Per-room notification toggle; updates local state immediately so the list reflects it. */
+  async setRoomPush(key: string, usePush: boolean): Promise<void> {
+    const room = this.rooms.get(key);
+    if (!room) throw new Error("알 수 없는 대화방입니다");
+    const previous = room.usePush;
+    room.usePush = usePush;
+    this.emitRooms();
+    try {
+      await this.client.setRoomPush(room.kind, room.seq, usePush);
+    } catch (e) {
+      const current = this.rooms.get(key);
+      if (current && current.usePush === usePush) {
+        current.usePush = previous;
+        this.emitRooms();
+      }
+      throw e;
+    }
+  }
+
   async members(key: string): Promise<RoomMember[]> {
     const { kind, seq } = parseKey(key);
     if (kind !== "room") return [];

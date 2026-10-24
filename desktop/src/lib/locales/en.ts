@@ -36,7 +36,6 @@ const dict: Record<string, string> = {
   "긴급": "Urgent",
   "◀ 이전": "◀ Previous",
   "다음 ▶": "Next ▶",
-  "문서를 선택하세요": "Select a document",
   "웹에서 열기": "Open in Browser",
   "결재선 정보가 없습니다": "No approval line information",
   "첨부파일": "Attachments",
@@ -569,6 +568,16 @@ const dict: Record<string, string> = {
   "결재": "Approval",
   "사람들": "People",
   "메시지 입력": "Type a message",
+  "최근 문서": "Recent Documents",
+  "긴급 문서": "Urgent Documents",
+  "긴급 문서가 없습니다": "No urgent documents",
+  "문서를 선택하면 여기에서 바로 결재할 수 있습니다.": "Select a document to review it here.",
+  "크게 보기": "View larger",
+  "복사": "Copy",
+  "메시지를 복사했습니다": "Message copied",
+  "메시지 작업": "Message actions",
+  "공유": "Share",
+  "공유 / 다른 앱으로 열기": "Share / Open in another app",
 };
 
 export default dict;
