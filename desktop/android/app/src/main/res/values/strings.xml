@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">UBION Messenger</string>
+    <string name="title_activity_main">UBION Messenger</string>
+    <string name="package_name">global.ubion.messenger.dev</string>
+    <string name="custom_url_scheme">global.ubion.messenger.dev</string>
+</resources>
