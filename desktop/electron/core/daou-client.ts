@@ -32,6 +32,16 @@ type ReqInit = {
 };
 type Res = { status: number; text: string; buffer: Buffer; contentType: string };
 
+/** Minimal fetch surface DaouClient needs (global fetch in Electron/Node; CapacitorHttp adapter on mobile). */
+export type FetchLike = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: Uint8Array | string; redirect: "manual"; signal?: AbortSignal },
+) => Promise<{
+  status: number;
+  headers: { get(name: string): string | null; getSetCookie?(): string[] };
+  arrayBuffer(): Promise<ArrayBuffer>;
+}>;
+
 export class HttpError extends Error {
   /** true → the account must finish login on the server's web page (OTP / 2-step / pending step). */
   webLogin = false;
@@ -78,6 +88,8 @@ export class DaouClient {
   private authLostNotified = false;
   /** Called once when a web session expires (401). */
   onAuthLost: (() => void) | null = null;
+  /** HTTP transport; resolves globalThis.fetch at call time so tests/stubs installed later still apply. */
+  fetchImpl: FetchLike = (url, init) => globalThis.fetch(url, init as RequestInit);
 
   constructor(baseUrl = "https://coco.ubion.co.kr") {
     this.baseUrl = baseUrl.replace(/\/$/, "");
@@ -714,7 +726,7 @@ export class DaouClient {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), body && body.length > 1e6 ? 300_000 : 30_000);
     try {
-      const res = await fetch(url, {
+      const res = await this.fetchImpl(url, {
         method: init.method || (body ? "POST" : "GET"),
         headers,
         body,
