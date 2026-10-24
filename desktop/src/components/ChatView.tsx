@@ -1280,8 +1280,9 @@ function MessageRow({
   const t = useT();
   const deleted = isDeletedMessage(m);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  // 리액션 달기 is offered for every sent message; when the bot server is unusable it is shown disabled with a reason.
-  const canReact = !deleted && !m.pending && !m.failed && m.messageId != null;
+  // 리액션 달기 is for other people's messages. The author still sees chips others left, but cannot add or toggle.
+  // When the bot server is unusable the menu item is shown disabled with a reason.
+  const canReact = !mine && !deleted && !m.pending && !m.failed && m.messageId != null;
   const reaction = canReact ? {
     disabledReason: showReactions ? reactionBlocked : (reactionBlocked ?? "봇 서버 연결 안 됨"),
     onPick: (emoji: string) => onToggleReaction(m.messageId!, emoji),
@@ -1337,6 +1338,7 @@ function MessageRow({
           )}
           {showReactions && !deleted && !m.pending && !m.failed && m.messageId != null && (
             <ReactionBar map={reactions} messageId={m.messageId} me={meId} names={reactionNames}
+              readOnly={mine}
               onToggle={(e) => onToggleReaction(m.messageId!, e)}
               open={pickerMode != null} onOpenPicker={onOpenPicker} disabledReason={reactionBlocked} onBlocked={onReactionBlocked} />
           )}
