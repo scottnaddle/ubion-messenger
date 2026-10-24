@@ -8,8 +8,8 @@
  * Suggested proxy shape (not called from here):
  *   POST {UBM_BOT_API_URL}/v1/room-ai/run
  *   headers: X-UBM-User-Seq, X-UBM-Session   (never DaouOffice cookies)
- *   body: { roomKey, messages: [{ sender, text, createdAt }] }
- *   200: { summary: string, todos: [{ title, assignee?, due? }] }
+ *   body: { roomKey, messages: [{ id?, sender, text, createdAt }] }
+ *   200: { summary: string, todos: [{ title, assignee?, due?, sourceMessageIds?: number[] }] }
  */
 
 export const ROOM_AI_STORAGE_KEY = "ubm.room-ai.v1";
@@ -41,6 +41,8 @@ export type RoomAiTodoDraft = {
   title: string;
   assignee?: string;
   due?: string;
+  /** Message ids in the window this item was synthesized from. */
+  sourceMessageIds?: number[];
 };
 
 export type RoomAiTodo = RoomAiTodoDraft & {
@@ -69,19 +71,19 @@ type StoreFile = {
   byUser: Record<string, Record<string, RoomAiRecord>>;
 };
 
-const STUB_LEADS = [
-  "최근 대화는 진행 상황 공유와 후속 확인이 중심입니다.",
-  "참여자들이 일정과 담당을 조율하는 흐름입니다.",
-  "요청과 확인이 필요한 항목이 함께 있습니다.",
-] as const;
-
-const STUB_TODO_PAIRS: readonly (readonly [string, string])[] = [
-  ["요청 사항 확인하기", "담당자에게 진행 여부 회신하기"],
-  ["일정 조율하기", "회의 후속 정리하기"],
-  ["공유된 자료 검토하기", "다음 액션 확정하기"],
+const STUB_THEMES: readonly { label: string; test: RegExp }[] = [
+  { label: "검토·자료", test: /검토|자료|공유/ },
+  { label: "회신", test: /회신|답장|답변/ },
+  { label: "일정", test: /일정|회의|미팅/ },
+  { label: "확인 요청", test: /부탁|해주세요|확인/ },
 ];
 
-const TASK_HINT = /해주세요|부탁|할\s*일|확인\s*부탁|TODO|todo|까지/;
+const STUB_ACTIONS: readonly { title: string; test: RegExp }[] = [
+  { title: "자료 검토하기", test: /검토|자료|공유/ },
+  { title: "회신하기", test: /회신|답장|답변/ },
+  { title: "일정 맞추기", test: /일정|회의|미팅/ },
+  { title: "확인 요청 처리하기", test: /부탁|해주세요|확인|할\s*일|TODO|todo/ },
+];
 
 function fnv32(text: string): number {
   let h = 2166136261;
@@ -90,12 +92,6 @@ function fnv32(text: string): number {
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
-}
-
-function clip(text: string, max: number): string {
-  const chars = Array.from(text.replace(/\s+/g, " ").trim());
-  if (chars.length <= max) return chars.join("");
-  return `${chars.slice(0, max).join("")}…`;
 }
 
 function userKey(userId: number): string | null {
@@ -141,34 +137,89 @@ export function roomAiShouldRun(opts: {
   return opts.fingerprint !== (opts.savedFingerprint ?? "");
 }
 
-export function stubSummarize(messages: readonly RoomAiMessage[]): string {
-  if (!messages.length) return "[스텁] 요약할 대화가 없습니다.";
-  const people = [...new Set(messages.map((m) => m.sender).filter((s): s is string => !!s))];
-  const who = people.length ? people.slice(0, 3).join(", ") : "참여자";
-  const last = clip(messages[messages.length - 1].text, 40);
-  const lead = STUB_LEADS[fnv32(messages.map((m) => m.text).join("\n")) % STUB_LEADS.length];
-  return `[스텁] ${lead} 메시지 ${messages.length}건 · ${who}. 최근 발화: “${last}”`;
+/** Clock label taken from the ISO string itself, so the stub does not depend on the host timezone. */
+function stampLabel(iso?: string): string | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(iso);
+  if (!m) return null;
+  return `${Number(m[2])}/${Number(m[3])} ${m[4]}:${m[5]}`;
 }
 
+function spanLabel(messages: readonly RoomAiMessage[]): string {
+  const stamps = messages
+    .map((m) => m.createdAt)
+    .filter((iso): iso is string => !!iso && stampLabel(iso) != null)
+    .sort();
+  if (!stamps.length) return "";
+  const start = stampLabel(stamps[0]);
+  const end = stampLabel(stamps[stamps.length - 1]);
+  if (!start || !end || start === end) return start ?? "";
+  return `${start}–${end}`;
+}
+
+function dueFrom(text: string): string | undefined {
+  if (/내일/.test(text)) return "내일";
+  if (/오늘/.test(text)) return "오늘";
+  const m = /(\d{1,2})\s*월\s*(\d{1,2})\s*일/.exec(text);
+  if (m) return `${m[1]}/${m[2]}`;
+  if (/까지/.test(text)) return "기한 있음";
+  return undefined;
+}
+
+function sourceIds(ids: readonly number[]): number[] {
+  const out: number[] = [];
+  for (const id of ids) {
+    if (typeof id === "number" && Number.isSafeInteger(id) && id > 0 && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Room-level synthesis. The header names how many messages were in the window and their time span.
+ * Bullets describe themes across that window. They do not quote message text.
+ */
+export function stubSummarize(messages: readonly RoomAiMessage[]): string {
+  if (!messages.length) return "[스텁] 요약할 대화가 없습니다.";
+  const span = spanLabel(messages);
+  const people = [...new Set(messages.map((m) => m.sender).filter((s): s is string => !!s))];
+  const who = people.length ? people.slice(0, 4).join(", ") : "이름 없음";
+  const lines = [
+    `[스텁] 메시지 ${messages.length}건${span ? ` · ${span}` : ""}`,
+    `• 참여자 ${people.length || 0}명: ${who}`,
+  ];
+  let themed = 0;
+  for (const theme of STUB_THEMES) {
+    const n = messages.filter((m) => theme.test.test(m.text)).length;
+    if (!n) continue;
+    themed += n;
+    lines.push(`• ${theme.label} 관련 발화 ${n}건`);
+  }
+  if (!themed) lines.push(`• 요청으로 보이는 키워드는 없고, 일반 대화 ${messages.length}건입니다.`);
+  return lines.join("\n");
+}
+
+/** One structured todo per action found anywhere in the window, with the source message ids. */
 export function stubExtractTodos(messages: readonly RoomAiMessage[]): RoomAiTodoDraft[] {
   if (!messages.length) return [];
-  const drafts: RoomAiTodoDraft[] = [];
-  const seen = new Set<string>();
-  const push = (draft: RoomAiTodoDraft) => {
-    const title = clip(draft.title, 60);
-    if (!title || seen.has(title)) return;
-    seen.add(title);
-    drafts.push({ title, assignee: draft.assignee?.trim() || undefined, due: draft.due?.trim() || undefined });
-  };
-  for (const m of messages) {
-    if (!TASK_HINT.test(m.text)) continue;
-    push({ title: m.text, assignee: m.sender });
-    if (drafts.length >= 2) break;
+  const buckets = new Map<string, { title: string; ids: number[]; assignee?: string; due?: string }>();
+  for (const message of messages) {
+    const action = STUB_ACTIONS.find((item) => item.test.test(message.text));
+    if (!action) continue;
+    let bucket = buckets.get(action.title);
+    if (!bucket) {
+      bucket = { title: action.title, ids: [], assignee: message.sender, due: dueFrom(message.text) };
+      buckets.set(action.title, bucket);
+    }
+    if (typeof message.id === "number") bucket.ids.push(message.id);
+    if (!bucket.due) bucket.due = dueFrom(message.text);
+    if (!bucket.assignee && message.sender) bucket.assignee = message.sender;
   }
-  const pair = STUB_TODO_PAIRS[fnv32(messages.map((m) => m.text).join("\n")) % STUB_TODO_PAIRS.length];
-  const assignee = messages.find((m) => m.sender)?.sender;
-  for (let i = 0; i < pair.length && drafts.length < 3; i++) push({ title: pair[i], assignee: i === 0 ? assignee : undefined });
-  return drafts;
+  return [...buckets.values()].slice(0, 5).map((bucket) => ({
+    title: bucket.title,
+    assignee: bucket.assignee,
+    due: bucket.due,
+    sourceMessageIds: sourceIds(bucket.ids),
+  }));
 }
 
 export function roomAiTodoId(title: string, assignee?: string): string {
@@ -186,12 +237,16 @@ export function mergeRoomAiTodos(prev: readonly RoomAiTodo[], drafts: readonly R
     const id = roomAiTodoId(title, draft.assignee);
     if (seen.has(id)) continue;
     seen.add(id);
+    const assignee = draft.assignee?.trim() || undefined;
+    const due = draft.due?.trim() || undefined;
+    const ids = sourceIds(draft.sourceMessageIds ?? []);
     out.push({
       id,
       title,
-      assignee: draft.assignee?.trim() || undefined,
-      due: draft.due?.trim() || undefined,
       done: done.get(id) ?? false,
+      ...(assignee ? { assignee } : {}),
+      ...(due ? { due } : {}),
+      ...(ids.length ? { sourceMessageIds: ids } : {}),
     });
     if (out.length >= ROOM_AI_TODO_LIMIT) break;
   }
@@ -263,12 +318,16 @@ function sanitize(record: RoomAiRecord): RoomAiRecord {
   const todos: RoomAiTodo[] = [];
   for (const todo of record.todos) {
     if (!todo || typeof todo.id !== "string" || typeof todo.title !== "string") continue;
+    const assignee = typeof todo.assignee === "string" && todo.assignee ? todo.assignee : undefined;
+    const due = typeof todo.due === "string" && todo.due ? todo.due : undefined;
+    const ids = sourceIds(Array.isArray(todo.sourceMessageIds) ? todo.sourceMessageIds : []);
     todos.push({
       id: todo.id,
       title: todo.title,
-      assignee: typeof todo.assignee === "string" && todo.assignee ? todo.assignee : undefined,
-      due: typeof todo.due === "string" && todo.due ? todo.due : undefined,
       done: todo.done === true,
+      ...(assignee ? { assignee } : {}),
+      ...(due ? { due } : {}),
+      ...(ids.length ? { sourceMessageIds: ids } : {}),
     });
   }
   return { summary: record.summary, fingerprint: record.fingerprint, updatedAt: record.updatedAt, todos };

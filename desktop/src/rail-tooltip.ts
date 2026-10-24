@@ -1,7 +1,7 @@
 import { NAV_ORDER, type NavView } from "./nav";
 import { t, tk } from "./lib/i18n";
 
-export type RailTipId = NavView | "approval" | "settings" | "profile";
+export type RailTipId = NavView | "approval" | "assistant" | "settings" | "profile";
 
 export const RAIL_TOOLTIP_DELAY_MS = 300;
 
@@ -13,6 +13,7 @@ const TIPS: Record<RailTipId, { label: string; keys: readonly string[] }> = {
   people: { label: tk("조직도"), keys: ["5", "N"] },
   menu: { label: tk("앱"), keys: ["6"] },
   approval: { label: tk("전자결재"), keys: [] },
+  assistant: { label: tk("내 봇"), keys: [] },
   settings: { label: tk("설정"), keys: [","] },
   profile: { label: tk("프로필"), keys: [] },
 };

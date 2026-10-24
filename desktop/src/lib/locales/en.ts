@@ -574,6 +574,16 @@ const dict: Record<string, string> = {
   "이 기기에만 저장됩니다": "Saved on this device only",
   "담당 {name}": "Owner {name}",
   "추출된 할 일이 없습니다.": "No to-dos extracted.",
+  "내 봇": "My bot",
+  "비서": "Assistant",
+  "내 봇과 대화": "Talk to my bot",
+  "할 일 완료": "Mark to-do done",
+  "연결된 메시지가 현재 불러온 대화에 없습니다": "That message is not in the loaded history",
+  "유비온 비서 · 이 기기의 스텁 대화": "UBION assistant · on-device stub",
+  "내 봇에게 메시지": "Message my bot",
+  "유비온 비서와 1:1로 대화합니다.": "A 1:1 chat with your UBION assistant.",
+  "내 봇을 열지 못했습니다": "Couldn't open my bot",
+  "이 방은 유비온 봇과 대화하는 나와의 대화입니다.": "This is your chat with UBION Bot (memo to yourself).",
 };
 
 export default dict;

@@ -33,7 +33,8 @@ describe("Room AI panel", () => {
       await gate;
       return `[스텁] ${rows.length}건 요약`;
     });
-    const extractTodos = vi.fn(async () => [{ title: "자료 검토 부탁합니다", assignee: "김민수" }]);
+    const extractTodos = vi.fn(async () => [{ title: "자료 검토하기", assignee: "김민수", sourceMessageIds: [1] }]);
+    const jump = vi.fn();
     const service = new RoomAiService({ summarize, extractTodos });
     const storage = memory();
     const host = document.createElement("div");
@@ -41,7 +42,7 @@ describe("Room AI panel", () => {
     const root = createRoot(host);
     await act(async () => {
       root.render(
-        <RoomAiPanel roomKey="room:9" userId={7} messages={messages} focused historyLoading={false} service={service} storage={storage} pollMs={60_000} />,
+        <RoomAiPanel roomKey="room:9" userId={7} messages={messages} focused historyLoading={false} service={service} storage={storage} pollMs={60_000} onJump={jump} />,
       );
     });
     await flush();
@@ -54,13 +55,22 @@ describe("Room AI panel", () => {
       await Promise.resolve();
     });
     expect(host.textContent).toContain("[스텁] 2건 요약");
-    expect(host.textContent).toContain("자료 검토 부탁합니다");
+    expect(host.textContent).toContain("자료 검토하기");
     expect(host.textContent).toContain("담당 김민수");
     expect(host.textContent).toContain("이 기기에만 저장됩니다");
+    expect(host.textContent).toContain("내 봇과 대화");
+
+    const row = host.querySelector<HTMLButtonElement>(".room-ai-todo-jump");
+    await act(async () => { row!.click(); });
+    expect(jump).toHaveBeenCalledTimes(1);
+    expect(jump.mock.calls[0][0].sourceMessageIds).toEqual([1]);
+    expect(host.querySelector(".room-ai-todos li.done")).toBeNull();
+    expect(host.querySelector(".room-ai-todos li.on")).not.toBeNull();
 
     const box = host.querySelector<HTMLInputElement>("input[type='checkbox']");
     expect(box?.checked).toBe(false);
     await act(async () => { box!.click(); });
+    expect(jump).toHaveBeenCalledTimes(1);
     expect(host.querySelector(".room-ai-todos li.done")).not.toBeNull();
 
     gate = Promise.resolve();

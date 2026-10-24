@@ -3,7 +3,7 @@ import { useT } from "../lib/i18n";
 import {
   loadRoomAi, mergeRoomAiTodos, roomAiFingerprint, roomAiShouldRun, saveRoomAi, toggleRoomAiTodo,
   toRoomAiMessages, RoomAiService, StubRoomAiProvider, ROOM_AI_POLL_MS,
-  type RoomAiRecord, type RoomAiRunReason, type RoomAiSource, type StorageLike,
+  type RoomAiRecord, type RoomAiRunReason, type RoomAiSource, type RoomAiTodo, type StorageLike,
 } from "../lib/room-ai";
 
 const defaultService = new RoomAiService(new StubRoomAiProvider());
@@ -22,7 +22,7 @@ function browserStorage(): StorageLike | null {
  */
 export function RoomAiPanel({
   roomKey, userId, messages, focused, historyLoading,
-  service = defaultService, storage, pollMs = ROOM_AI_POLL_MS,
+  service = defaultService, storage, pollMs = ROOM_AI_POLL_MS, onJump, onOpenBot,
 }: {
   roomKey: string;
   userId: number;
@@ -32,6 +32,9 @@ export function RoomAiPanel({
   service?: RoomAiService;
   storage?: StorageLike | null;
   pollMs?: number;
+  /** Row click: scroll the transcript to this todo's source messages. Does not toggle done. */
+  onJump?: (todo: RoomAiTodo) => void;
+  onOpenBot?: () => void;
 }) {
   const t = useT();
   const store = storage === undefined ? browserStorage() : storage;
@@ -40,6 +43,7 @@ export function RoomAiPanel({
   const [record, setRecord] = useState<RoomAiRecord | null>(null);
   const [phase, setPhase] = useState<"idle" | "thinking" | "error">("idle");
   const [hidden, setHidden] = useState(() => typeof document !== "undefined" && document.hidden);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const ticketRef = useRef(0);
   const inFlight = useRef(false);
 
@@ -159,26 +163,40 @@ export function RoomAiPanel({
         {record?.todos.length ? (
           <ul className="room-ai-todos">
             {record.todos.map((todo) => (
-              <li key={todo.id} className={todo.done ? "done" : ""}>
-                <label>
-                  <input type="checkbox" checked={todo.done} onChange={() => onToggle(todo.id)} />
-                  <span>
-                    <span className="room-ai-todo-title">{todo.title}</span>
-                    {(todo.assignee || todo.due) && (
-                      <span className="muted tiny room-ai-todo-meta">
-                        {todo.assignee ? t("담당 {name}", { name: todo.assignee }) : ""}
-                        {todo.assignee && todo.due ? " · " : ""}
-                        {todo.due ? t("마감: {time}", { time: todo.due }) : ""}
-                      </span>
-                    )}
-                  </span>
-                </label>
+              <li key={todo.id} className={`${todo.done ? "done" : ""} ${selectedId === todo.id ? "on" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={todo.done}
+                  aria-label={t("할 일 완료")}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => onToggle(todo.id)}
+                />
+                <button
+                  type="button"
+                  className="room-ai-todo-jump"
+                  onClick={() => {
+                    setSelectedId(todo.id);
+                    onJump?.(todo);
+                  }}
+                >
+                  <span className="room-ai-todo-title">{todo.title}</span>
+                  {(todo.assignee || todo.due) && (
+                    <span className="muted tiny room-ai-todo-meta">
+                      {todo.assignee ? t("담당 {name}", { name: todo.assignee }) : ""}
+                      {todo.assignee && todo.due ? " · " : ""}
+                      {todo.due ? t("마감: {time}", { time: todo.due }) : ""}
+                    </span>
+                  )}
+                </button>
               </li>
             ))}
           </ul>
         ) : (
           <p className="muted small">{t("추출된 할 일이 없습니다.")}</p>
         )}
+        <button type="button" className="room-ai-bot" onClick={() => onOpenBot?.()}>
+          {t("내 봇과 대화")}
+        </button>
       </div>
     </aside>
   );

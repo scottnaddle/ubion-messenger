@@ -19,16 +19,23 @@ const sample: RoomAiMessage[] = [
 ];
 
 describe("room AI stub provider", () => {
-  it("returns the same Korean summary and todos for the same transcript", () => {
-    expect(stubSummarize(sample)).toBe(stubSummarize(sample));
+  it("synthesizes the whole window instead of quoting messages", () => {
+    const summary = stubSummarize(sample);
+    expect(summary).toBe(stubSummarize(sample));
     expect(stubExtractTodos(sample)).toEqual(stubExtractTodos(sample));
-    expect(stubSummarize(sample)).toContain("[스텁]");
-    expect(stubSummarize(sample)).toContain("김민수");
-    expect(stubSummarize(sample)).toContain("2건");
-    const titles = stubExtractTodos(sample).map((t) => t.title);
-    expect(titles.some((t) => t.includes("부탁") || t.includes("해주세요"))).toBe(true);
-    expect(titles.length).toBeGreaterThan(0);
-    expect(titles.length).toBeLessThanOrEqual(3);
+    expect(summary.startsWith("[스텁] 메시지 2건")).toBe(true);
+    expect(summary).toContain("10/24 09:00–10/24 09:05");
+    expect(summary).toContain("• 참여자 2명: 김민수, 이서연");
+    expect(summary).toContain("검토·자료 관련 발화 1건");
+    expect(summary).toContain("회신 관련 발화 1건");
+    expect(summary).not.toContain("자료 검토 부탁합니다");
+    expect(summary).not.toContain("내일까지 회신해주세요");
+
+    const todos = stubExtractTodos(sample);
+    expect(todos.map((t) => t.title)).toEqual(["자료 검토하기", "회신하기"]);
+    expect(todos[0]).toMatchObject({ assignee: "김민수", sourceMessageIds: [1] });
+    expect(todos[1]).toMatchObject({ assignee: "이서연", due: "내일", sourceMessageIds: [2] });
+    expect(todos.every((t) => t.title !== sample[0].text && t.title !== sample[1].text)).toBe(true);
   });
 
   it("has an empty-room summary and no todos", () => {
@@ -98,9 +105,10 @@ describe("room AI local todos", () => {
     const drafts = [{ title: "자료 검토", assignee: "김민수" }, { title: "회신하기" }];
     const first = mergeRoomAiTodos([], drafts);
     const checked = first.map((t) => (t.title === "자료 검토" ? { ...t, done: true } : t));
-    const again = mergeRoomAiTodos(checked, drafts);
+    const again = mergeRoomAiTodos(checked, drafts.map((d, i) => ({ ...d, sourceMessageIds: [i + 1] })));
     expect(again.find((t) => t.title === "자료 검토")?.done).toBe(true);
     expect(again.find((t) => t.title === "회신하기")?.done).toBe(false);
+    expect(again.find((t) => t.title === "자료 검토")?.sourceMessageIds).toEqual([1]);
     expect(again.map((t) => t.id)).toEqual(drafts.map((d) => roomAiTodoId(d.title, d.assignee)));
   });
 

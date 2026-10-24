@@ -29,6 +29,8 @@ import { isTypingTarget, matchShortcut } from "./lib/shortcuts";
 import type { PaletteItem } from "./lib/palette";
 import { CommandPalette } from "./components/CommandPalette";
 import { ShortcutsHelp } from "./components/ShortcutsHelp";
+import { PersonalBotChat } from "./components/PersonalBotChat";
+import { resolvePersonalBot } from "./lib/personal-bot";
 
 export type ToastAction = { label: string; run: () => void };
 export type Toast = { id: number; text: string; kind?: "error" | "info"; action?: ToastAction };
@@ -49,7 +51,7 @@ export function App() {
   const [presence, setPresence] = useState<Record<number, Presence>>({});
   const [statusMessages, setStatusMessages] = useState<Record<number, string>>({});
   const [botStatuses, setBotStatuses] = useState<BotStatusMap>({});
-  const [view, setView] = useState<NavView | "approval">("chats");
+  const [view, setView] = useState<NavView | "approval" | "assistant">("chats");
   const [showSettings, setShowSettings] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState<{ keyword: string } | null>(null);
@@ -310,7 +312,36 @@ export function App() {
     api().call<Person[]>("org:users").then(setOrgUsers).catch(() => setOrgUsers([]));
   }, [paletteOpen, orgUsers.length]);
 
+  const botTarget = useMemo(() => resolvePersonalBot(rooms, botUserSeq), [rooms, botUserSeq]);
+  const openPersonalBot = useCallback(async () => {
+    const target = resolvePersonalBot(rooms, botUserSeq);
+    if (target.kind === "room") {
+      setView("chats");
+      setActiveKey(target.roomKey);
+      return;
+    }
+    if (target.kind === "direct") {
+      try {
+        const room = await api().call<{ key: string }>("rooms:openDirect", target.userId);
+        setView("chats");
+        setActiveKey(room.key);
+        return;
+      } catch (e) {
+        const self = rooms.find((r) => r.isSelf);
+        if (self) {
+          setView("chats");
+          setActiveKey(self.key);
+          return;
+        }
+        toast((e as Error).message || t("내 봇을 열지 못했습니다"));
+      }
+    }
+    setView("assistant");
+  }, [rooms, botUserSeq, toast, t]);
+  const assistantActive = view === "assistant" || (view === "chats" && botTarget.kind === "room" && activeKey === botTarget.roomKey);
+
   const paletteItems: PaletteItem[] = [
+    { id: "action:bot", kind: "action", label: t("내 봇"), icon: "bot", keywords: "비서 ubm-bot assistant" },
     { id: "view:chats", kind: "screen", label: t("메시지"), icon: "chat", view: "chats" },
     { id: "view:people", kind: "screen", label: t("조직도"), icon: "people", view: "people" },
     { id: "view:mail", kind: "screen", label: t("메일"), icon: "mail", view: "mail" },
@@ -343,6 +374,8 @@ export function App() {
       api().call<{ key: string }>("rooms:openDirect", item.userId)
         .then((room) => { setView("chats"); setActiveKey(room.key); })
         .catch((e) => toast(e.message));
+    } else if (item.id === "action:bot") {
+      void openPersonalBot();
     } else if (item.id === "action:settings") {
       setShowSettings(true);
     } else if (item.id === "action:globalSearch") {
@@ -402,6 +435,9 @@ export function App() {
           <Icon name="chat" size={23} />
           {totalUnread > 0 && <span className="rail-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>}
         </RailButton>
+        <RailButton id="assistant" active={assistantActive} onClick={() => void openPersonalBot()}>
+          <Icon name="bot" size={23} />
+        </RailButton>
         <RailButton id="mail" active={view === "mail"} onClick={() => setView("mail")}>
           <Icon name="mail" size={23} />
         </RailButton>
@@ -441,6 +477,8 @@ export function App() {
         <div className="panes">
           {view === "mail" ? (
             <Mail />
+          ) : view === "assistant" ? (
+            <PersonalBotChat userId={user.id} />
           ) : view === "approval" ? (
             <Approval />
           ) : view === "flex" ? (
@@ -448,7 +486,7 @@ export function App() {
           ) : (
             <>
               {view === "home" ? (
-                <Home onLocal={setView} />
+                <Home onLocal={setView} onOpenBot={() => void openPersonalBot()} />
               ) : view === "menu" ? (
                 <Menu badge={portalBadge} unreadChats={totalUnread} onLocal={setView} toast={toast} onOpenSaved={() => setSavedOpen(true)} />
               ) : view === "chats" ? (
@@ -459,6 +497,8 @@ export function App() {
                   onOpen={setActiveKey}
                   toast={toast}
                   botUserSeq={botUserSeq}
+                  onOpenBot={() => void openPersonalBot()}
+                  botActive={assistantActive}
                   onGlobalSearch={(keyword) => setGlobalSearch({ keyword: keyword || "" })}
                 />
               ) : (
@@ -483,6 +523,7 @@ export function App() {
                   botStatus={botStatuses[activeRoom.key]}
                   botUserSeq={botUserSeq}
                   toast={toast}
+                  onOpenBot={() => void openPersonalBot()}
                 />
               ) : (
                 <div className="empty-chat">
