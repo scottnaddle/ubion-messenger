@@ -95,7 +95,7 @@ import {
 } from "./lock-store";
 import { normalizeMailListArgs, normalizeMailUid, validFolder } from "./core/mail";
 import { guessMime } from "./core/mime";
-import { buildMediaResponse } from "./core/media-response";
+import { buildMediaResponse, parseMediaRequest } from "./core/media-response";
 import { GoogleConnectorHost } from "./core/google-session";
 import {
   appendGoogleOAuthDebugLog,
@@ -1824,9 +1824,7 @@ function registerIpc() {
         return { mode };
       }
       const p = core.client.fileUrlPath(cryptId, mid);
-      const hit = mediaCache.get(p);
-      const { data, contentType } = hit || (await core.client.fetchBinary(p));
-      if (!hit) mediaCache.set(p, { data, contentType });
+      const { data } = await loadCachedMedia(p);
       const dir = previewTempDir();
       fs.mkdirSync(dir, { recursive: true });
       const target = path.join(dir, previewTempName(name, mid, ext));
@@ -2187,18 +2185,34 @@ function uniquePath(p: string) {
 // ---------- media protocol: authenticated thumbnails/avatars/images ----------
 const linkCache = new PreviewCache();
 const ogImageCache = new PreviewCache(100);
-const mediaCache = new MediaCache(64 * 1024 * 1024, 4 * 1024 * 1024);
+// One chat video can be larger than a thumbnail. Chromium issues several Range
+// requests against the same URL; keep the whole file so those share one download.
+const mediaCache = new MediaCache(64 * 1024 * 1024, 64 * 1024 * 1024);
+const inflightMedia = new Map<string, Promise<{ data: Buffer; contentType: string }>>();
+function loadCachedMedia(p: string): Promise<{ data: Buffer; contentType: string }> {
+  const hit = mediaCache.get(p);
+  if (hit) return Promise.resolve(hit);
+  let pending = inflightMedia.get(p);
+  if (!pending) {
+    pending = core.client.fetchBinary(p).then((got) => {
+      mediaCache.set(p, got);
+      return got;
+    }).finally(() => { inflightMedia.delete(p); });
+    inflightMedia.set(p, pending);
+  }
+  return pending;
+}
 function registerMediaProtocol() {
   protocol.handle("ubion-media", async (req) => {
     try {
-      const u = new URL(req.url);
-      let p = decodeURIComponent(u.pathname.replace(/^\/+/, "/")) + u.search;
+      const parsed = parseMediaRequest(req.url);
+      let p = parsed.path;
       if (p.startsWith("/api/chat/files/") && !/[?&]userSeq=/.test(p) && core.user)
         p += (p.includes("?") ? "&" : "?") + `userSeq=${core.user.id}`;
-      const hit = mediaCache.get(p);
-      const { data, contentType } = hit || (await core.client.fetchBinary(p));
-      if (!hit) mediaCache.set(p, { data, contentType });
-      const built = buildMediaResponse(data, contentType, req.headers.get("range"));
+      const { data, contentType } = await loadCachedMedia(p);
+      const built = buildMediaResponse(data, contentType, req.headers.get("range"), parsed.ext);
+      // Copy into a plain Uint8Array. A Node Buffer can be a view into a larger pool,
+      // and Chromium then rejects the media response as a length mismatch.
       return new Response(new Uint8Array(built.body), { status: built.status, headers: built.headers });
     } catch {
       return new Response("", { status: 404 });

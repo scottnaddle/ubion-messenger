@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { api, media, type ChatMessage } from "../api";
 import { attachKind, durationLabel, expiryLabel, fileIcon, isExpired, sizeLabel } from "../../electron/core/attach";
+import { chatFileMediaPath } from "../../electron/core/media-response";
 import { isPreviewExtension } from "../../electron/core/doc-preview";
 import { Icon } from "./ui";
 import { t as tr, useT } from "../lib/i18n";
+import { claimPlaybackError, playbackErrorKey } from "../lib/playback-error";
 import { ForwardModal } from "./ForwardModal";
 
-export const fileUrl = (cryptId: string, messageId?: number) =>
-  messageId != null ? media(`/api/chat/files/${encodeURIComponent(cryptId)}?messageId=${messageId}`) : "";
+export const fileUrl = (cryptId: string, messageId?: number, nameOrExt?: string) =>
+  messageId != null ? media(chatFileMediaPath(cryptId, messageId, nameOrExt)) : "";
 
 type SaveMode = "downloads" | "saveAs" | "open";
 type ToastFn = (text: string, kind?: "error" | "info", action?: { label: string; run: () => void }) => void;
@@ -65,6 +67,7 @@ export function FileCard({
   canDelete?: boolean; onDelete?: () => void; canNotice?: boolean; onNotice?: () => void;
 }) {
   const t = useT();
+  const unplayableText = t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요.");
   const a = m.attach!;
   const missing = !a.cryptId && !a.expired;
   const expired = missing || isExpired(a);
@@ -72,6 +75,11 @@ export function FileCard({
   const exp = expiryLabel(a);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [forwardOpen, setForwardOpen] = useState(false);
+  const [unplayable, setUnplayable] = useState(false);
+  const onPlayError = () => {
+    setUnplayable(true);
+    if (claimPlaybackError(playbackErrorKey(a.cryptId, m.messageId))) toast(unplayableText);
+  };
   const save = async (mode: SaveMode) => { if (!expired) await saveChatFile(m, mode, toast); };
   const ctxDelete = canDelete && onDelete ? onDelete : undefined;
   const ctxNotice = canNotice && onNotice ? onNotice : undefined;
@@ -134,19 +142,28 @@ export function FileCard({
   }
   if (!expired && kind === "video") {
     const poster = media(a.videoThumb || a.thumbMid || a.thumbLarge || a.thumbSmall);
+    const playSrc = fileUrl(a.cryptId, m.messageId, a.extention || a.name);
     return (
       <div className="media-card" onContextMenu={onCtx}>
         {ctx}{forwardModal}
-        <video
-          className="inline-video"
-          src={fileUrl(a.cryptId, m.messageId)}
-          poster={poster || undefined}
-          controls
-          playsInline
-          preload="metadata"
-          aria-label={a.name}
-          onError={() => toast(t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요."))}
-        />
+        {unplayable ? (
+          <div className="video-fallback">
+            {poster ? <img src={poster} alt="" /> : null}
+            <p className="tiny">{unplayableText}</p>
+            <button className="link tiny" type="button" onClick={() => void save("open")}>{t("기본 앱으로 열기")}</button>
+          </div>
+        ) : (
+          <video
+            className="inline-video"
+            src={playSrc}
+            poster={poster || undefined}
+            controls
+            playsInline
+            preload="metadata"
+            aria-label={a.name}
+            onError={onPlayError}
+          />
+        )}
         <div className="fc-name tiny" title={a.name}>{a.name}</div>
         {durationLabel(a.duration) && <div className="fc-meta tiny"><span>{durationLabel(a.duration)}</span></div>}
         {meta}
@@ -188,6 +205,7 @@ function LazyImg({ src, alt, w, h }: { src: string; alt: string; w?: number; h?:
 /** Full-screen viewer for images and in-app video player. */
 export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: () => void; toast: ToastFn }) {
   const t = useT();
+  const unplayableText = t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요.");
   const a = m.attach!;
   const kind = attachKind(a);
   useEffect(() => {
@@ -195,8 +213,13 @@ export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: ()
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [onClose]);
-  const src = fileUrl(a.cryptId, m.messageId);
+  const src = fileUrl(a.cryptId, m.messageId, a.extention || a.name);
   const save = (mode: SaveMode) => void saveChatFile(m, mode, toast);
+  const [unplayable, setUnplayable] = useState(false);
+  const onPlayError = () => {
+    setUnplayable(true);
+    if (claimPlaybackError(playbackErrorKey(a.cryptId, m.messageId))) toast(unplayableText);
+  };
   return (
     <div className="viewer" onClick={onClose}>
       <div className="viewer-bar" onClick={(e) => e.stopPropagation()}>
@@ -209,8 +232,12 @@ export function MediaViewer({ m, onClose, toast }: { m: ChatMessage; onClose: ()
         <button className="icon-btn" title={t("닫기 (Esc)")} onClick={onClose}><Icon name="close" /></button>
       </div>
       {kind === "video" ? (
-        <video className="viewer-img" src={src} controls autoPlay poster={media(a.videoThumb || a.thumbLarge) || undefined}
-          onClick={(e) => e.stopPropagation()} onError={() => toast(t("앱 안에서 재생할 수 없는 형식입니다. '기본 앱으로 열기'를 사용하세요."))} />
+        unplayable ? (
+          <div className="viewer-fallback" onClick={(e) => e.stopPropagation()}>{unplayableText}</div>
+        ) : (
+          <video className="viewer-img" src={src} controls autoPlay poster={media(a.videoThumb || a.thumbLarge) || undefined}
+            onClick={(e) => e.stopPropagation()} onError={onPlayError} />
+        )
       ) : (
         <img
           className="viewer-img"
